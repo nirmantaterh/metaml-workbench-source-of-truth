@@ -1,0 +1,32 @@
+{
+  "name": "MetaML",
+  "uri": "http://metaml.com/schema/bpmn/metaml",
+  "prefix": "metaml",
+  "xml": {
+    "tagAlias": "lowerCase"
+  },
+  "associations": [],
+  "types": [
+    {
+      "name": "DataItems",
+      "superClass": ["Element"],
+      "meta": { "allowedIn": ["bpmn:Process", "bpmn:Activity", "bpmn:Task"] },
+      "properties": [
+        {
+          "name": "items",
+          "type": "DataItem",
+          "isMany": true
+        }
+      ]
+    },
+    {
+      "name": "DataItem",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "name", "type": "String", "isAttr": true },
+        { "name": "type", "type": "String", "isAttr": true },
+        { "name": "value", "type": "String", "isAttr": true }
+      ]
+    }
+  ]
+}

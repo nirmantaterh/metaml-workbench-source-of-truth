@@ -1,0 +1,141 @@
+.bpmn-editor {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 56px);
+    background: #fff;
+}
+
+.bpmn-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #e3e6ea;
+    background: #f7f9fa;
+    flex-wrap: wrap;
+}
+
+.bpmn-toolbar .bpmn-model-name {
+    max-width: 260px;
+}
+
+.bpmn-toolbar .bpmn-load-id {
+    max-width: 180px;
+}
+
+.bpmn-twinbar {
+    background: #eef4f6;
+}
+
+.bpmn-toolbar .bpmn-twin-id {
+    max-width: 320px;
+}
+
+.bpmn-toolbar .bpmn-agent-type {
+    max-width: 160px;
+}
+
+.bpmn-toolbar .spacer {
+    flex: 1;
+}
+
+.bpmn-toolbar .bpmn-status {
+    font-size: 0.85rem;
+}
+
+.bpmn-main {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+}
+
+.bpmn-canvas {
+    flex: 1;
+    min-width: 0;
+    background: #fdfdfd;
+    background-image: radial-gradient(#e6eaee 1px, transparent 1px);
+    background-size: 18px 18px;
+}
+
+.bpmn-sidebar {
+    width: 340px;
+    border-left: 1px solid #e3e6ea;
+    overflow-y: auto;
+    background: #fff;
+}
+
+.bpmn-sidebar-header {
+    padding: 0.6rem 0.9rem;
+    font-weight: 600;
+    color: #1f5f71;
+    border-bottom: 1px solid #eef1f3;
+}
+
+.bpmn-sidebar-body,
+.bpmn-sidebar-empty {
+    padding: 0.9rem;
+}
+
+.bpmn-sidebar-eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #9aa5ad;
+    margin-bottom: 0.6rem;
+}
+
+.bpmn-field-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #57636b;
+}
+
+.bpmn-data-section {
+    border-top: 1px solid #eef1f3;
+    padding-top: 0.8rem;
+    margin-top: 0.3rem;
+}
+
+.bpmn-log-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.bpmn-log-section {
+    padding: 0.9rem;
+}
+
+.bpmn-log-list {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.78rem;
+    color: #3d4850;
+}
+
+.bpmn-log-list li {
+    margin-bottom: 0.35rem;
+    line-height: 1.35;
+    word-break: break-word;
+}
+
+.bpmn-data-table th {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #9aa5ad;
+    font-weight: 600;
+}
+
+.bpmn-data-table td {
+    padding: 0.15rem 0.2rem;
+    vertical-align: middle;
+}
+
+/* keep bpmn-js watermark/powered-by out of the way but present */
+.bjs-powered-by {
+    opacity: 0.4;
+}

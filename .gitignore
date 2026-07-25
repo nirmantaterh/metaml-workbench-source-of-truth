@@ -1,0 +1,20 @@
+# Node
+node_modules/
+frontend/build/
+
+# Java / Gradle / Maven
+backend/.gradle/
+backend/**/build/
+backend/**/target/
+.mvn/wrapper/maven-wrapper.jar
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Old nested repos, kept as backup only
+backend/.git.bak/
+frontend/.git.bak/
