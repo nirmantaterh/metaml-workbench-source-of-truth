@@ -59,3 +59,12 @@ export async function evolveActivity(payload) {
     const result = await api.post(`/wb/transmute/evolve`, payload);
     return result.data;
 }
+
+// Automatic original-to-twin bridge: if the given activity has actually been reached in the
+// original process instance, forwards it through the same evolve path evolveActivity uses.
+// Safe to call more than once for the same activity -- idempotent on the twin. Returns the
+// same AgentDecision shape as evolveActivity.
+export async function bridgeActivity(twinProcessId, activityId) {
+    const result = await api.post(`/wb/transmute/bridge/${twinProcessId}/${activityId}`);
+    return result.data;
+}

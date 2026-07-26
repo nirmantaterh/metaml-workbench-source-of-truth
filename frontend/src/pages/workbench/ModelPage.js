@@ -18,6 +18,7 @@ import {
     getTwin,
     connectActivity,
     evolveActivity,
+    bridgeActivity,
 } from "../../services/workbench/WorkbenchService";
 
 // bpmn element types that aren't connectable activities (the process/collaboration root and
@@ -311,6 +312,39 @@ const ModelPage = () => {
         }
     };
 
+    const handleBridge = async () => {
+        const twin = twinId.trim();
+        if (!twin) {
+            setStatus({ type: "err", text: "Deploy first (or paste a twin id) before bridging." });
+            return;
+        }
+        if (!selectedActivityId) {
+            setStatus({ type: "err", text: "Select the activity on the canvas you want to bridge." });
+            return;
+        }
+        setBusy(true);
+        try {
+            const res = await bridgeActivity(twin, selectedActivityId);
+            const decision = res.data || res;
+            await refreshTwinLog(twin);
+            if (decision.approved) {
+                setStatus({
+                    type: "ok",
+                    text: `Bridged "${selectedActivityId}": approved → agent ${decision.agentName}.`,
+                });
+            } else {
+                setStatus({
+                    type: "err",
+                    text: `Bridge "${selectedActivityId}": blocked — ${decision.reason}`,
+                });
+            }
+        } catch (err) {
+            setStatus({ type: "err", text: "Bridge failed: " + (err.response?.data?.message || err.message) });
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const statusClass =
         status?.type === "err" ? "text-danger" : status?.type === "ok" ? "text-success" : "text-muted";
 
@@ -392,6 +426,14 @@ const ModelPage = () => {
                     disabled={busy || !twinId.trim() || !selectedActivityId || !agentType.trim()}
                 >
                     Evolve selected activity
+                </Button>
+                <Button
+                    size="sm"
+                    variant="outline-primary"
+                    onClick={handleBridge}
+                    disabled={busy || !twinId.trim() || !selectedActivityId}
+                >
+                    Bridge selected activity
                 </Button>
                 <span className="bpmn-status text-muted">
                     {selectedActivityId
