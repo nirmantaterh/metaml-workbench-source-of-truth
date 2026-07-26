@@ -6,6 +6,7 @@ import { getBusinessObject } from "bpmn-js/lib/util/ModelUtil";
 
 import {
     canHoldData,
+    canRename,
     getDataItems,
     addDataItem,
     updateDataItem,
@@ -35,6 +36,10 @@ const DataPanel = ({ modeler, element }) => {
     const typeLabel = (bo.$type || "").replace("bpmn:", "");
     const supportsData = canHoldData(element);
     const items = supportsData ? getDataItems(element) : [];
+    // bpmn-js can only write a label onto certain element types. The process root -- the
+    // default selection on page load -- isn't one of them, so an editable Name box there
+    // accepted keystrokes and threw them away. Show it read-only with the reason instead.
+    const renameable = canRename(element);
 
     return (
         <div className="bpmn-sidebar-body">
@@ -46,8 +51,16 @@ const DataPanel = ({ modeler, element }) => {
                     size="sm"
                     type="text"
                     value={bo.name || ""}
+                    disabled={!renameable}
+                    placeholder={renameable ? "" : "Not editable for this element"}
                     onChange={(e) => setName(modeler, element, e.target.value)}
                 />
+                {!renameable && (
+                    <Form.Text className="text-muted">
+                        A {typeLabel} has no editable diagram label. Use the "Model name" box in
+                        the toolbar to name the model itself.
+                    </Form.Text>
+                )}
             </Form.Group>
 
             <Form.Group className="mb-3">

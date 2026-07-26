@@ -90,6 +90,28 @@ export function setDocumentation(modeler, element, text) {
     modeling.updateModdleProperties(element, bo, { documentation });
 }
 
+// Mirrors the element types bpmn-js's own getLabelAttr (lib/util/LabelUtil.js) knows how to
+// write a label onto. Anything outside this list -- notably bpmn:Process, which is the default
+// selection when the canvas first loads -- makes updateLabel a silent no-op, so the UI must not
+// offer an editable Name field for it.
+const LABELABLE = [
+    "bpmn:FlowElement",
+    "bpmn:Participant",
+    "bpmn:Lane",
+    "bpmn:SequenceFlow",
+    "bpmn:MessageFlow",
+    "bpmn:DataInput",
+    "bpmn:DataOutput",
+    "bpmn:TextAnnotation",
+    "bpmn:Group",
+];
+
+export function canRename(element) {
+    if (!element) return false;
+    return LABELABLE.some((type) => is(element, type));
+}
+
 export function setName(modeler, element, name) {
+    if (!canRename(element)) return;
     modeler.get("modeling").updateLabel(element, name);
 }

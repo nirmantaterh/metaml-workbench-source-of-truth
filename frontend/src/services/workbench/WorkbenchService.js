@@ -15,12 +15,6 @@ export async function saveModel(payload) {
     return result.data;
 }
 
-// List saved process models.
-export async function getModels() {
-    const result = await api.get(`/wb/transmute/model`);
-    return result.data;
-}
-
 // Load a single saved process model by id.
 export async function getModel(id) {
     const result = await api.get(`/wb/transmute/model/${id}`);
@@ -66,5 +60,26 @@ export async function evolveActivity(payload) {
 // same AgentDecision shape as evolveActivity.
 export async function bridgeActivity(twinProcessId, activityId) {
     const result = await api.post(`/wb/transmute/bridge/${twinProcessId}/${activityId}`);
+    return result.data;
+}
+
+// Governance is the second gate on evolve, independent of the node manager's agent catalog:
+// it can deny an agent type the catalog would allow, and caps how many evolutions a single
+// twin gets. The policy is global, server-side state -- not per-session, not per-twin.
+export async function getGovernancePolicy() {
+    const result = await api.get(`/governance/policy`);
+    return result.data;
+}
+
+// deniedAgentTypes is always sent in full (the backend replaces the list rather than merging),
+// so this is last-write-wins. Callers must load the current policy before submitting one.
+export async function updateGovernancePolicy(deniedAgentTypes, maxEvolutionsPerTwin) {
+    const result = await api.post(`/governance/policy`, { deniedAgentTypes, maxEvolutionsPerTwin });
+    return result.data;
+}
+
+// Evolutions used vs. allowed for one twin. 404s if the twin id was never launched.
+export async function getGovernanceUsage(twinProcessId) {
+    const result = await api.get(`/governance/usage/${twinProcessId}`);
     return result.data;
 }

@@ -19,11 +19,20 @@ import {
     connectActivity,
     evolveActivity,
     bridgeActivity,
+    getGovernancePolicy,
+    updateGovernancePolicy,
+    getGovernanceUsage,
 } from "../../services/workbench/WorkbenchService";
 
 // bpmn element types that aren't connectable activities (the process/collaboration root and
 // sequence flows). Everything else -- tasks, events, gateways -- can be linked to a twin.
 const NON_ACTIVITY_TYPES = ["bpmn:Process", "bpmn:Collaboration", "bpmn:SequenceFlow"];
+
+// The backend's no-op reason for bridging an activity that was already forwarded once
+// (WorkbenchServiceImpl.bridgeActivityEvent's forwardedBridgeActivities guard). It comes back
+// shaped exactly like a governance denial -- approved:false plus a reason -- but it means
+// "nothing left to do", not "blocked", so it must not be shown as an error.
+const BRIDGE_ALREADY_FORWARDED_REASON = "Activity event already forwarded to twin";
 
 const ModelPage = () => {
     const canvasRef = useRef(null);
@@ -47,6 +56,18 @@ const ModelPage = () => {
     const [, setRevision] = useState(0);
     const [status, setStatus] = useState(null); // { type: 'ok'|'err'|'info', text }
     const [busy, setBusy] = useState(false);
+
+    // --- Governance (global, server-side policy + per-twin usage) ---
+    // Comma-separated free text rather than an array so the field can be edited directly like
+    // the other raw-value inputs; parsed back into an array only when "Update policy" submits.
+    const [deniedAgentTypesInput, setDeniedAgentTypesInput] = useState("");
+    const [maxEvolutionsInput, setMaxEvolutionsInput] = useState("");
+    // Gates "Update policy" until the real current denylist has been loaded at least once, so a
+    // submit before any load can't send an empty array and silently wipe the server's denylist.
+    const [policyLoaded, setPolicyLoaded] = useState(false);
+    // Last governance response (policy or usage) rendered as JSON in the sidebar.
+    const [governanceResult, setGovernanceResult] = useState(null);
+    const [governanceError, setGovernanceError] = useState(null);
 
     const bump = useCallback(() => setRevision((r) => r + 1), []);
 
@@ -183,11 +204,17 @@ const ModelPage = () => {
         URL.revokeObjectURL(url);
     };
 
+    // Never sends an id. The backend deliberately refuses to overwrite an existing model
+    // ("Process model already exists", WorkbenchServiceImpl.saveProcessModel) because replacing
+    // a model would swap its processDefinitionId out from under twins already launched from it.
+    // Re-sending the id we got back from the previous save therefore failed every Save and every
+    // Deploy after the first one. Each save is a new immutable version instead; modelId simply
+    // tracks the most recently saved one, which is what Deploy launches.
     const handleSave = async () => {
         setBusy(true);
         try {
             const bpmnXml = await currentXml();
-            const res = await saveModel({ id: modelId || undefined, name: modelName, bpmnXml });
+            const res = await saveModel({ name: modelName, bpmnXml });
             const saved = res.data || res;
             if (saved.id) {
                 setModelId(saved.id);
@@ -205,9 +232,10 @@ const ModelPage = () => {
         setBusy(true);
         try {
             // Save first so the model is deployed to the engine and we have a modelId to launch
-            // (the /launch endpoint takes a modelId, not raw XML).
+            // (the /launch endpoint takes a modelId, not raw XML). No id is sent, for the same
+            // reason as handleSave -- that is what let Save-then-Deploy and Deploy-twice fail.
             const bpmnXml = await currentXml();
-            const saveRes = await saveModel({ id: modelId || undefined, name: modelName, bpmnXml });
+            const saveRes = await saveModel({ name: modelName, bpmnXml });
             const saved = saveRes.data || saveRes;
             const id = saved.id;
             if (id) {
@@ -297,12 +325,12 @@ const ModelPage = () => {
             if (decision.approved) {
                 setStatus({
                     type: "ok",
-                    text: `Evolved "${selectedActivityId}" with ${type}: approved → agent ${decision.agentName}.`,
+                    text: `Evolved "${selectedActivityId}" with ${type}: approved → agent ${decision.agentName || "(unnamed)"}.`,
                 });
             } else {
                 setStatus({
                     type: "err",
-                    text: `Evolve "${selectedActivityId}" with ${type}: blocked — ${decision.reason}`,
+                    text: `Evolve "${selectedActivityId}" with ${type}: blocked — ${decision.reason || "no reason given"}`,
                 });
             }
         } catch (err) {
@@ -330,12 +358,20 @@ const ModelPage = () => {
             if (decision.approved) {
                 setStatus({
                     type: "ok",
-                    text: `Bridged "${selectedActivityId}": approved → agent ${decision.agentName}.`,
+                    text: `Bridged "${selectedActivityId}": approved → agent ${decision.agentName || "(unnamed)"}.`,
+                });
+            } else if (decision.reason === BRIDGE_ALREADY_FORWARDED_REASON) {
+                // Bridging the same activity twice is a deliberate no-op, not a denial -- the
+                // twin already has its agent from the first call. Reporting it in red next to
+                // real governance blocks made a correct result look like a failure mid-demo.
+                setStatus({
+                    type: "info",
+                    text: `Bridge "${selectedActivityId}": already forwarded to the twin earlier — no change (this is expected on a repeat bridge).`,
                 });
             } else {
                 setStatus({
                     type: "err",
-                    text: `Bridge "${selectedActivityId}": blocked — ${decision.reason}`,
+                    text: `Bridge "${selectedActivityId}": blocked — ${decision.reason || "no reason given"}`,
                 });
             }
         } catch (err) {
@@ -344,6 +380,65 @@ const ModelPage = () => {
             setBusy(false);
         }
     };
+
+    // --- Governance handlers ---
+    // A failed axios call's err.message is a generic "Request failed with status code 400" that
+    // hides the backend's real message; that lives in err.response.data.message. Prefer it.
+    const governanceErrorText = (err) => err.response?.data?.message || err.message;
+
+    const handleViewPolicy = useCallback(async () => {
+        setGovernanceError(null);
+        try {
+            const res = await getGovernancePolicy();
+            const policy = res.data || res;
+            setGovernanceResult({ label: "Governance policy", body: policy });
+            setDeniedAgentTypesInput((policy.deniedAgentTypes || []).join(", "));
+            setMaxEvolutionsInput(String(policy.maxEvolutionsPerTwin ?? ""));
+            setPolicyLoaded(true);
+        } catch (err) {
+            setGovernanceResult(null);
+            setGovernanceError("View policy failed: " + governanceErrorText(err));
+        }
+    }, []);
+
+    const handleUpdatePolicy = async () => {
+        const deniedAgentTypes = deniedAgentTypesInput.split(",").map((s) => s.trim()).filter(Boolean);
+        const maxEvolutionsPerTwin = maxEvolutionsInput === "" ? undefined : Number(maxEvolutionsInput);
+        setBusy(true);
+        setGovernanceError(null);
+        try {
+            const res = await updateGovernancePolicy(deniedAgentTypes, maxEvolutionsPerTwin);
+            const policy = res.data || res;
+            setGovernanceResult({ label: "Governance policy (updated)", body: policy });
+            setStatus({ type: "ok", text: "Governance policy updated." });
+        } catch (err) {
+            setGovernanceResult(null);
+            setGovernanceError("Update policy failed: " + governanceErrorText(err));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleViewUsage = async () => {
+        const twin = twinId.trim();
+        setGovernanceError(null);
+        setBusy(true);
+        try {
+            const res = await getGovernanceUsage(twin);
+            setGovernanceResult({ label: `Evolution usage for twin ${twin}`, body: res.data || res });
+        } catch (err) {
+            setGovernanceResult(null);
+            setGovernanceError("View usage failed: " + governanceErrorText(err));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    // Load the real current policy once on mount rather than leaving the denylist field empty
+    // until someone clicks "View policy" -- see policyLoaded above for why that matters.
+    useEffect(() => {
+        handleViewPolicy();
+    }, [handleViewPolicy]);
 
     const statusClass =
         status?.type === "err" ? "text-danger" : status?.type === "ok" ? "text-success" : "text-muted";
@@ -442,6 +537,48 @@ const ModelPage = () => {
                 </span>
             </div>
 
+            {/* Governance is the second, independent gate on evolve/bridge: the node manager's
+                catalog decides whether an agent type exists at all, while this policy can deny a
+                type the catalog allows, or cut a twin off once it hits its evolution quota. */}
+            <div className="bpmn-toolbar bpmn-govbar">
+                <span className="bpmn-field-label mb-0">Governance</span>
+                <Form.Control
+                    size="sm"
+                    className="bpmn-denied-types"
+                    value={deniedAgentTypesInput}
+                    onChange={(e) => setDeniedAgentTypesInput(e.target.value)}
+                    placeholder="Denied agent types (comma-separated)"
+                />
+                <Form.Control
+                    size="sm"
+                    type="number"
+                    min="0"
+                    className="bpmn-max-evolutions"
+                    value={maxEvolutionsInput}
+                    onChange={(e) => setMaxEvolutionsInput(e.target.value)}
+                    placeholder="Max evolutions/twin"
+                />
+                <Button size="sm" variant="outline-secondary" onClick={handleViewPolicy} disabled={busy}>
+                    View policy
+                </Button>
+                <Button
+                    size="sm"
+                    variant="outline-primary"
+                    onClick={handleUpdatePolicy}
+                    disabled={busy || !policyLoaded}
+                >
+                    Update policy
+                </Button>
+                <Button
+                    size="sm"
+                    variant="outline-secondary"
+                    onClick={handleViewUsage}
+                    disabled={busy || !twinId.trim()}
+                >
+                    View usage for this twin
+                </Button>
+            </div>
+
             <div className="bpmn-main">
                 <div className="bpmn-canvas" ref={canvasRef} />
                 <div className="bpmn-sidebar">
@@ -473,6 +610,26 @@ const ModelPage = () => {
                                     <li key={idx}>{entry}</li>
                                 ))}
                             </ol>
+                        )}
+                    </div>
+
+                    <div className="bpmn-sidebar-header">Governance</div>
+                    <div className="bpmn-log-section">
+                        {governanceError && (
+                            <p className="text-danger small mb-0">{governanceError}</p>
+                        )}
+                        {!governanceError && governanceResult && (
+                            <>
+                                <div className="small text-muted mb-1">{governanceResult.label}</div>
+                                <pre className="bpmn-json mb-0">
+                                    {JSON.stringify(governanceResult.body, null, 2)}
+                                </pre>
+                            </>
+                        )}
+                        {!governanceError && !governanceResult && (
+                            <p className="text-muted small mb-0">
+                                Click "View policy" or "View usage for this twin" above.
+                            </p>
                         )}
                     </div>
                 </div>
