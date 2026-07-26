@@ -6,6 +6,9 @@ import "bpmn-js/dist/assets/diagram-js.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
 import "bpmn-js/dist/assets/bpmn-js.css";
 
+import TokenSimulationModule from "bpmn-js-token-simulation";
+import "bpmn-js-token-simulation/assets/css/bpmn-js-token-simulation.css";
+
 import metamlModdle from "../../components/bpmn/moddle/metamlModdle.json";
 import defaultDiagram from "../../components/bpmn/defaultDiagram";
 import DataPanel from "../../components/bpmn/DataPanel";
@@ -91,6 +94,7 @@ const ModelPage = () => {
         const modeler = new BpmnModeler({
             container,
             moddleExtensions: { metaml: metamlModdle },
+            additionalModules: [TokenSimulationModule],
         });
         modelerRef.current = modeler;
 
