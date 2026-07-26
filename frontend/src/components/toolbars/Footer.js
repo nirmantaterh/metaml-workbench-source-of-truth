@@ -9,8 +9,8 @@ const Footer = () => {
                 <div className="container">
                     <span className="pull-left pb-2">
                         <small>
-                            <copyright>&copy; {new Date().getFullYear()} MetaML</copyright>
-                            <n> | </n>
+                            <span>&copy; {new Date().getFullYear()} MetaML</span>
+                            <span> | </span>
                             <Link to="/#" style={{ textDecoration: "none" }}>Legal</Link>
                         </small>
                     </span>
