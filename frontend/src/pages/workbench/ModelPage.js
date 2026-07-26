@@ -34,15 +34,29 @@ const NON_ACTIVITY_TYPES = ["bpmn:Process", "bpmn:Collaboration", "bpmn:Sequence
 // "nothing left to do", not "blocked", so it must not be shown as an error.
 const BRIDGE_ALREADY_FORWARDED_REASON = "Activity event already forwarded to twin";
 
+// Fitting the diagram to the viewport is cosmetic, and on a cold first paint it can genuinely
+// fail: if the canvas element has not been laid out yet its size is 0, bpmn-js derives a
+// non-finite scale from that, and SVGMatrix.scale throws. Chained onto importXML's promise
+// that surfaced as a red "Could not load diagram: ... non-finite" on the very first render,
+// even though the diagram had in fact imported and was visible. Failing to centre a diagram
+// is not failing to load one, so it must not be reported as one.
+function fitViewport(modeler) {
+    try {
+        modeler.get("canvas").zoom("fit-viewport");
+    } catch (e) {
+        // keep whatever zoom level the canvas already has
+    }
+}
+
 const ModelPage = () => {
     const canvasRef = useRef(null);
     const modelerRef = useRef(null);
     const fileInputRef = useRef(null);
 
     const [modelName, setModelName] = useState("New Process");
-    // Id of the currently loaded/saved model. Set by Save (from the backend response) and
-    // by Load; also the id we deploy in handleDeploy.
-    const [modelId, setModelId] = useState("");
+    // Id of the most recently saved/loaded model, shown in the toolbar's "Model id" box. It is
+    // only ever read back by Load: Deploy always saves a fresh copy and launches that, so it
+    // deliberately does not deploy whatever id happens to be sitting in this field.
     const [loadId, setLoadId] = useState("");
     // Twin handle returned by Deploy; this is the id the connect/evolve endpoints key on.
     const [twinId, setTwinId] = useState("");
@@ -102,7 +116,7 @@ const ModelPage = () => {
         modeler
             .importXML(defaultDiagram)
             .then(() => {
-                if (!destroyed) modeler.get("canvas").zoom("fit-viewport");
+                if (!destroyed) fitViewport(modeler);
             })
             .catch((err) => {
                 if (!destroyed) setStatus({ type: "err", text: "Could not load diagram: " + err.message });
@@ -142,9 +156,11 @@ const ModelPage = () => {
     const handleNew = async () => {
         try {
             await modelerRef.current.importXML(defaultDiagram);
-            modelerRef.current.get("canvas").zoom("fit-viewport");
+            fitViewport(modelerRef.current);
             setModelName("New Process");
-            setModelId("");
+            // Clear the id box too: the canvas has been reset, so leaving the previous model's
+            // id sitting there invites a Load that silently replaces the fresh canvas.
+            setLoadId("");
             setTwinId("");
             setTwinLog([]);
             setStatus({ type: "info", text: "Started a new model." });
@@ -159,7 +175,7 @@ const ModelPage = () => {
         const text = await file.text();
         try {
             await modelerRef.current.importXML(text);
-            modelerRef.current.get("canvas").zoom("fit-viewport");
+            fitViewport(modelerRef.current);
             setModelName(file.name.replace(/\.(bpmn|xml)$/i, ""));
             setStatus({ type: "ok", text: `Imported ${file.name}.` });
         } catch (err) {
@@ -182,9 +198,9 @@ const ModelPage = () => {
                 throw new Error("Model has no BPMN XML");
             }
             await modelerRef.current.importXML(model.bpmnXml);
-            modelerRef.current.get("canvas").zoom("fit-viewport");
+            fitViewport(modelerRef.current);
             setModelName(model.name || "Untitled");
-            setModelId(model.id || id);
+            setLoadId(model.id || id);
             setStatus({ type: "ok", text: `Loaded model "${model.name || id}" (id ${model.id || id}).` });
         } catch (err) {
             setStatus({ type: "err", text: "Load failed: " + (err.response?.data?.message || err.message) });
@@ -208,8 +224,8 @@ const ModelPage = () => {
     // ("Process model already exists", WorkbenchServiceImpl.saveProcessModel) because replacing
     // a model would swap its processDefinitionId out from under twins already launched from it.
     // Re-sending the id we got back from the previous save therefore failed every Save and every
-    // Deploy after the first one. Each save is a new immutable version instead; modelId simply
-    // tracks the most recently saved one, which is what Deploy launches.
+    // Deploy after the first one. Each save is a new immutable version instead, and the id box
+    // just shows the newest one.
     const handleSave = async () => {
         setBusy(true);
         try {
@@ -217,7 +233,6 @@ const ModelPage = () => {
             const res = await saveModel({ name: modelName, bpmnXml });
             const saved = res.data || res;
             if (saved.id) {
-                setModelId(saved.id);
                 setLoadId(saved.id);
             }
             setStatus({ type: "ok", text: `Saved model "${saved.name || modelName}" (id ${saved.id ?? "?"}).` });
@@ -239,7 +254,6 @@ const ModelPage = () => {
             const saved = saveRes.data || saveRes;
             const id = saved.id;
             if (id) {
-                setModelId(id);
                 setLoadId(id);
             }
 
@@ -388,6 +402,7 @@ const ModelPage = () => {
 
     const handleViewPolicy = useCallback(async () => {
         setGovernanceError(null);
+        setBusy(true);
         try {
             const res = await getGovernancePolicy();
             const policy = res.data || res;
@@ -398,6 +413,8 @@ const ModelPage = () => {
         } catch (err) {
             setGovernanceResult(null);
             setGovernanceError("View policy failed: " + governanceErrorText(err));
+        } finally {
+            setBusy(false);
         }
     }, []);
 
