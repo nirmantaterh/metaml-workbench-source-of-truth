@@ -115,3 +115,47 @@ export function setName(modeler, element, name) {
     if (!canRename(element)) return;
     modeler.get("modeling").updateLabel(element, name);
 }
+
+// Element types that actually declare a `default` property in the BPMN moddle, and can
+// therefore own a default flow. bpmn-js's renderer is looser than this -- it draws the "//"
+// marker for any bpmn:Gateway or bpmn:Activity source -- but the BPMN schema only defines
+// `default` on these four. Offering the toggle on a bpmn:ParallelGateway or
+// bpmn:EventBasedGateway serialises an undeclared attribute as default="[object Object]",
+// producing invalid XML, so the source type must be checked against this list and not
+// against the broader bpmn:Gateway.
+const DEFAULT_FLOW_SOURCES = [
+    "bpmn:ExclusiveGateway",
+    "bpmn:InclusiveGateway",
+    "bpmn:ComplexGateway",
+    "bpmn:Activity",
+];
+
+// A sequence flow can only meaningfully be "the default" if its source supports a default
+// flow at all and has more than one outgoing sequence flow (i.e. it is actually a
+// fork/decision point).
+export function canBeDefaultFlow(element) {
+    if (!is(element, "bpmn:SequenceFlow")) return false;
+    const source = element.source;
+    if (!source) return false;
+    if (!DEFAULT_FLOW_SOURCES.some((type) => is(source, type))) return false;
+    const outgoing = (source.outgoing || []).filter((c) => is(c, "bpmn:SequenceFlow"));
+    return outgoing.length >= 2;
+}
+
+// The default flow is stored as a reference on the SOURCE element, not on the flow itself.
+// This is the same check bpmn-js makes internally in
+// bpmn-js/lib/features/modeling/behavior/UnsetDefaultFlowBehavior.js.
+export function isDefaultFlow(element) {
+    if (!canBeDefaultFlow(element)) return false;
+    const sourceBo = getBusinessObject(element.source);
+    const flowBo = getBusinessObject(element);
+    return sourceBo.get("default") === flowBo;
+}
+
+// Setting a new default implicitly clears any previous one, because a source can only hold
+// a single `default` reference.
+export function setDefaultFlow(modeler, element, isDefault) {
+    if (!canBeDefaultFlow(element)) return;
+    const flowBo = getBusinessObject(element);
+    modeler.get("modeling").updateProperties(element.source, { default: isDefault ? flowBo : null });
+}

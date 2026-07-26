@@ -7,6 +7,9 @@ import { getBusinessObject } from "bpmn-js/lib/util/ModelUtil";
 import {
     canHoldData,
     canRename,
+    canBeDefaultFlow,
+    isDefaultFlow,
+    setDefaultFlow,
     getDataItems,
     addDataItem,
     updateDataItem,
@@ -40,6 +43,9 @@ const DataPanel = ({ modeler, element }) => {
     // default selection on page load -- isn't one of them, so an editable Name box there
     // accepted keystrokes and threw them away. Show it read-only with the reason instead.
     const renameable = canRename(element);
+    // Only a sequence flow leaving a real fork (gateway/activity with 2+ outgoing flows) can be
+    // marked as the source's default flow -- the "//" marker in the canvas.
+    const defaultFlowCapable = canBeDefaultFlow(element);
 
     return (
         <div className="bpmn-sidebar-body">
@@ -74,6 +80,21 @@ const DataPanel = ({ modeler, element }) => {
                     onChange={(e) => setDocumentation(modeler, element, e.target.value)}
                 />
             </Form.Group>
+
+            {defaultFlowCapable && (
+                <Form.Group className="mb-3">
+                    <Form.Check
+                        type="checkbox"
+                        id="bpmn-default-flow"
+                        label="Default flow"
+                        checked={isDefaultFlow(element)}
+                        onChange={(e) => setDefaultFlow(modeler, element, e.target.checked)}
+                    />
+                    <Form.Text className="text-muted">
+                        This is the flow taken when no other condition matches.
+                    </Form.Text>
+                </Form.Group>
+            )}
 
             {supportsData && (
                 <div className="bpmn-data-section">
