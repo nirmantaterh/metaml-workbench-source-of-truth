@@ -107,22 +107,46 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         } catch (ProcessEngineException e) {
             // singleResult() throws if the XML has more than one executable process. their
             // mistake, not ours, so 400
+            discardDeployment(deployment.getId());
             throw new IllegalArgumentException(
                     "BPMN must declare exactly one executable bpmn:process element: " + e.getMessage());
         }
         if (definition == null) {
+            discardDeployment(deployment.getId());
             throw new IllegalArgumentException(
                     "BPMN process must have isExecutable=\"true\" on the bpmn:process element");
         }
 
         ProcessModel model = new ProcessModel(modelId, name, bpmnXml, Instant.now(), definition.getId());
-        processModels.put(modelId, model);
+        // the containsKey above isn't enough on its own - two saves of the same id can both clear
+        // it and both deploy, and the loser would silently replace the winner's definition
+        ProcessModel existing = processModels.putIfAbsent(modelId, model);
+        if (existing != null) {
+            discardDeployment(deployment.getId());
+            throw new IllegalArgumentException("Process model already exists: " + modelId);
+        }
         logger.info("Saved process model {} and deployed process definition {}", modelId, definition.getId());
         return model;
     }
 
+    // we deploy before we can check any of this, so a rejected model would otherwise leave its
+    // deployment sitting in the engine and showing up in cockpit
+    private void discardDeployment(String deploymentId) {
+        try {
+            repositoryService.deleteDeployment(deploymentId, true);
+        } catch (ProcessEngineException e) {
+            logger.warn("Could not remove deployment {} after rejecting the model: {}",
+                    deploymentId, e.getMessage());
+        }
+    }
+
     @Override
     public ProcessModel getProcessModel(String id) {
+        // ConcurrentHashMap.get(null) throws NPE, which came back as a 500 for a launch body
+        // with no modelId at all
+        if (id == null || id.isBlank()) {
+            throw new IllegalArgumentException("Process model id must not be blank");
+        }
         ProcessModel model = processModels.get(id);
         if (model == null) {
             throw new NoSuchElementException("Process model not found: " + id);
@@ -173,6 +197,9 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
     @Override
     public TwinProcess getTwinProcess(String id) {
+        if (id == null || id.isBlank()) {
+            throw new IllegalArgumentException("Twin process id must not be blank");
+        }
         TwinProcess twin = twinProcesses.get(id);
         if (twin == null) {
             throw new NoSuchElementException("Twin process not found: " + id);
@@ -245,6 +272,11 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         // 500 after the event log had already been written
         if (agentType == null || agentType.isBlank()) {
             throw new IllegalArgumentException("agentType must not be blank");
+        }
+        // a missing activityId isn't an NPE, it's worse - it quietly returns "not connected"
+        // and leaves a line about activity null in the log
+        if (activityId == null || activityId.isBlank()) {
+            throw new IllegalArgumentException("activityId must not be blank");
         }
 
         TwinProcess twin = getTwinProcess(twinProcessId);
@@ -365,22 +397,69 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             return List.of();
         }
 
+        // Each complete() is its own engine transaction, so the list above is a snapshot that can
+        // go stale mid-loop: a second request completing the same twin, or a branch that finishes
+        // and takes its siblings with it. Letting task 3 blow up used to throw away the fact that
+        // tasks 1 and 2 really did complete - the caller got a 500 and the event log said nothing.
         List<String> completed = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
+        RuntimeException firstRealFailure = null;
         for (Task task : tasks) {
             // definition key == the BPMN activity id, what connect/evolve key on
             String label = task.getName() == null
                     ? task.getTaskDefinitionKey()
                     : task.getName() + " (" + task.getTaskDefinitionKey() + ")";
-            taskService.complete(task.getId());
-            completed.add(label);
+            for (int attempt = 1; attempt <= 2; attempt++) {
+                try {
+                    taskService.complete(task.getId());
+                    completed.add(label);
+                    break;
+                } catch (ProcessEngineException e) {
+                    if (isTaskGone(task.getId())) {
+                        // somebody else completed it, or its branch got cancelled out from under us
+                        skipped.add(label);
+                        break;
+                    }
+                    // still there means the command rolled back and nothing happened. two requests
+                    // racing on a shared parallel join is the way to reproduce it. one retry.
+                    if (attempt == 2 && firstRealFailure == null) {
+                        firstRealFailure = e;
+                        logger.warn("Could not complete task {} ({}) on original instance {}: {}",
+                                task.getId(), label, twin.getOriginalProcessId(), e.getMessage());
+                    }
+                }
+            }
         }
 
-        twin.getEventLog().add("Completed " + completed.size()
-                + " open user task(s) on original process instance " + twin.getOriginalProcessId()
-                + ": " + String.join(", ", completed));
+        if (!completed.isEmpty()) {
+            twin.getEventLog().add("Completed " + completed.size()
+                    + " open user task(s) on original process instance " + twin.getOriginalProcessId()
+                    + ": " + String.join(", ", completed));
+        }
+        if (!skipped.isEmpty()) {
+            twin.getEventLog().add("Skipped " + skipped.size()
+                    + " user task(s) that were already gone by the time we got to them: "
+                    + String.join(", ", skipped));
+            logger.info("Skipped {} already-gone task(s) on original instance {} of twin {}: {}",
+                    skipped.size(), twin.getOriginalProcessId(), twinProcessId, skipped);
+        }
+        // only surface an error if nothing at all moved, otherwise the partial progress is real
+        // and the caller needs to know about it more than it needs the stack trace
+        if (completed.isEmpty() && firstRealFailure != null) {
+            throw firstRealFailure;
+        }
+        if (firstRealFailure != null) {
+            twin.getEventLog().add("At least one task could not be completed: "
+                    + firstRealFailure.getMessage());
+        }
+
         logger.info("Completed {} open task(s) on original instance {} of twin {}: {}",
                 completed.size(), twin.getOriginalProcessId(), twinProcessId, completed);
         return completed;
+    }
+
+    private boolean isTaskGone(String taskId) {
+        return taskService.createTaskQuery().taskId(taskId).singleResult() == null;
     }
 
     private boolean isActivityLinked(TwinProcess twin, String activityId) {

@@ -14,6 +14,7 @@ import com.metaml.workbench.service.WorkbenchService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -36,11 +37,16 @@ public class AutoBridgeTrigger {
     private static final String ACTIVITY_START_EVENT_NAME = "start";
     // real cost is milliseconds, this only trips if something is genuinely stuck
     private static final long BRIDGE_TIMEOUT_SECONDS = 10;
+    private static final long SHUTDOWN_GRACE_SECONDS = 5;
 
     private final WorkbenchService workbenchService;
 
     // one thread on purpose: activity starts are ordered anyway, and it caps us at one extra conn
     private final ExecutorService bridgeExecutor;
+
+    // set in @PreDestroy. the engine can still be committing while we're being torn down, and
+    // submitting to a dead executor throws.
+    private volatile boolean shuttingDown = false;
 
     public AutoBridgeTrigger(WorkbenchService workbenchService) {
         this.workbenchService = workbenchService;
@@ -57,6 +63,18 @@ public class AutoBridgeTrigger {
     // fallbackExecution so the event isn't just dropped if there's no tx synchronization around.
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onActivityStarted(ExecutionEvent event) {
+        // Nothing below may escape. Spring lets an afterCommit exception propagate straight out
+        // of the commit call, so a throw here surfaces as the engine command failing - the user
+        // sees "complete task" blow up because of a bridge that's meant to be a side effect.
+        try {
+            handleActivityStarted(event);
+        } catch (RuntimeException e) {
+            logger.warn("Auto-bridge listener swallowed an error so the engine command survives: {}",
+                    e.toString());
+        }
+    }
+
+    private void handleActivityStarted(ExecutionEvent event) {
         if (!ACTIVITY_START_EVENT_NAME.equals(event.getEventName())) {
             return;
         }
@@ -68,13 +86,28 @@ public class AutoBridgeTrigger {
         }
         String twinId = businessKey.substring(ORIGINAL_BUSINESS_KEY_PREFIX.length());
         String activityId = event.getCurrentActivityId();
+        // a bare "original-" key, or a scope execution with no activity of its own. neither can
+        // bridge anything, and going ahead just writes junk into somebody's event log.
+        if (twinId.isBlank() || activityId == null || activityId.isBlank()) {
+            return;
+        }
+        if (shuttingDown) {
+            return;
+        }
 
         // Don't inline this back onto the current thread. AFTER_COMMIT still has the committed
         // transaction's resources bound here (isActualTransactionActive() is true, I checked -
         // Spring only unbinds later in cleanupAfterCompletion), so a same-thread call joins an
         // already-committed transaction and its writes survive on luck. Also pins that connection
         // across the node manager HTTP call. Worker thread gets its own tx and its own connection.
-        Future<?> bridged = bridgeExecutor.submit(() -> runBridge(twinId, activityId));
+        Future<?> bridged;
+        try {
+            bridged = bridgeExecutor.submit(() -> runBridge(twinId, activityId));
+        } catch (RejectedExecutionException e) {
+            // shutdown raced us between the flag check and here
+            logger.debug("Auto-bridge executor is gone, skipping activity {} on twin {}", activityId, twinId);
+            return;
+        }
 
         // waiting instead of fire-and-forget so the UI refetch after "Complete current task(s)"
         // always sees the bridge. no locks held here, worst case is a logged timeout.
@@ -100,8 +133,19 @@ public class AutoBridgeTrigger {
         }
     }
 
+    // shutdownNow() on its own interrupted whatever bridge was mid-flight, which can leave the
+    // activity marked as forwarded with no agent actually assigned. Give it a moment first.
     @PreDestroy
     void shutdown() {
-        bridgeExecutor.shutdownNow();
+        shuttingDown = true;
+        bridgeExecutor.shutdown();
+        try {
+            if (!bridgeExecutor.awaitTermination(SHUTDOWN_GRACE_SECONDS, TimeUnit.SECONDS)) {
+                bridgeExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            bridgeExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }

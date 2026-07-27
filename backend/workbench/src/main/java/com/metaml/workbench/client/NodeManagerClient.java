@@ -1,9 +1,11 @@
 package com.metaml.workbench.client;
 
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.Duration;
 import java.util.regex.Pattern;
 
 @Component
@@ -15,7 +17,21 @@ public class NodeManagerClient {
     // RestTemplate doesn't escape "/" in a path variable, so restrict it.
     private static final Pattern SAFE_AGENT_TYPE = Pattern.compile("^[a-z0-9-]+$");
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    // A bare RestTemplate has no timeouts at all - a node manager that accepts the connection and
+    // then never answers hangs the caller forever. That's worse than it sounds: the auto-bridge
+    // runs on one thread, so one stuck call and no activity ever gets bridged again. Keep both
+    // under AutoBridgeTrigger's 10s wait so the worker can't outlive the thing waiting on it.
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(5);
+
+    private final RestTemplate restTemplate = new RestTemplate(requestFactory());
+
+    private static SimpleClientHttpRequestFactory requestFactory() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(CONNECT_TIMEOUT);
+        factory.setReadTimeout(READ_TIMEOUT);
+        return factory;
+    }
 
     public AgentAvailabilityResult checkAgentAvailability(String agentType) {
         if (agentType == null || !SAFE_AGENT_TYPE.matcher(agentType).matches()) {
@@ -34,6 +50,12 @@ public class NodeManagerClient {
         if (result == null) {
             throw new NodeManagerUnavailableException(
                     "Node manager returned an empty response for agent type " + agentType);
+        }
+        // available with no agent name is nonsense, and it used to come back as an approved
+        // decision with a null agent that then got written into evolvedAgent_*
+        if (result.isAvailable() && (result.getAgentName() == null || result.getAgentName().isBlank())) {
+            return new AgentAvailabilityResult(agentType, false, null,
+                    "Node manager reported the agent type as available but named no agent");
         }
         return result;
     }

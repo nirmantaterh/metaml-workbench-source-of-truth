@@ -6,7 +6,9 @@ import com.metaml.workbench.model.GovernanceDecision;
 import com.metaml.workbench.model.GovernancePolicy;
 import com.metaml.workbench.model.GovernanceUsage;
 
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -44,10 +46,13 @@ public class GovernanceServiceImpl implements GovernanceService {
         return getPolicy();
     }
 
-    // denylist comes straight out of a text box, so trim + lowercase here and at match time
+    // denylist comes straight out of a text box, so trim + lowercase here and at match time.
+    // jackson happily hands us a set containing null for {"deniedAgentTypes": [null]}, which
+    // used to NPE its way to a 500.
     private static Set<String> normalize(Set<String> agentTypes) {
         return agentTypes.stream()
-                .map(type -> type.trim().toLowerCase())
+                .filter(Objects::nonNull)
+                .map(type -> type.trim().toLowerCase(Locale.ROOT))
                 .filter(type -> !type.isEmpty())
                 .collect(Collectors.toUnmodifiableSet());
     }
@@ -56,7 +61,8 @@ public class GovernanceServiceImpl implements GovernanceService {
     // two requests sitting at max-1 both pass it and both take the last slot.
     @Override
     public GovernanceDecision reserveEvolutionSlot(String twinProcessId, String agentType) {
-        if (deniedAgentTypes.contains(agentType.trim().toLowerCase())) {
+        // same Locale.ROOT as normalize(), or the two sides disagree under a Turkish default
+        if (deniedAgentTypes.contains(agentType.trim().toLowerCase(Locale.ROOT))) {
             return new GovernanceDecision(false,
                     "Agent type '" + agentType + "' is denied by governance policy");
         }

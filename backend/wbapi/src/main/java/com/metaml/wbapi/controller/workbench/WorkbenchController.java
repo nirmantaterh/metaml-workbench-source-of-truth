@@ -67,6 +67,8 @@ public class WorkbenchController {
         try {
             ProcessModel model = workbenchService.getProcessModel(id);
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, model));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
         } catch (NoSuchElementException e) {
             return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
         } catch (Exception e) {
@@ -79,6 +81,8 @@ public class WorkbenchController {
         try {
             TwinProcess twin = workbenchService.launchProcess(request.getModelId());
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, twin));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
         } catch (NoSuchElementException e) {
             return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
         } catch (Exception e) {
@@ -91,6 +95,8 @@ public class WorkbenchController {
         try {
             TwinProcess twin = workbenchService.getTwinProcess(id);
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, twin));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
         } catch (NoSuchElementException e) {
             return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
         } catch (Exception e) {
