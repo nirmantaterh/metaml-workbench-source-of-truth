@@ -19,7 +19,6 @@ export function getDataItemsContainer(element) {
     return (ee.get("values") || []).find((v) => is(v, "metaml:DataItems")) || null;
 }
 
-// Returns the array of metaml:DataItem moddle elements attached to an element.
 export function getDataItems(element) {
     const container = getDataItemsContainer(element);
     return container ? container.get("items") || [] : [];
@@ -75,7 +74,7 @@ export function removeDataItem(modeler, element, item) {
     modeler.get("modeling").updateModdleProperties(element, container, { items });
 }
 
-// Native BPMN documentation is used as the free-text "description" of an element.
+// we reuse native bpmn:documentation as the "description" field
 export function getDocumentation(element) {
     const bo = getBusinessObject(element);
     const docs = bo && bo.get("documentation");
@@ -90,10 +89,8 @@ export function setDocumentation(modeler, element, text) {
     modeling.updateModdleProperties(element, bo, { documentation });
 }
 
-// Mirrors the element types bpmn-js's own getLabelAttr (lib/util/LabelUtil.js) knows how to
-// write a label onto. Anything outside this list -- notably bpmn:Process, which is the default
-// selection when the canvas first loads -- makes updateLabel a silent no-op, so the UI must not
-// offer an editable Name field for it.
+// same list as bpmn-js's getLabelAttr (lib/util/LabelUtil.js). Anything else makes updateLabel
+// a silent no-op - including bpmn:Process, which is what's selected on load.
 const LABELABLE = [
     "bpmn:FlowElement",
     "bpmn:Participant",
@@ -116,13 +113,8 @@ export function setName(modeler, element, name) {
     modeler.get("modeling").updateLabel(element, name);
 }
 
-// Element types that actually declare a `default` property in the BPMN moddle, and can
-// therefore own a default flow. bpmn-js's renderer is looser than this -- it draws the "//"
-// marker for any bpmn:Gateway or bpmn:Activity source -- but the BPMN schema only defines
-// `default` on these four. Offering the toggle on a bpmn:ParallelGateway or
-// bpmn:EventBasedGateway serialises an undeclared attribute as default="[object Object]",
-// producing invalid XML, so the source type must be checked against this list and not
-// against the broader bpmn:Gateway.
+// Only these four declare `default` in the moddle. Don't widen this to bpmn:Gateway - on a
+// parallel/event-based gateway it serialises as default="[object Object]" and the XML is invalid.
 const DEFAULT_FLOW_SOURCES = [
     "bpmn:ExclusiveGateway",
     "bpmn:InclusiveGateway",
@@ -130,9 +122,7 @@ const DEFAULT_FLOW_SOURCES = [
     "bpmn:Activity",
 ];
 
-// A sequence flow can only meaningfully be "the default" if its source supports a default
-// flow at all and has more than one outgoing sequence flow (i.e. it is actually a
-// fork/decision point).
+// only makes sense if the source can hold a default and actually forks
 export function canBeDefaultFlow(element) {
     if (!is(element, "bpmn:SequenceFlow")) return false;
     const source = element.source;
@@ -142,9 +132,7 @@ export function canBeDefaultFlow(element) {
     return outgoing.length >= 2;
 }
 
-// The default flow is stored as a reference on the SOURCE element, not on the flow itself.
-// This is the same check bpmn-js makes internally in
-// bpmn-js/lib/features/modeling/behavior/UnsetDefaultFlowBehavior.js.
+// note the default is stored on the SOURCE, not on the flow
 export function isDefaultFlow(element) {
     if (!canBeDefaultFlow(element)) return false;
     const sourceBo = getBusinessObject(element.source);
@@ -152,8 +140,7 @@ export function isDefaultFlow(element) {
     return sourceBo.get("default") === flowBo;
 }
 
-// Setting a new default implicitly clears any previous one, because a source can only hold
-// a single `default` reference.
+// setting a new default clears the old one automatically (only one ref per source)
 export function setDefaultFlow(modeler, element, isDefault) {
     if (!canBeDefaultFlow(element)) return;
     const flowBo = getBusinessObject(element);

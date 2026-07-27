@@ -21,11 +21,7 @@ import {
 
 const DATA_TYPES = ["string", "number", "boolean", "date", "json"];
 
-/**
- * Right-hand editor sidebar for the currently selected BPMN element.
- * Exposes the element name, a free-text description (BPMN documentation)
- * and the MetaML process/task data items (name / type / value rows).
- */
+// Sidebar for the selected element: name, description (BPMN documentation) and MetaML data items.
 const DataPanel = ({ modeler, element }) => {
     if (!element) {
         return (
@@ -39,12 +35,9 @@ const DataPanel = ({ modeler, element }) => {
     const typeLabel = (bo.$type || "").replace("bpmn:", "");
     const supportsData = canHoldData(element);
     const items = supportsData ? getDataItems(element) : [];
-    // bpmn-js can only write a label onto certain element types. The process root -- the
-    // default selection on page load -- isn't one of them, so an editable Name box there
-    // accepted keystrokes and threw them away. Show it read-only with the reason instead.
+    // the process root can't take a label, so the Name box there just ate keystrokes - show it
+    // disabled instead
     const renameable = canRename(element);
-    // Only a sequence flow leaving a real fork (gateway/activity with 2+ outgoing flows) can be
-    // marked as the source's default flow -- the "//" marker in the canvas.
     const defaultFlowCapable = canBeDefaultFlow(element);
 
     return (

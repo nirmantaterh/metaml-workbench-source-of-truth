@@ -9,86 +9,69 @@ export async function getSample() {
     }
 };
 
-// Persist a BPMN process model. payload: { name, bpmnXml }
+// payload: { name, bpmnXml }
 export async function saveModel(payload) {
     const result = await api.post(`/wb/transmute/model`, payload);
     return result.data;
 }
 
-// Load a single saved process model by id.
 export async function getModel(id) {
     const result = await api.get(`/wb/transmute/model/${id}`);
     return result.data;
 }
 
-// Fetch a twin by id, including its full ordered eventLog (deploy → launch → connect →
-// evolve attempts and why each was approved/blocked).
+// includes the twin's full ordered eventLog
 export async function getTwin(id) {
     const result = await api.get(`/wb/transmute/twin/${id}`);
     return result.data;
 }
 
-// Deploy a model and its twin onto the Spring Boot target platform.
 // payload: { modelId }
 export async function launchModel(payload) {
     const result = await api.post(`/wb/transmute/launch`, payload);
     return result.data;
 }
 
-// Link an activity in the original process to its counterpart in the twin, so the twin can
-// act on behalf of that activity. Note: twinProcessId here is the TwinProcess id returned by
-// launch (the twin handle), not the Camunda process-instance id.
+// twinProcessId is the TwinProcess id from launch, NOT the Camunda process-instance id
 // payload: { twinProcessId, originalActivityId, twinActivityId }
 export async function connectActivity(payload) {
     const result = await api.post(`/wb/transmute/connect`, payload);
     return result.data;
 }
 
-// Ask the twin to evolve an activity by introducing an agent of the given type. The activity
-// must be connected AND actually reached in the original process instance; governance and the
-// node manager then decide whether the agent is approved. Returns an AgentDecision whose
-// `approved`/`reason` fields carry the real outcome (the outer HTTP call succeeding does not).
+// Returns an AgentDecision - check .approved, a 200 here doesn't mean it went through.
 // payload: { twinProcessId, activityId, agentType }
 export async function evolveActivity(payload) {
     const result = await api.post(`/wb/transmute/evolve`, payload);
     return result.data;
 }
 
-// Automatic original-to-twin bridge: if the given activity has actually been reached in the
-// original process instance, forwards it through the same evolve path evolveActivity uses.
-// Safe to call more than once for the same activity -- idempotent on the twin. Returns the
-// same AgentDecision shape as evolveActivity.
+// idempotent, same AgentDecision shape as evolveActivity
 export async function bridgeActivity(twinProcessId, activityId) {
     const result = await api.post(`/wb/transmute/bridge/${twinProcessId}/${activityId}`);
     return result.data;
 }
 
-// Advance the ORIGINAL process instance by completing every user task currently open on it, so
-// execution moves to the next activity and that activity becomes evolvable/bridgeable (both gate
-// on the activity having actually been reached in the original instance). Completes all open
-// tasks, not a chosen one -- a parallel gateway leaves several open simultaneously. Returns the
-// list of completed task labels ("name (activityId)"), empty if nothing was open.
+// Completes every open task on the ORIGINAL instance so the next activity becomes reachable.
+// All of them, not a chosen one - a parallel gateway leaves several open at once.
 export async function completeCurrentTasks(twinProcessId) {
     const result = await api.post(`/wb/transmute/complete-task/${twinProcessId}`);
     return result.data;
 }
 
-// Governance is the second gate on evolve, independent of the node manager's agent catalog:
-// it can deny an agent type the catalog would allow, and caps how many evolutions a single
-// twin gets. The policy is global, server-side state -- not per-session, not per-twin.
+// the policy is global server state, not per-twin
 export async function getGovernancePolicy() {
     const result = await api.get(`/governance/policy`);
     return result.data;
 }
 
-// deniedAgentTypes is always sent in full (the backend replaces the list rather than merging),
-// so this is last-write-wins. Callers must load the current policy before submitting one.
+// replaces the denylist rather than merging, so load the current policy first
 export async function updateGovernancePolicy(deniedAgentTypes, maxEvolutionsPerTwin) {
     const result = await api.post(`/governance/policy`, { deniedAgentTypes, maxEvolutionsPerTwin });
     return result.data;
 }
 
-// Evolutions used vs. allowed for one twin. 404s if the twin id was never launched.
+// 404s if the twin was never launched
 export async function getGovernanceUsage(twinProcessId) {
     const result = await api.get(`/governance/usage/${twinProcessId}`);
     return result.data;
