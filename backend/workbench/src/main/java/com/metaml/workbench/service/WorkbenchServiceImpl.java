@@ -380,16 +380,22 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     // makes whichever arrives second a no-op.
     @Override
     public AgentDecision bridgeActivityEvent(String twinProcessId, String activityId) {
+        return bridgeActivityEvent(twinProcessId, activityId, null);
+    }
+
+    @Override
+    public AgentDecision bridgeActivityEvent(String twinProcessId, String activityId, String activityInstanceId) {
         TwinProcess twin = getTwinProcess(twinProcessId);
         // same deal as evolveActivity - the skip paths write to the log too
         try {
-            return bridgeOnce(twin, twinProcessId, activityId);
+            return bridgeOnce(twin, twinProcessId, activityId, activityInstanceId);
         } finally {
             persistState();
         }
     }
 
-    private AgentDecision bridgeOnce(TwinProcess twin, String twinProcessId, String activityId) {
+    private AgentDecision bridgeOnce(TwinProcess twin, String twinProcessId, String activityId,
+            String activityInstanceId) {
         if (!isActivityLinked(twin, activityId)) {
             twin.getEventLog().add("Bridge skipped: activity " + activityId
                     + " is not connected to a twin activity");
@@ -424,8 +430,17 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                     "Activity event already being forwarded to twin");
         }
 
+        // a loop or a multi-instance activity revisits the same activityId more than once in one
+        // instance, and each visit is a real, separate thing to bridge - not a duplicate. the auto
+        // trigger knows which visit this is (Camunda hands it a fresh activityInstanceId every
+        // time), so key the guard on that when we have it. the manual button has no visit to point
+        // at, only "the current occurrence of this activity", so it keeps keying on activityId.
+        String forwardedKey = (activityInstanceId == null || activityInstanceId.isBlank())
+                ? activityId
+                : activityInstanceId;
+
         try {
-            if (!twin.getForwardedBridgeActivities().add(activityId)) {
+            if (!twin.getForwardedBridgeActivities().add(forwardedKey)) {
                 twin.getEventLog().add("Bridge skipped: activity " + activityId
                         + " was already forwarded to twin");
                 logger.info("Bridge skipped for activity {} on twin {}: already forwarded",
@@ -453,11 +468,11 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                 AgentDecision decision = runEvolution(twin, twinProcessId, activityId,
                         DEFAULT_BRIDGE_AGENT_TYPE);
                 if (!decision.isApproved()) {
-                    twin.getForwardedBridgeActivities().remove(activityId);
+                    twin.getForwardedBridgeActivities().remove(forwardedKey);
                 }
                 return decision;
             } catch (RuntimeException e) {
-                twin.getForwardedBridgeActivities().remove(activityId);
+                twin.getForwardedBridgeActivities().remove(forwardedKey);
                 throw e;
             }
         } finally {

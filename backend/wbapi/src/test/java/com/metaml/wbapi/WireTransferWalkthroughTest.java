@@ -242,6 +242,30 @@ class WireTransferWalkthroughTest {
         assertThat(governanceService.getUsage(twin.getId()).getEvolutionCount()).isEqualTo(1);
     }
 
+    // regression test for the flat-set bug: forwardedBridgeActivities used to key on activityId
+    // alone, so a sequential multi-instance task's second visit looked like a duplicate of the
+    // first and got silently skipped instead of bridged.
+    @Test
+    void multiInstanceActivityBridgesEveryVisitNotJustTheFirst() throws IOException {
+        ProcessModel model = workbenchService.saveProcessModel(null, "loop task test", loopBpmn());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        workbenchService.connectActivity(twin.getId(), "Task_Loop", "Task_Loop");
+
+        // visit #1's start event fires during launchProcess, before the twin is tracked - same
+        // reason KYC gets bridged by hand elsewhere in this file
+        AgentDecision firstVisit = workbenchService.bridgeActivityEvent(twin.getId(), "Task_Loop");
+        assertThat(firstVisit.isApproved()).isTrue();
+        assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(1);
+
+        // completing visit #1 immediately opens visit #2 of the same multi-instance activity -
+        // same activityId, a different activityInstanceId under the hood. auto-bridge should pick
+        // this one up on its own rather than treating it as already forwarded.
+        assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(1);
+
+        assertThat(reached(twin, "EndEvent_1")).isTrue();
+        assertThat(governanceService.getUsage(twin.getId()).getEvolutionCount()).isEqualTo(2);
+    }
+
     @Test
     void rejectsRubbishInsteadOf500ing() throws IOException {
         assertThatThrownBy(() -> workbenchService.launchProcess(null))
@@ -308,5 +332,33 @@ class WireTransferWalkthroughTest {
         }
         throw new IllegalStateException("no examples/citibank-wire-transfer.bpmn above "
                 + Path.of("").toAbsolutePath());
+    }
+
+    // small enough to just inline rather than another file in examples/ - only exists to give a
+    // real sequential multi-instance activity for the bridge-tracking regression test above
+    private static String loopBpmn() {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                                   id="Definitions_Loop" targetNamespace="http://metaml.com/test">
+                  <bpmn:process id="Process_LoopTask" isExecutable="true">
+                    <bpmn:startEvent id="StartEvent_1">
+                      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+                    </bpmn:startEvent>
+                    <bpmn:userTask id="Task_Loop" name="Loop Task">
+                      <bpmn:incoming>Flow_1</bpmn:incoming>
+                      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+                      <bpmn:multiInstanceLoopCharacteristics isSequential="true">
+                        <bpmn:loopCardinality>2</bpmn:loopCardinality>
+                      </bpmn:multiInstanceLoopCharacteristics>
+                    </bpmn:userTask>
+                    <bpmn:endEvent id="EndEvent_1">
+                      <bpmn:incoming>Flow_2</bpmn:incoming>
+                    </bpmn:endEvent>
+                    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Task_Loop" />
+                    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_Loop" targetRef="EndEvent_1" />
+                  </bpmn:process>
+                </bpmn:definitions>
+                """;
     }
 }

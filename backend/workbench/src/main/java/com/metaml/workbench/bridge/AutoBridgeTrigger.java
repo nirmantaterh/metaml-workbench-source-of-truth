@@ -94,6 +94,9 @@ public class AutoBridgeTrigger {
         if (shuttingDown) {
             return;
         }
+        // distinguishes a loop or multi-instance activity's repeat visits from each other, so the
+        // service doesn't treat the second lap as "already forwarded" and skip it
+        String activityInstanceId = event.getActivityInstanceId();
 
         // Don't inline this back onto the current thread. AFTER_COMMIT still has the committed
         // transaction's resources bound here (isActualTransactionActive() is true, I checked -
@@ -102,7 +105,7 @@ public class AutoBridgeTrigger {
         // across the node manager HTTP call. Worker thread gets its own tx and its own connection.
         Future<?> bridged;
         try {
-            bridged = bridgeExecutor.submit(() -> runBridge(twinId, activityId));
+            bridged = bridgeExecutor.submit(() -> runBridge(twinId, activityId, activityInstanceId));
         } catch (RejectedExecutionException e) {
             // shutdown raced us between the flag check and here
             logger.debug("Auto-bridge executor is gone, skipping activity {} on twin {}", activityId, twinId);
@@ -121,9 +124,9 @@ public class AutoBridgeTrigger {
         }
     }
 
-    private void runBridge(String twinId, String activityId) {
+    private void runBridge(String twinId, String activityId, String activityInstanceId) {
         try {
-            workbenchService.bridgeActivityEvent(twinId, activityId);
+            workbenchService.bridgeActivityEvent(twinId, activityId, activityInstanceId);
         } catch (RuntimeException e) {
             // debug, not warn - this is normal. unconnected activities land here, and so does
             // whatever the process hits first: those events fire before launchProcess has even
