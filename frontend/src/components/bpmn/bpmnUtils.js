@@ -1,6 +1,6 @@
 import { getBusinessObject, is } from "bpmn-js/lib/util/ModelUtil";
 
-// Element types that are allowed to carry MetaML data.
+// what's allowed to carry metaml data
 const DATA_CAPABLE = ["bpmn:Process", "bpmn:Participant", "bpmn:Task", "bpmn:Activity", "bpmn:SubProcess"];
 
 export function canHoldData(element) {
@@ -30,7 +30,6 @@ function createModdle(moddle, type, props, parent) {
     return el;
 }
 
-// Lazily creates bpmn:extensionElements + metaml:DataItems on the element.
 function ensureContainer(modeler, element) {
     const modeling = modeler.get("modeling");
     const moddle = modeler.get("moddle");
@@ -74,7 +73,7 @@ export function removeDataItem(modeler, element, item) {
     modeler.get("modeling").updateModdleProperties(element, container, { items });
 }
 
-// we reuse native bpmn:documentation as the "description" field
+// "description" in the sidebar is just native bpmn:documentation, no custom field for it
 export function getDocumentation(element) {
     const bo = getBusinessObject(element);
     const docs = bo && bo.get("documentation");
@@ -89,8 +88,8 @@ export function setDocumentation(modeler, element, text) {
     modeling.updateModdleProperties(element, bo, { documentation });
 }
 
-// same list as bpmn-js's getLabelAttr (lib/util/LabelUtil.js). Anything else makes updateLabel
-// a silent no-op - including bpmn:Process, which is what's selected on load.
+// copied from bpmn-js getLabelAttr (lib/util/LabelUtil.js). anything not in here makes
+// updateLabel a silent no-op, bpmn:Process included - and that's what's selected on load.
 const LABELABLE = [
     "bpmn:FlowElement",
     "bpmn:Participant",
@@ -113,8 +112,8 @@ export function setName(modeler, element, name) {
     modeler.get("modeling").updateLabel(element, name);
 }
 
-// Only these four declare `default` in the moddle. Don't widen this to bpmn:Gateway - on a
-// parallel/event-based gateway it serialises as default="[object Object]" and the XML is invalid.
+// only these four declare `default` in the moddle. do NOT widen to bpmn:Gateway - on a
+// parallel one it serialises as default="[object Object]" and the whole file is invalid.
 const DEFAULT_FLOW_SOURCES = [
     "bpmn:ExclusiveGateway",
     "bpmn:InclusiveGateway",
@@ -122,7 +121,7 @@ const DEFAULT_FLOW_SOURCES = [
     "bpmn:Activity",
 ];
 
-// only makes sense if the source can hold a default and actually forks
+// only worth offering if the source can hold a default and actually forks
 export function canBeDefaultFlow(element) {
     if (!is(element, "bpmn:SequenceFlow")) return false;
     const source = element.source;
@@ -132,7 +131,7 @@ export function canBeDefaultFlow(element) {
     return outgoing.length >= 2;
 }
 
-// note the default is stored on the SOURCE, not on the flow
+// the default lives on the SOURCE, not on the flow
 export function isDefaultFlow(element) {
     if (!canBeDefaultFlow(element)) return false;
     const sourceBo = getBusinessObject(element.source);
@@ -140,7 +139,7 @@ export function isDefaultFlow(element) {
     return sourceBo.get("default") === flowBo;
 }
 
-// setting a new default clears the old one automatically (only one ref per source)
+// setting a new one clears the old, there's only ever one ref per source
 export function setDefaultFlow(modeler, element, isDefault) {
     if (!canBeDefaultFlow(element)) return;
     const flowBo = getBusinessObject(element);

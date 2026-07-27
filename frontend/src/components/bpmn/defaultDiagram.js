@@ -1,17 +1,12 @@
-// The starting canvas for a new model. The metaml namespace is pre-declared so process/task
-// data serializes cleanly.
+// blank canvas for a new model. metaml namespace declared up front so data round-trips.
 //
-// The Start -> User Task -> End shape (and the comment below) is taken as-is from
-// BpmnEditor.js's DEFAULT_BPMN_XML, which the older demo page has always used: a bare
-// start-event-only diagram deploys and launches fine, but both process instances run to
-// completion the instant they start, so the twin has already ENDED before anything can be
-// evolved or bridged onto it. Deploying the blank canvas then produced
-// "Twin process instance ... could not be updated (it may have already ended)" on every
-// Evolve and Bridge. The bpmn:userTask is what creates a genuine Camunda wait state, which
-// is what leaves the twin alive and gives connect/evolve/bridge something real to act on.
+// The user task in the middle is not decoration. A start-event-only diagram deploys and
+// launches fine, but both instances run straight to their end event, and then every Evolve
+// and Bridge came back "Twin process instance ... could not be updated (it may have already
+// ended)". The userTask is a real Camunda wait state, which is the only thing keeping the
+// twin alive long enough to do anything to it.
 //
-// isExecutable="true" is required for Camunda to run this process at all -- a non-executable
-// process deploys but cannot be instantiated.
+// isExecutable="true" or Camunda deploys it and then refuses to start an instance.
 const defaultDiagram = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
                   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"

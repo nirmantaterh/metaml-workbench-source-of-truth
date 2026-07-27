@@ -28,16 +28,15 @@ import {
     getGovernanceUsage,
 } from "../../services/workbench/WorkbenchService";
 
-// not connectable activities - everything else (tasks, events, gateways) can link to a twin
+// not connectable. everything else (tasks, events, gateways) can link to a twin.
 const NON_ACTIVITY_TYPES = ["bpmn:Process", "bpmn:Collaboration", "bpmn:SequenceFlow"];
 
-// backend sends this back shaped like a denial (approved:false + reason) but it just means
-// "already done", so don't show it as an error
+// comes back shaped like a denial (approved:false + reason) but really means "already done"
 const BRIDGE_ALREADY_FORWARDED_REASON = "Activity event already forwarded to twin";
 
-// Throws on a cold first paint - canvas isn't laid out yet, size is 0, bpmn-js gets a
-// non-finite scale. Was showing up as a red "could not load diagram" even though the diagram
-// had loaded fine. Zoom is cosmetic, so just swallow it.
+// throws on a cold first paint - canvas has no layout yet, size 0, bpmn-js gets a non-finite
+// scale. showed up as a red "could not load diagram" on a diagram that had loaded perfectly
+// fine. zoom is cosmetic so just eat it.
 function fitViewport(modeler) {
     try {
         modeler.get("canvas").zoom("fit-viewport");
@@ -52,24 +51,24 @@ const ModelPage = () => {
     const fileInputRef = useRef(null);
 
     const [modelName, setModelName] = useState("New Process");
-    // only read back by Load - Deploy always saves a fresh copy rather than using this
+    // only Load reads this back, Deploy always saves a fresh copy
     const [loadId, setLoadId] = useState("");
+    // editable because twin ids don't survive a backend restart - paste the old one back in
     const [twinId, setTwinId] = useState("");
-    // "validator" is the type the demo node manager always knows about
+    // the one type the demo node manager always knows
     const [agentType, setAgentType] = useState("validator");
     const [twinLog, setTwinLog] = useState([]);
     const [selected, setSelected] = useState(null);
-    // bumped on command-stack changes to force the moddle-backed sidebar to re-render
+    // bumped on command-stack changes, otherwise the sidebar never re-renders
     const [, setRevision] = useState(0);
     const [status, setStatus] = useState(null); // { type: 'ok'|'err'|'info', text }
     const [busy, setBusy] = useState(false);
 
     // --- Governance ---
-    // kept as comma-separated text so the field is directly editable; split on submit
     const [deniedAgentTypesInput, setDeniedAgentTypesInput] = useState("");
     const [maxEvolutionsInput, setMaxEvolutionsInput] = useState("");
-    // blocks Update policy until we've loaded the real denylist once, otherwise submitting
-    // early sends [] and wipes it
+    // keeps Update policy disabled until we've loaded the real denylist once. submitting before
+    // that sends [] and quietly wipes it.
     const [policyLoaded, setPolicyLoaded] = useState(false);
     const [governanceResult, setGovernanceResult] = useState(null);
     const [governanceError, setGovernanceError] = useState(null);
@@ -117,7 +116,7 @@ const ModelPage = () => {
         return () => {
             destroyed = true;
             modeler.destroy();
-            // StrictMode runs this twice in dev on the same node - clear the leftover SVG
+            // StrictMode runs this twice in dev on the same node, clear the leftover svg
             if (container) {
                 container.innerHTML = "";
             }
@@ -129,7 +128,8 @@ const ModelPage = () => {
         return xml;
     };
 
-    // pass an explicit id right after Deploy, twinId state hasn't flushed yet
+    // pass an explicit id right after Deploy, twinId state hasn't flushed yet.
+    // TODO: refetching the whole log after every action is dumb, but it's 3 lines and it works
     const refreshTwinLog = async (id) => {
         const t = (id || twinId).trim();
         if (!t) return;
@@ -138,7 +138,7 @@ const ModelPage = () => {
             const twin = res.data || res;
             setTwinLog(Array.isArray(twin.eventLog) ? twin.eventLog : []);
         } catch (err) {
-            // leave the existing log in place
+            // keep whatever we had
         }
     };
 
@@ -207,8 +207,8 @@ const ModelPage = () => {
         URL.revokeObjectURL(url);
     };
 
-    // Never send an id! The backend refuses to overwrite an existing model, so re-sending the
-    // id from the last save broke every Save after the first. Each save is a new version.
+    // never send an id here. backend won't overwrite an existing model, so re-sending the id
+    // from the last save broke every Save after the first one. each save is its own version.
     const handleSave = async () => {
         setBusy(true);
         try {
@@ -229,7 +229,7 @@ const ModelPage = () => {
     const handleDeploy = async () => {
         setBusy(true);
         try {
-            // save first - /launch wants a modelId, not raw XML. Same no-id rule as handleSave.
+            // save first, /launch wants a modelId not raw XML. same no-id rule as handleSave.
             const bpmnXml = await currentXml();
             const saveRes = await saveModel({ name: modelName, bpmnXml });
             const saved = saveRes.data || saveRes;
@@ -253,8 +253,7 @@ const ModelPage = () => {
         }
     };
 
-    // used as both the original and twin activity id - both instances share one definition,
-    // so the ids are identical
+    // same id serves as both original and twin activity - one definition, two instances
     const selectedActivityId =
         selected && selected.id && !NON_ACTIVITY_TYPES.includes(selected.type) ? selected.id : null;
 
@@ -311,9 +310,9 @@ const ModelPage = () => {
                 activityId: selectedActivityId,
                 agentType: type,
             });
-            // a 200 doesn't mean approved - that's in the decision itself
+            // a 200 is not an approval, that's inside the decision
             const decision = res.data || res;
-            // evolve returns the decision, not the twin, so fetch the log separately
+            // evolve gives back the decision, not the twin, so the log needs its own fetch
             await refreshTwinLog(twin);
             if (decision.approved) {
                 setStatus({
@@ -354,7 +353,7 @@ const ModelPage = () => {
                     text: `Bridged "${selectedActivityId}": approved → agent ${decision.agentName || "(unnamed)"}.`,
                 });
             } else if (decision.reason === BRIDGE_ALREADY_FORWARDED_REASON) {
-                // no-op, not a denial - showing this in red made a correct result look broken
+                // no-op, not a denial. red here made a correct result look broken.
                 setStatus({
                     type: "info",
                     text: `Bridge "${selectedActivityId}": already forwarded to the twin earlier — no change (this is expected on a repeat bridge).`,
@@ -372,9 +371,8 @@ const ModelPage = () => {
         }
     };
 
-    // Evolve/Bridge need the activity to have been reached in the original, and the original
-    // sits at its first user task until something completes it. Not tied to the canvas
-    // selection - it just completes whatever is open.
+    // evolve/bridge need the activity reached in the original, and the original sits at its
+    // first user task until someone completes it. ignores the canvas selection entirely.
     const handleCompleteTasks = async () => {
         const twin = twinId.trim();
         if (!twin) {
@@ -408,8 +406,7 @@ const ModelPage = () => {
         }
     };
 
-    // axios's err.message is just "Request failed with status code 400" - the real one is
-    // in err.response.data.message
+    // axios err.message is just "Request failed with status code 400", the useful one is buried
     const governanceErrorText = (err) => err.response?.data?.message || err.message;
 
     const handleViewPolicy = useCallback(async () => {
@@ -463,7 +460,7 @@ const ModelPage = () => {
         }
     };
 
-    // load the policy on mount so the denylist field isn't empty (see policyLoaded above)
+    // load policy on mount so the denylist box isn't empty, see policyLoaded above
     useEffect(() => {
         handleViewPolicy();
     }, [handleViewPolicy]);
@@ -573,7 +570,7 @@ const ModelPage = () => {
                 </span>
             </div>
 
-            {/* second gate on evolve/bridge, independent of the node manager's catalog */}
+            {/* second gate on evolve/bridge, nothing to do with the node manager's catalog */}
             <div className="bpmn-toolbar bpmn-govbar">
                 <span className="bpmn-field-label mb-0">Governance</span>
                 <Form.Control

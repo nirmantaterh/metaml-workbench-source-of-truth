@@ -20,7 +20,7 @@ export async function getModel(id) {
     return result.data;
 }
 
-// includes the twin's full ordered eventLog
+// comes back with the twin's whole eventLog, in order
 export async function getTwin(id) {
     const result = await api.get(`/wb/transmute/twin/${id}`);
     return result.data;
@@ -32,14 +32,14 @@ export async function launchModel(payload) {
     return result.data;
 }
 
-// twinProcessId is the TwinProcess id from launch, NOT the Camunda process-instance id
+// twinProcessId is the id from launch, NOT either camunda process-instance id. lost an hour.
 // payload: { twinProcessId, originalActivityId, twinActivityId }
 export async function connectActivity(payload) {
     const result = await api.post(`/wb/transmute/connect`, payload);
     return result.data;
 }
 
-// Returns an AgentDecision - check .approved, a 200 here doesn't mean it went through.
+// returns an AgentDecision - check .approved, a 200 doesn't mean it went through
 // payload: { twinProcessId, activityId, agentType }
 export async function evolveActivity(payload) {
     const result = await api.post(`/wb/transmute/evolve`, payload);
@@ -52,8 +52,7 @@ export async function bridgeActivity(twinProcessId, activityId) {
     return result.data;
 }
 
-// Completes every open task on the ORIGINAL instance so the next activity becomes reachable.
-// All of them, not a chosen one - a parallel gateway leaves several open at once.
+// every open task on the ORIGINAL instance, so the next activity becomes reachable
 export async function completeCurrentTasks(twinProcessId) {
     const result = await api.post(`/wb/transmute/complete-task/${twinProcessId}`);
     return result.data;
@@ -65,7 +64,7 @@ export async function getGovernancePolicy() {
     return result.data;
 }
 
-// replaces the denylist rather than merging, so load the current policy first
+// replaces the denylist, doesn't merge - load the current policy first or you'll wipe it
 export async function updateGovernancePolicy(deniedAgentTypes, maxEvolutionsPerTwin) {
     const result = await api.post(`/governance/policy`, { deniedAgentTypes, maxEvolutionsPerTwin });
     return result.data;

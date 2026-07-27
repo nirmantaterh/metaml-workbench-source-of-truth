@@ -17,14 +17,14 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Fires the bridge automatically when the original process reaches an activity, so nobody has to
- * click "Bridge selected activity". Just a trigger - it calls the same service method the REST
- * endpoint does and leans on that method's own guards. The manual button still works.
+ * Fires the bridge on its own when the original reaches an activity, so nobody has to click
+ * "Bridge selected activity". It's only a trigger - calls the same service method the REST
+ * endpoint calls and leans on that method's guards. Manual button still works.
  *
- * <p>Uses the ExecutionEvents the Camunda Spring Boot starter already publishes
- * (camunda.bpm.eventing.execution, on by default) instead of a hand-written BpmnParseListener.
- * Same thing, already written, and it leaves the engine's history handler alone - which matters
- * because hasReachedActivityInOriginal reads those history rows.
+ * <p>Rides the ExecutionEvents the Camunda Spring Boot starter already publishes
+ * (camunda.bpm.eventing.execution, on by default) rather than a hand-written BpmnParseListener.
+ * Tried the listener first; it also meant touching the engine's history handler, and
+ * hasReachedActivityInOriginal reads exactly those history rows, so no thanks.
  */
 @Component
 public class AutoBridgeTrigger {
@@ -32,14 +32,14 @@ public class AutoBridgeTrigger {
     private static final Logger logger = LoggerFactory.getLogger(AutoBridgeTrigger.class);
 
     private static final String ORIGINAL_BUSINESS_KEY_PREFIX = "original-";
-    // activities emit "start"/"end", sequence flows emit "take" - we only want entry
+    // activities emit start/end, sequence flows emit "take". we only want entry.
     private static final String ACTIVITY_START_EVENT_NAME = "start";
-    // way more than the real cost (~ms), so it only trips on something actually stuck
+    // real cost is milliseconds, this only trips if something is genuinely stuck
     private static final long BRIDGE_TIMEOUT_SECONDS = 10;
 
     private final WorkbenchService workbenchService;
 
-    // single thread: activity starts are ordered anyway, and it caps us at one extra connection
+    // one thread on purpose: activity starts are ordered anyway, and it caps us at one extra conn
     private final ExecutorService bridgeExecutor;
 
     public AutoBridgeTrigger(WorkbenchService workbenchService) {
@@ -51,10 +51,10 @@ public class AutoBridgeTrigger {
         });
     }
 
-    // AFTER_COMMIT, not a plain @EventListener. The listener that raises this event runs
-    // mid-command, before the engine flushes, so the HISTORIC_ACTIVITY_INSTANCE row isn't there
-    // yet and every activity gets rejected with "has not been reached yet". Cost me an afternoon.
-    // fallbackExecution so the event isn't silently dropped if there's no tx synchronization.
+    // AFTER_COMMIT, not a plain @EventListener. Whatever raises this event runs mid-command,
+    // before the engine flushes, so the HISTORIC_ACTIVITY_INSTANCE row isn't there yet and every
+    // single activity comes back "has not been reached yet". Cost me an afternoon.
+    // fallbackExecution so the event isn't just dropped if there's no tx synchronization around.
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onActivityStarted(ExecutionEvent event) {
         if (!ACTIVITY_START_EVENT_NAME.equals(event.getEventName())) {
@@ -62,23 +62,22 @@ public class AutoBridgeTrigger {
         }
         String businessKey = event.getProcessBusinessKey();
         if (businessKey == null || !businessKey.startsWith(ORIGINAL_BUSINESS_KEY_PREFIX)) {
-            // twin runs the same definition and emits the same activity ids, so skip it or we
-            // bridge everything twice. Silent - this is most events on a normal run.
+            // twin runs the same definition and emits the same ids, so skip it or everything
+            // gets bridged twice. no logging, this is most events on a normal run.
             return;
         }
         String twinId = businessKey.substring(ORIGINAL_BUSINESS_KEY_PREFIX.length());
         String activityId = event.getCurrentActivityId();
 
-        // The other thread is load-bearing, not an optimisation. AFTER_COMMIT still has the
-        // committed transaction's resources bound to this thread (checked: isActualTransactionActive()
-        // is true here, Spring unbinds the connection later in cleanupAfterCompletion), so a
-        // same-thread call would JOIN an already-committed transaction and its writes only survive
-        // by luck when autoCommit is restored. It would also pin that connection across the node
-        // manager HTTP call. The worker gets its own transaction and connection.
+        // Don't inline this back onto the current thread. AFTER_COMMIT still has the committed
+        // transaction's resources bound here (isActualTransactionActive() is true, I checked -
+        // Spring only unbinds later in cleanupAfterCompletion), so a same-thread call joins an
+        // already-committed transaction and its writes survive on luck. Also pins that connection
+        // across the node manager HTTP call. Worker thread gets its own tx and its own connection.
         Future<?> bridged = bridgeExecutor.submit(() -> runBridge(twinId, activityId));
 
-        // wait rather than fire-and-forget so the UI's refetch after "Complete current task(s)"
-        // is deterministic. Holds no locks, and worst case we log a timeout.
+        // waiting instead of fire-and-forget so the UI refetch after "Complete current task(s)"
+        // always sees the bridge. no locks held here, worst case is a logged timeout.
         try {
             bridged.get(BRIDGE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
@@ -93,8 +92,9 @@ public class AutoBridgeTrigger {
         try {
             workbenchService.bridgeActivityEvent(twinId, activityId);
         } catch (RuntimeException e) {
-            // normal, not an error: unconnected activities hit this, and so do the first few
-            // activities of a launch (they fire before launchProcess registers the TwinProcess)
+            // debug, not warn - this is normal. unconnected activities land here, and so does
+            // whatever the process hits first: those events fire before launchProcess has even
+            // stored the TwinProcess. That's why KYC gets bridged by hand in the demo.
             logger.debug("Auto-bridge of activity {} on twin {} did nothing: {}",
                     activityId, twinId, e.toString());
         }

@@ -21,7 +21,6 @@ import {
 
 const DATA_TYPES = ["string", "number", "boolean", "date", "json"];
 
-// Sidebar for the selected element: name, description (BPMN documentation) and MetaML data items.
 const DataPanel = ({ modeler, element }) => {
     if (!element) {
         return (
@@ -35,8 +34,7 @@ const DataPanel = ({ modeler, element }) => {
     const typeLabel = (bo.$type || "").replace("bpmn:", "");
     const supportsData = canHoldData(element);
     const items = supportsData ? getDataItems(element) : [];
-    // the process root can't take a label, so the Name box there just ate keystrokes - show it
-    // disabled instead
+    // process root takes no label, so the Name box there just ate keystrokes. disable it.
     const renameable = canRename(element);
     const defaultFlowCapable = canBeDefaultFlow(element);
 

@@ -130,9 +130,9 @@ public class WorkbenchController {
         }
     }
 
-    // Manual bridge. AutoBridgeTrigger normally does this by itself now, but this is still the
-    // only way to bridge an activity that was connected after the original already walked past
-    // it (no second start event to catch). Idempotent - repeat calls are a no-op.
+    // Manual bridge. AutoBridgeTrigger handles this on its own now, but it's still the only way
+    // to bridge an activity you connected after the original already walked past it - there's no
+    // second start event coming. Repeat calls are a no-op.
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_BRIDGE + "/{twinId}/{activityId}")
     public ResponseEntity<ApiResponse> bridgeActivityEvent(@PathVariable String twinId,
             @PathVariable String activityId) {
@@ -150,8 +150,8 @@ public class WorkbenchController {
         }
     }
 
-    // Advances the ORIGINAL instance so the next activity becomes evolvable/bridgeable.
-    // Completes everything currently open, since a parallel gateway leaves several tasks open.
+    // moves the ORIGINAL along so the next activity can be evolved/bridged. everything open,
+    // not one task - parallel gateway leaves several
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_COMPLETE_TASK + "/{twinId}")
     public ResponseEntity<ApiResponse> completeCurrentTasks(@PathVariable String twinId) {
         try {

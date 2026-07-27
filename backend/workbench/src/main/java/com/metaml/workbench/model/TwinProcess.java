@@ -23,7 +23,7 @@ public class TwinProcess {
     private List<ActivityLink> activityLinks = new CopyOnWriteArrayList<>();
     private Instant launchedAt;
     private List<String> eventLog = new CopyOnWriteArrayList<>();
-    // which activities the bridge already forwarded, so a repeat call is a no-op instead of
-    // burning more quota. add() is atomic so concurrent duplicates only let one through.
+    // activities the bridge already forwarded, so a repeat is a no-op instead of eating more
+    // quota. add() is atomic, so two at once still only get one through.
     private Set<String> forwardedBridgeActivities = ConcurrentHashMap.newKeySet();
 }

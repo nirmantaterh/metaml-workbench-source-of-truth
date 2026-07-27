@@ -24,9 +24,7 @@ public interface WorkbenchService {
 
     AgentDecision bridgeActivityEvent(String twinProcessId, String activityId);
 
-    // Completes every user task currently open on the twin's ORIGINAL process instance, so
-    // execution moves on to the next activity and that activity becomes evolvable/bridgeable
-    // (both gate on the activity having actually been reached). Returns a label per completed
-    // task, or an empty list if none were open.
+    // every open user task on the ORIGINAL instance, not the twin. returns a label per task
+    // completed, empty list if there was nothing open.
     List<String> completeCurrentTasks(String twinProcessId);
 }

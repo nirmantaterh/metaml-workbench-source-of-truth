@@ -53,9 +53,8 @@ public class GovernanceController {
     @GetMapping(WorkbenchUrlMapping.GOVERNANCE_USAGE + "/{twinProcessId}")
     public ResponseEntity<ApiResponse> getUsage(@PathVariable String twinProcessId) {
         try {
-            // Confirm the twin actually exists first: governance tracks usage in its own map
-            // keyed by twin id, so on its own it would happily report a confident 0/max for an
-            // id that was never launched (or was lost in a restart) instead of a 404.
+            // check the twin exists first. governance keys usage by twin id in its own map and
+            // would otherwise report a very confident 0/max for an id nobody ever launched.
             workbenchService.getTwinProcess(twinProcessId);
             GovernanceUsage usage = governanceService.getUsage(twinProcessId);
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, usage));

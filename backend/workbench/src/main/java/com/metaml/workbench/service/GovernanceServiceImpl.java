@@ -18,9 +18,10 @@ public class GovernanceServiceImpl implements GovernanceService {
     // kept low so the quota is easy to hit in a demo
     private static final int DEFAULT_MAX_EVOLUTIONS_PER_TWIN = 3;
 
-    // swap the whole set rather than mutating one, otherwise getPolicy() can catch it half-updated
+    // swap the whole set, never mutate it - getPolicy() can otherwise read it half updated
     private volatile Set<String> deniedAgentTypes = Set.of();
     private volatile int maxEvolutionsPerTwin = DEFAULT_MAX_EVOLUTIONS_PER_TWIN;
+    // TODO: nothing ever removes a twin's counter, this map only grows
     private final Map<String, AtomicInteger> evolutionCounts = new ConcurrentHashMap<>();
 
     @Override
@@ -30,7 +31,7 @@ public class GovernanceServiceImpl implements GovernanceService {
 
     @Override
     public GovernancePolicy updatePolicy(Set<String> newDeniedAgentTypes, Integer newMaxEvolutionsPerTwin) {
-        // both optional so you can update just one of them
+        // both optional, so you can change one without touching the other
         if (newDeniedAgentTypes != null) {
             deniedAgentTypes = normalize(newDeniedAgentTypes);
         }
@@ -43,7 +44,7 @@ public class GovernanceServiceImpl implements GovernanceService {
         return getPolicy();
     }
 
-    // denylist comes straight from a text box, so trim/lowercase here and at match time
+    // denylist comes straight out of a text box, so trim + lowercase here and at match time
     private static Set<String> normalize(Set<String> agentTypes) {
         return agentTypes.stream()
                 .map(type -> type.trim().toLowerCase())
@@ -51,8 +52,8 @@ public class GovernanceServiceImpl implements GovernanceService {
                 .collect(Collectors.toUnmodifiableSet());
     }
 
-    // Increment first and roll back if we went over, instead of check-then-increment: with a
-    // separate check, two requests sitting at max-1 can both pass it and both take the last slot.
+    // Increment then roll back if we went over, not check-then-increment. With a separate check
+    // two requests sitting at max-1 both pass it and both take the last slot.
     @Override
     public GovernanceDecision reserveEvolutionSlot(String twinProcessId, String agentType) {
         if (deniedAgentTypes.contains(agentType.trim().toLowerCase())) {
@@ -60,7 +61,7 @@ public class GovernanceServiceImpl implements GovernanceService {
                     "Agent type '" + agentType + "' is denied by governance policy");
         }
 
-        int max = maxEvolutionsPerTwin; // read once so the message matches what we compared against
+        int max = maxEvolutionsPerTwin; // read once, else the message can quote a different number
         AtomicInteger counter = evolutionCounts.computeIfAbsent(twinProcessId, id -> new AtomicInteger());
         int reserved = counter.incrementAndGet();
         if (reserved > max) {
@@ -72,7 +73,7 @@ public class GovernanceServiceImpl implements GovernanceService {
         return new GovernanceDecision(true, "Allowed by governance policy");
     }
 
-    // only for slots we actually reserved - denylist/quota blocks never touch the counter
+    // only call this for a slot we actually reserved. denial paths never touched the counter.
     @Override
     public void releaseEvolutionSlot(String twinProcessId) {
         AtomicInteger counter = evolutionCounts.get(twinProcessId);

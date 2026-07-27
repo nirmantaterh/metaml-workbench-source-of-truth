@@ -6,8 +6,7 @@ import lombok.NoArgsConstructor;
 
 import java.util.Set;
 
-// Both fields are nullable: only the ones present in the request body are changed, see
-// GovernanceServiceImpl.updatePolicy.
+// both nullable on purpose - only what's in the body gets changed
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
