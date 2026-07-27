@@ -1,0 +1,335 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:metaml="http://metaml.com/schema/bpmn/metaml"
+                  id="Definitions_CitiWire"
+                  targetNamespace="http://metaml.com/bpmn">
+  <bpmn:process id="Process_WireTransfer" name="Citi Bank - Large Wire Transfer Review" isExecutable="true">
+    <bpmn:extensionElements>
+      <metaml:dataItems>
+        <metaml:dataItem name="transferAmount" type="number" value="250000" />
+        <metaml:dataItem name="customerId" type="string" value="CUST-88213" />
+        <metaml:dataItem name="destinationCountry" type="string" value="Cayman Islands" />
+        <metaml:dataItem name="riskScore" type="number" value="0" />
+      </metaml:dataItems>
+    </bpmn:extensionElements>
+
+    <bpmn:startEvent id="StartEvent_1" name="Wire Transfer Request Received">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:userTask id="Task_KYC" name="Verify Customer Identity (KYC)">
+      <bpmn:documentation>Confirm the requesting customer's identity against on-file KYC records before any compliance checks run.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <metaml:dataItems>
+          <metaml:dataItem name="identityDocumentType" type="string" value="Passport" />
+          <metaml:dataItem name="identityVerified" type="boolean" value="true" />
+        </metaml:dataItems>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:exclusiveGateway id="Gateway_KYC" name="Identity Verified?" default="Flow_KYC_Continue">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_KYC_Reject</bpmn:outgoing>
+      <bpmn:outgoing>Flow_KYC_Continue</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:endEvent id="EndEvent_RejectedIdentity" name="Rejected - Identity Verification Failed">
+      <bpmn:incoming>Flow_KYC_Reject</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:parallelGateway id="Gateway_ParallelSplit" name="Run Compliance Checks">
+      <bpmn:incoming>Flow_KYC_Continue</bpmn:incoming>
+      <bpmn:outgoing>Flow_Split_AML</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Split_OFAC</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Split_Credit</bpmn:outgoing>
+    </bpmn:parallelGateway>
+
+    <bpmn:userTask id="Task_AML" name="Run AML Screening">
+      <bpmn:documentation>Screen the transfer against anti-money-laundering watchlists and transaction-pattern rules.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <metaml:dataItems>
+          <metaml:dataItem name="amlWatchlistHit" type="boolean" value="false" />
+          <metaml:dataItem name="amlScreeningProvider" type="string" value="Refinitiv World-Check" />
+        </metaml:dataItems>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Split_AML</bpmn:incoming>
+      <bpmn:outgoing>Flow_AML_Join</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_OFAC" name="Check Sanctions List (OFAC)">
+      <bpmn:incoming>Flow_Split_OFAC</bpmn:incoming>
+      <bpmn:outgoing>Flow_OFAC_Join</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_Credit" name="Assess Credit Risk">
+      <bpmn:incoming>Flow_Split_Credit</bpmn:incoming>
+      <bpmn:outgoing>Flow_Credit_Join</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:parallelGateway id="Gateway_ParallelJoin" name="Checks Complete">
+      <bpmn:incoming>Flow_AML_Join</bpmn:incoming>
+      <bpmn:incoming>Flow_OFAC_Join</bpmn:incoming>
+      <bpmn:incoming>Flow_Credit_Join</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToChecksGateway</bpmn:outgoing>
+    </bpmn:parallelGateway>
+
+    <bpmn:exclusiveGateway id="Gateway_ChecksPassed" name="All Checks Passed?" default="Flow_Checks_Pass">
+      <bpmn:incoming>Flow_ToChecksGateway</bpmn:incoming>
+      <bpmn:outgoing>Flow_Checks_Fail</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Checks_Pass</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:userTask id="Task_Escalate" name="Escalate to Compliance Officer">
+      <bpmn:incoming>Flow_Checks_Fail</bpmn:incoming>
+      <bpmn:outgoing>Flow_Escalate_ToDecision</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:exclusiveGateway id="Gateway_OfficerDecision" name="Officer Decision?" default="Flow_Officer_Approve">
+      <bpmn:incoming>Flow_Escalate_ToDecision</bpmn:incoming>
+      <bpmn:outgoing>Flow_Officer_Reject</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Officer_Approve</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:endEvent id="EndEvent_RejectedCompliance" name="Rejected - Compliance Review">
+      <bpmn:incoming>Flow_Officer_Reject</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:userTask id="Task_Approve" name="Approve Transfer Amount">
+      <bpmn:documentation>A manager sign-off on the transfer amount once every compliance check has cleared, subject to the approval-timeout escalation below.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <metaml:dataItems>
+          <metaml:dataItem name="approverId" type="string" value="MGR-4021" />
+          <metaml:dataItem name="approvedAmount" type="number" value="250000" />
+        </metaml:dataItems>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Checks_Pass</bpmn:incoming>
+      <bpmn:incoming>Flow_Officer_Approve</bpmn:incoming>
+      <bpmn:outgoing>Flow_Approve_ToExecute</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:boundaryEvent id="BoundaryEvent_Timeout" name="Approval Timeout (8 hrs)" attachedToRef="Task_Approve" cancelActivity="true">
+      <bpmn:outgoing>Flow_Timeout_ToEscalate</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerEventDefinition_1">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">PT8H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+
+    <bpmn:userTask id="Task_EscalateTimeout" name="Escalate to Senior Approver">
+      <bpmn:incoming>Flow_Timeout_ToEscalate</bpmn:incoming>
+      <bpmn:outgoing>Flow_EscalateTimeout_ToEnd</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:endEvent id="EndEvent_EscalatedTimeout" name="Escalated - Awaiting Senior Approval">
+      <bpmn:incoming>Flow_EscalateTimeout_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:userTask id="Task_Execute" name="Execute Wire Transfer">
+      <bpmn:incoming>Flow_Approve_ToExecute</bpmn:incoming>
+      <bpmn:outgoing>Flow_Execute_ToNotify</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_Notify" name="Notify Customer of Completion">
+      <bpmn:incoming>Flow_Execute_ToNotify</bpmn:incoming>
+      <bpmn:outgoing>Flow_Notify_ToEnd</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:endEvent id="EndEvent_Success" name="Transfer Completed Successfully">
+      <bpmn:incoming>Flow_Notify_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Task_KYC" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_KYC" targetRef="Gateway_KYC" />
+    <bpmn:sequenceFlow id="Flow_KYC_Reject" name="No" sourceRef="Gateway_KYC" targetRef="EndEvent_RejectedIdentity">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${false}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_KYC_Continue" name="Yes" sourceRef="Gateway_KYC" targetRef="Gateway_ParallelSplit" />
+    <bpmn:sequenceFlow id="Flow_Split_AML" sourceRef="Gateway_ParallelSplit" targetRef="Task_AML" />
+    <bpmn:sequenceFlow id="Flow_Split_OFAC" sourceRef="Gateway_ParallelSplit" targetRef="Task_OFAC" />
+    <bpmn:sequenceFlow id="Flow_Split_Credit" sourceRef="Gateway_ParallelSplit" targetRef="Task_Credit" />
+    <bpmn:sequenceFlow id="Flow_AML_Join" sourceRef="Task_AML" targetRef="Gateway_ParallelJoin" />
+    <bpmn:sequenceFlow id="Flow_OFAC_Join" sourceRef="Task_OFAC" targetRef="Gateway_ParallelJoin" />
+    <bpmn:sequenceFlow id="Flow_Credit_Join" sourceRef="Task_Credit" targetRef="Gateway_ParallelJoin" />
+    <bpmn:sequenceFlow id="Flow_ToChecksGateway" sourceRef="Gateway_ParallelJoin" targetRef="Gateway_ChecksPassed" />
+    <bpmn:sequenceFlow id="Flow_Checks_Fail" name="No" sourceRef="Gateway_ChecksPassed" targetRef="Task_Escalate">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${false}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Checks_Pass" name="Yes" sourceRef="Gateway_ChecksPassed" targetRef="Task_Approve" />
+    <bpmn:sequenceFlow id="Flow_Escalate_ToDecision" sourceRef="Task_Escalate" targetRef="Gateway_OfficerDecision" />
+    <bpmn:sequenceFlow id="Flow_Officer_Reject" name="Reject" sourceRef="Gateway_OfficerDecision" targetRef="EndEvent_RejectedCompliance">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${false}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Officer_Approve" name="Approve" sourceRef="Gateway_OfficerDecision" targetRef="Task_Approve" />
+    <bpmn:sequenceFlow id="Flow_Timeout_ToEscalate" sourceRef="BoundaryEvent_Timeout" targetRef="Task_EscalateTimeout" />
+    <bpmn:sequenceFlow id="Flow_EscalateTimeout_ToEnd" sourceRef="Task_EscalateTimeout" targetRef="EndEvent_EscalatedTimeout" />
+    <bpmn:sequenceFlow id="Flow_Approve_ToExecute" sourceRef="Task_Approve" targetRef="Task_Execute" />
+    <bpmn:sequenceFlow id="Flow_Execute_ToNotify" sourceRef="Task_Execute" targetRef="Task_Notify" />
+    <bpmn:sequenceFlow id="Flow_Notify_ToEnd" sourceRef="Task_Notify" targetRef="EndEvent_Success" />
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_WireTransfer">
+
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="152" y="182" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_KYC_di" bpmnElement="Task_KYC">
+        <dc:Bounds x="240" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_KYC_di" bpmnElement="Gateway_KYC" isMarkerVisible="true">
+        <dc:Bounds x="390" y="175" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_RejectedIdentity_di" bpmnElement="EndEvent_RejectedIdentity">
+        <dc:Bounds x="390" y="300" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_ParallelSplit_di" bpmnElement="Gateway_ParallelSplit">
+        <dc:Bounds x="490" y="175" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_AML_di" bpmnElement="Task_AML">
+        <dc:Bounds x="600" y="40" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_OFAC_di" bpmnElement="Task_OFAC">
+        <dc:Bounds x="600" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Credit_di" bpmnElement="Task_Credit">
+        <dc:Bounds x="600" y="280" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_ParallelJoin_di" bpmnElement="Gateway_ParallelJoin">
+        <dc:Bounds x="760" y="175" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_ChecksPassed_di" bpmnElement="Gateway_ChecksPassed" isMarkerVisible="true">
+        <dc:Bounds x="860" y="175" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Escalate_di" bpmnElement="Task_Escalate">
+        <dc:Bounds x="830" y="460" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_OfficerDecision_di" bpmnElement="Gateway_OfficerDecision" isMarkerVisible="true">
+        <dc:Bounds x="980" y="475" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_RejectedCompliance_di" bpmnElement="EndEvent_RejectedCompliance">
+        <dc:Bounds x="980" y="600" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Approve_di" bpmnElement="Task_Approve">
+        <dc:Bounds x="970" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BoundaryEvent_Timeout_di" bpmnElement="BoundaryEvent_Timeout">
+        <dc:Bounds x="1002" y="222" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_EscalateTimeout_di" bpmnElement="Task_EscalateTimeout">
+        <dc:Bounds x="970" y="320" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_EscalatedTimeout_di" bpmnElement="EndEvent_EscalatedTimeout">
+        <dc:Bounds x="1130" y="342" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Execute_di" bpmnElement="Task_Execute">
+        <dc:Bounds x="1130" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Notify_di" bpmnElement="Task_Notify">
+        <dc:Bounds x="1280" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_Success_di" bpmnElement="EndEvent_Success">
+        <dc:Bounds x="1430" y="182" width="36" height="36" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="188" y="200" />
+        <di:waypoint x="240" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="340" y="200" />
+        <di:waypoint x="390" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_KYC_Reject_di" bpmnElement="Flow_KYC_Reject">
+        <di:waypoint x="415" y="225" />
+        <di:waypoint x="415" y="318" />
+        <di:waypoint x="426" y="318" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_KYC_Continue_di" bpmnElement="Flow_KYC_Continue">
+        <di:waypoint x="440" y="200" />
+        <di:waypoint x="490" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Split_AML_di" bpmnElement="Flow_Split_AML">
+        <di:waypoint x="515" y="175" />
+        <di:waypoint x="515" y="80" />
+        <di:waypoint x="600" y="80" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Split_OFAC_di" bpmnElement="Flow_Split_OFAC">
+        <di:waypoint x="540" y="200" />
+        <di:waypoint x="600" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Split_Credit_di" bpmnElement="Flow_Split_Credit">
+        <di:waypoint x="515" y="225" />
+        <di:waypoint x="515" y="320" />
+        <di:waypoint x="600" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_AML_Join_di" bpmnElement="Flow_AML_Join">
+        <di:waypoint x="700" y="80" />
+        <di:waypoint x="785" y="80" />
+        <di:waypoint x="785" y="175" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_OFAC_Join_di" bpmnElement="Flow_OFAC_Join">
+        <di:waypoint x="700" y="200" />
+        <di:waypoint x="760" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Credit_Join_di" bpmnElement="Flow_Credit_Join">
+        <di:waypoint x="700" y="320" />
+        <di:waypoint x="785" y="320" />
+        <di:waypoint x="785" y="225" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToChecksGateway_di" bpmnElement="Flow_ToChecksGateway">
+        <di:waypoint x="810" y="200" />
+        <di:waypoint x="860" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Checks_Fail_di" bpmnElement="Flow_Checks_Fail">
+        <di:waypoint x="885" y="225" />
+        <di:waypoint x="885" y="500" />
+        <di:waypoint x="930" y="500" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Checks_Pass_di" bpmnElement="Flow_Checks_Pass">
+        <di:waypoint x="910" y="200" />
+        <di:waypoint x="970" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Escalate_ToDecision_di" bpmnElement="Flow_Escalate_ToDecision">
+        <di:waypoint x="930" y="500" />
+        <di:waypoint x="980" y="500" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Officer_Reject_di" bpmnElement="Flow_Officer_Reject">
+        <di:waypoint x="1005" y="525" />
+        <di:waypoint x="1005" y="600" />
+        <di:waypoint x="998" y="600" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Officer_Approve_di" bpmnElement="Flow_Officer_Approve">
+        <di:waypoint x="1005" y="475" />
+        <di:waypoint x="1100" y="475" />
+        <di:waypoint x="1100" y="140" />
+        <di:waypoint x="1020" y="140" />
+        <di:waypoint x="1020" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Timeout_ToEscalate_di" bpmnElement="Flow_Timeout_ToEscalate">
+        <di:waypoint x="1020" y="258" />
+        <di:waypoint x="1020" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_EscalateTimeout_ToEnd_di" bpmnElement="Flow_EscalateTimeout_ToEnd">
+        <di:waypoint x="1070" y="360" />
+        <di:waypoint x="1130" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Approve_ToExecute_di" bpmnElement="Flow_Approve_ToExecute">
+        <di:waypoint x="1070" y="200" />
+        <di:waypoint x="1130" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Execute_ToNotify_di" bpmnElement="Flow_Execute_ToNotify">
+        <di:waypoint x="1230" y="200" />
+        <di:waypoint x="1280" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Notify_ToEnd_di" bpmnElement="Flow_Notify_ToEnd">
+        <di:waypoint x="1380" y="200" />
+        <di:waypoint x="1430" y="200" />
+      </bpmndi:BPMNEdge>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
