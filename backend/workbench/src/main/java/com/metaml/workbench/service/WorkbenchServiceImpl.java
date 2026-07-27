@@ -22,6 +22,9 @@ import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.model.GovernanceDecision;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinProcess;
+import com.metaml.workbench.store.WorkbenchStateStore;
+
+import jakarta.annotation.PostConstruct;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -41,8 +44,9 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     // auto-bridge has no caller to ask for a type, so it uses this one
     private static final String DEFAULT_BRIDGE_AGENT_TYPE = "validator";
 
-    // TODO: in memory only, so every model and twin is gone on restart. Camunda keeps its own
-    // instances in the DB, which means after a restart the engine still has them and we don't.
+    // Still the live copy - everything reads and writes these. WorkbenchStateStore just mirrors
+    // them to a file after each change so a restart doesn't leave the engine holding instances we
+    // can no longer name.
     private final Map<String, ProcessModel> processModels = new ConcurrentHashMap<>();
     private final Map<String, TwinProcess> twinProcesses = new ConcurrentHashMap<>();
     // twin+activity currently being evolved by somebody. forwardedBridgeActivities can't do this
@@ -57,16 +61,35 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     private final RepositoryService repositoryService;
     private final HistoryService historyService;
     private final TaskService taskService;
+    private final WorkbenchStateStore stateStore;
 
     public WorkbenchServiceImpl(NodeManagerClient nodeManagerClient, GovernanceService governanceService,
             RuntimeService runtimeService, RepositoryService repositoryService, HistoryService historyService,
-            TaskService taskService) {
+            TaskService taskService, WorkbenchStateStore stateStore) {
         this.nodeManagerClient = nodeManagerClient;
         this.governanceService = governanceService;
         this.runtimeService = runtimeService;
         this.repositoryService = repositoryService;
         this.historyService = historyService;
         this.taskService = taskService;
+        this.stateStore = stateStore;
+    }
+
+    @PostConstruct
+    void restoreState() {
+        WorkbenchStateStore.Snapshot snapshot = stateStore.load();
+        for (ProcessModel model : snapshot.models()) {
+            processModels.put(model.getId(), model);
+        }
+        for (TwinProcess twin : snapshot.twins()) {
+            twinProcesses.put(twin.getId(), twin);
+        }
+    }
+
+    // after anything that changed a model or a twin. the event log counts as a change - it's the
+    // artifact section 4 of the demo script walks through, losing it on restart is a real loss.
+    private void persistState() {
+        stateStore.save(processModels.values(), twinProcesses.values());
     }
 
     @Override
@@ -131,6 +154,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             discardDeployment(deployment.getId());
             throw new IllegalArgumentException("Process model already exists: " + modelId);
         }
+        persistState();
         logger.info("Saved process model {} and deployed process definition {}", modelId, definition.getId());
         return model;
     }
@@ -196,6 +220,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                 + " and twin process instance " + twinInstance.getProcessInstanceId());
 
         twinProcesses.put(twin.getId(), twin);
+        persistState();
         logger.info("Launched twin {} (original instance {}, twin instance {}) for model {}",
                 twin.getId(), original.getProcessInstanceId(), twinInstance.getProcessInstanceId(), modelId);
         return twin;
@@ -267,6 +292,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         twin.getActivityLinks().add(new ActivityLink(originalActivityId, twinActivityId));
         twin.getEventLog().add("Connected original activity " + originalActivityId
                 + " to twin activity " + twinActivityId);
+        persistState();
         logger.info("Connected activity {} to twin activity {} on twin process {}",
                 originalActivityId, twinActivityId, twinProcessId);
         return twin;
@@ -286,7 +312,17 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         }
 
         TwinProcess twin = getTwinProcess(twinProcessId);
+        // every path below writes to the event log, including the blocked ones, so snapshot at the
+        // end rather than trying to hit each return
+        try {
+            return evolveOnce(twin, twinProcessId, activityId, agentType);
+        } finally {
+            persistState();
+        }
+    }
 
+    private AgentDecision evolveOnce(TwinProcess twin, String twinProcessId, String activityId,
+            String agentType) {
         twin.getEventLog().add("Original activity " + activityId
                 + " requested evolution with agent type " + agentType);
 
@@ -345,7 +381,15 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     @Override
     public AgentDecision bridgeActivityEvent(String twinProcessId, String activityId) {
         TwinProcess twin = getTwinProcess(twinProcessId);
+        // same deal as evolveActivity - the skip paths write to the log too
+        try {
+            return bridgeOnce(twin, twinProcessId, activityId);
+        } finally {
+            persistState();
+        }
+    }
 
+    private AgentDecision bridgeOnce(TwinProcess twin, String twinProcessId, String activityId) {
         if (!isActivityLinked(twin, activityId)) {
             twin.getEventLog().add("Bridge skipped: activity " + activityId
                     + " is not connected to a twin activity");
@@ -429,7 +473,14 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     @Override
     public List<String> completeCurrentTasks(String twinProcessId) {
         TwinProcess twin = getTwinProcess(twinProcessId);
+        try {
+            return completeOpenTasks(twin, twinProcessId);
+        } finally {
+            persistState();
+        }
+    }
 
+    private List<String> completeOpenTasks(TwinProcess twin, String twinProcessId) {
         List<Task> tasks = taskService.createTaskQuery()
                 .processInstanceId(twin.getOriginalProcessId())
                 .list();
