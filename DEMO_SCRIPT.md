@@ -221,13 +221,23 @@ definition deploying, both instances starting, every connect, every bridge/evolv
 exactly why it was approved or blocked, and every task completion advancing the real process.
 
 **DO (optional):** open `localhost:8082/api/v1/wb/transmute/twin/<twinId>` in a new tab for the raw
-JSON behind that panel. **Also optional, high-credibility:** Camunda Cockpit is running at
-`localhost:8082` (login `demo`/`demo`) — open the twin's process instance there and show its live
-`evolvedAgent_*` variables read directly from the engine, not from anything the workbench itself
-wrote about itself.
+JSON behind that panel.
+
+**DO (optional, highest-credibility moment available):** show the same fact from a completely
+independent tool — the real Camunda Cockpit, not this app:
+1. Open `localhost:8082/camunda` in a new tab → log in `demo` / `demo`.
+2. **Processes** → **Citi Bank - Large Wire Transfer Review**.
+3. In the running-instances list, find the one whose **Business Key** starts with `twin-` (the
+   other one, `original-`, is the main process — don't open that one).
+4. Click into it → **Variables** tab.
+
+✅ **WATCH FOR:** one `evolvedAgent_<activityId>` row per activity you bridged/evolved so far — real
+values, e.g. `evolvedAgent_Task_KYC = validator-agent-01` — sitting on the instance in a tool that
+has never heard of this workbench.
 
 > **SAY:** "If anyone asks 'how do I know governance actually ran before the node manager, and that
-> the twin really has these agents attached,' this is the receipt."
+> the twin really has these agents attached,' this is the receipt — and it's not even this app
+> telling you that. This is Camunda's own console, reading the engine's own database."
 
 ---
 
