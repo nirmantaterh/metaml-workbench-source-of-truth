@@ -17,8 +17,7 @@ import java.util.stream.Collectors;
 @Service
 public class GovernanceServiceImpl implements GovernanceService {
 
-    // kept low so the quota is easy to hit in a demo
-    private static final int DEFAULT_MAX_EVOLUTIONS_PER_TWIN = 3;
+    private static final int DEFAULT_MAX_EVOLUTIONS_PER_TWIN = 5;
 
     // swap the whole set, never mutate it - getPolicy() can otherwise read it half updated
     private volatile Set<String> deniedAgentTypes = Set.of();
