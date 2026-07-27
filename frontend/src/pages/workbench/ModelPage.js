@@ -347,12 +347,12 @@ const ModelPage = () => {
             if (decision.approved) {
                 setStatus({
                     type: "ok",
-                    text: `Evolved "${selectedActivityId}" with ${type}: approved → agent ${decision.agentName || "(unnamed)"}.`,
+                    text: `Evolved "${selectedActivityId}" with ${type}: approved, agent ${decision.agentName || "(unnamed)"}.`,
                 });
             } else {
                 setStatus({
                     type: "err",
-                    text: `Evolve "${selectedActivityId}" with ${type}: blocked — ${decision.reason || "no reason given"}`,
+                    text: `Evolve "${selectedActivityId}" with ${type} blocked: ${decision.reason || "no reason given"}`,
                 });
             }
         } catch (err) {
@@ -380,18 +380,18 @@ const ModelPage = () => {
             if (decision.approved) {
                 setStatus({
                     type: "ok",
-                    text: `Bridged "${selectedActivityId}": approved → agent ${decision.agentName || "(unnamed)"}.`,
+                    text: `Bridged "${selectedActivityId}": approved, agent ${decision.agentName || "(unnamed)"}.`,
                 });
             } else if (decision.reason === BRIDGE_ALREADY_FORWARDED_REASON) {
                 // no-op, not a denial. red here made a correct result look broken.
                 setStatus({
                     type: "info",
-                    text: `Bridge "${selectedActivityId}": already forwarded to the twin earlier — no change (this is expected on a repeat bridge).`,
+                    text: `Bridge "${selectedActivityId}" already forwarded to the twin earlier, no change (expected on a repeat bridge).`,
                 });
             } else {
                 setStatus({
                     type: "err",
-                    text: `Bridge "${selectedActivityId}": blocked — ${decision.reason || "no reason given"}`,
+                    text: `Bridge "${selectedActivityId}" blocked: ${decision.reason || "no reason given"}`,
                 });
             }
         } catch (err) {
@@ -418,12 +418,12 @@ const ModelPage = () => {
             if (names.length === 0) {
                 setStatus({
                     type: "info",
-                    text: "No open user tasks on the original process instance — nothing to complete (it may have ended, or be waiting on something other than a user task).",
+                    text: "No open user tasks on the original process instance, nothing to complete (it may have ended, or be waiting on something other than a user task).",
                 });
             } else {
                 setStatus({
                     type: "ok",
-                    text: `Completed ${names.length} open task(s): ${names.join(", ")}. The next activity is now reachable — select it and Connect/Evolve/Bridge it.`,
+                    text: `Completed ${names.length} open task(s): ${names.join(", ")}. Next activity should be reachable now, go select it.`,
                 });
             }
         } catch (err) {
