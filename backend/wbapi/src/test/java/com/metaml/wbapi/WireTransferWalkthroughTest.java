@@ -27,11 +27,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -182,6 +184,57 @@ class WireTransferWalkthroughTest {
         }
 
         assertThat(openActivities(twin)).containsExactly(APPROVE);
+    }
+
+    // manual evolve and the auto-bridge landing on the same activity at the same moment. the
+    // stubbed catalog parks whoever gets in first, so the second one is guaranteed to arrive while
+    // the first is still mid-evolution rather than us hoping the threads happen to overlap.
+    @Test
+    void evolveAndBridgeAtOnceOnlyBurnOneSlot() throws Exception {
+        assertOneSlotWhenRacing(true);
+        assertOneSlotWhenRacing(false);
+    }
+
+    private void assertOneSlotWhenRacing(boolean evolveGoesFirst) throws Exception {
+        ProcessModel model = workbenchService.saveProcessModel(null,
+                "citi wire transfer evolve race " + evolveGoesFirst, citibankBpmn());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        workbenchService.connectActivity(twin.getId(), KYC, KYC);
+
+        CountDownLatch firstIsInside = new CountDownLatch(1);
+        CountDownLatch secondIsDone = new CountDownLatch(1);
+        AtomicBoolean parked = new AtomicBoolean(false);
+        given(nodeManagerClient.checkAgentAvailability(anyString())).willAnswer(call -> {
+            String type = call.getArgument(0);
+            if (parked.compareAndSet(false, true)) {
+                firstIsInside.countDown();
+                secondIsDone.await(20, TimeUnit.SECONDS);
+            }
+            return new AgentAvailabilityResult(type, true, type + "-agent-01", "stub catalog");
+        });
+
+        Callable<AgentDecision> first = evolveGoesFirst
+                ? () -> workbenchService.evolveActivity(twin.getId(), KYC, "validator")
+                : () -> workbenchService.bridgeActivityEvent(twin.getId(), KYC);
+        Callable<AgentDecision> second = evolveGoesFirst
+                ? () -> workbenchService.bridgeActivityEvent(twin.getId(), KYC)
+                : () -> workbenchService.evolveActivity(twin.getId(), KYC, "validator");
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<AgentDecision> firstResult = pool.submit(first);
+            assertThat(firstIsInside.await(20, TimeUnit.SECONDS)).isTrue();
+            AgentDecision secondDecision = second.call();
+            secondIsDone.countDown();
+            AgentDecision firstDecision = firstResult.get(30, TimeUnit.SECONDS);
+
+            assertThat(firstDecision.isApproved()).isTrue();
+            assertThat(secondDecision.isApproved()).isFalse();
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(governanceService.getUsage(twin.getId()).getEvolutionCount()).isEqualTo(1);
     }
 
     @Test

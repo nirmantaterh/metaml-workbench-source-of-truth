@@ -45,6 +45,12 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     // instances in the DB, which means after a restart the engine still has them and we don't.
     private final Map<String, ProcessModel> processModels = new ConcurrentHashMap<>();
     private final Map<String, TwinProcess> twinProcesses = new ConcurrentHashMap<>();
+    // twin+activity currently being evolved by somebody. forwardedBridgeActivities can't do this
+    // job on its own: evolve is allowed to run again on an activity that's already in there (the
+    // governance demo re-evolves one activity three times), so it only tells you an evolution
+    // happened at some point, not that one is happening right now. entries are removed in a
+    // finally, so this doesn't grow.
+    private final Map<String, Boolean> evolutionsInFlight = new ConcurrentHashMap<>();
     private final NodeManagerClient nodeManagerClient;
     private final GovernanceService governanceService;
     private final RuntimeService runtimeService;
@@ -304,20 +310,38 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         }
 
         twin.getEventLog().add("Twin activity received evolution request");
-        AgentDecision decision = runEvolution(twin, twinProcessId, activityId, agentType);
-        // mark handled so a later bridge doesn't stomp evolvedAgent_* with the default type.
-        // evolve itself isn't gated on this, repeat calls still go through.
-        if (decision.isApproved()) {
-            twin.getForwardedBridgeActivities().add(activityId);
+
+        String claim = evolutionClaim(twinProcessId, activityId);
+        if (evolutionsInFlight.putIfAbsent(claim, Boolean.TRUE) != null) {
+            twin.getEventLog().add("Evolution skipped: activity " + activityId
+                    + " is already being evolved right now");
+            logger.info("Evolve skipped for activity {} on twin {}: another evolution is in flight",
+                    activityId, twinProcessId);
+            return new AgentDecision(agentType, false, null,
+                    "Activity " + activityId + " is already being evolved");
         }
-        return decision;
+        try {
+            AgentDecision decision = runEvolution(twin, twinProcessId, activityId, agentType);
+            // mark handled so a later bridge doesn't stomp evolvedAgent_* with the default type.
+            // evolve itself isn't gated on this, repeat calls still go through.
+            if (decision.isApproved()) {
+                twin.getForwardedBridgeActivities().add(activityId);
+            }
+            return decision;
+        } finally {
+            evolutionsInFlight.remove(claim);
+        }
+    }
+
+    private static String evolutionClaim(String twinProcessId, String activityId) {
+        // twin ids are uuids and bpmn ids are NCNames, neither of which can contain a colon, so
+        // no two different pairs flatten to the same key
+        return twinProcessId + ":" + activityId;
     }
 
     // Same path as evolveActivity, just with the default agent type since the event can't tell
     // us one. Two callers: AutoBridgeTrigger and the manual endpoint, and the forwarded guard
     // makes whichever arrives second a no-op.
-    // FIXME: a manual evolve racing the auto-bridge on the same activity can still burn two
-    // quota slots. haven't seen it outside a deliberate double-click, leaving it.
     @Override
     public AgentDecision bridgeActivityEvent(String twinProcessId, String activityId) {
         TwinProcess twin = getTwinProcess(twinProcessId);
@@ -341,39 +365,59 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                     "Activity not yet reached in the original process instance");
         }
 
-        if (!twin.getForwardedBridgeActivities().add(activityId)) {
+        // Claim before touching the forwarded set, and hold it until the evolution is done. The
+        // add() below is atomic, but atomic on its own isn't the point - a manual evolve doesn't
+        // go anywhere near that set until after it has already taken a quota slot, so without the
+        // claim the bridge walks straight through the add() and takes a second slot for the same
+        // activity.
+        String claim = evolutionClaim(twinProcessId, activityId);
+        if (evolutionsInFlight.putIfAbsent(claim, Boolean.TRUE) != null) {
             twin.getEventLog().add("Bridge skipped: activity " + activityId
-                    + " was already forwarded to twin");
-            logger.info("Bridge skipped for activity {} on twin {}: already forwarded",
+                    + " is already being evolved right now");
+            logger.info("Bridge skipped for activity {} on twin {}: another evolution is in flight",
                     activityId, twinProcessId);
             return new AgentDecision(DEFAULT_BRIDGE_AGENT_TYPE, false, null,
-                    "Activity event already forwarded to twin");
+                    "Activity event already being forwarded to twin");
         }
 
-        String twinActivityId = twin.getActivityLinks().stream()
-                .filter(link -> link.getOriginalActivityId().equals(activityId))
-                .map(ActivityLink::getTwinActivityId)
-                .findFirst()
-                .orElse(activityId);
-
-        twin.getEventLog().add("Original activity " + activityId + " reached");
-        twin.getEventLog().add("Forwarded event to twin activity " + twinActivityId);
-        twin.getEventLog().add("Bridge using default agent type '" + DEFAULT_BRIDGE_AGENT_TYPE
-                + "' (no agent type supplied by the triggering event)");
-        logger.info("Bridge forwarding activity {} to twin activity {} on twin {} with default agent type {}",
-                activityId, twinActivityId, twinProcessId, DEFAULT_BRIDGE_AGENT_TYPE);
-
-        // un-mark on failure. otherwise a governance block or a node manager outage leaves the
-        // activity stuck as "forwarded" forever and there's no way to retry it
         try {
-            AgentDecision decision = runEvolution(twin, twinProcessId, activityId, DEFAULT_BRIDGE_AGENT_TYPE);
-            if (!decision.isApproved()) {
-                twin.getForwardedBridgeActivities().remove(activityId);
+            if (!twin.getForwardedBridgeActivities().add(activityId)) {
+                twin.getEventLog().add("Bridge skipped: activity " + activityId
+                        + " was already forwarded to twin");
+                logger.info("Bridge skipped for activity {} on twin {}: already forwarded",
+                        activityId, twinProcessId);
+                return new AgentDecision(DEFAULT_BRIDGE_AGENT_TYPE, false, null,
+                        "Activity event already forwarded to twin");
             }
-            return decision;
-        } catch (RuntimeException e) {
-            twin.getForwardedBridgeActivities().remove(activityId);
-            throw e;
+
+            String twinActivityId = twin.getActivityLinks().stream()
+                    .filter(link -> link.getOriginalActivityId().equals(activityId))
+                    .map(ActivityLink::getTwinActivityId)
+                    .findFirst()
+                    .orElse(activityId);
+
+            twin.getEventLog().add("Original activity " + activityId + " reached");
+            twin.getEventLog().add("Forwarded event to twin activity " + twinActivityId);
+            twin.getEventLog().add("Bridge using default agent type '" + DEFAULT_BRIDGE_AGENT_TYPE
+                    + "' (no agent type supplied by the triggering event)");
+            logger.info("Bridge forwarding activity {} to twin activity {} on twin {} with default agent type {}",
+                    activityId, twinActivityId, twinProcessId, DEFAULT_BRIDGE_AGENT_TYPE);
+
+            // un-mark on failure. otherwise a governance block or a node manager outage leaves the
+            // activity stuck as "forwarded" forever and there's no way to retry it
+            try {
+                AgentDecision decision = runEvolution(twin, twinProcessId, activityId,
+                        DEFAULT_BRIDGE_AGENT_TYPE);
+                if (!decision.isApproved()) {
+                    twin.getForwardedBridgeActivities().remove(activityId);
+                }
+                return decision;
+            } catch (RuntimeException e) {
+                twin.getForwardedBridgeActivities().remove(activityId);
+                throw e;
+            }
+        } finally {
+            evolutionsInFlight.remove(claim);
         }
     }
 
