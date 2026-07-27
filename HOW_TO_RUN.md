@@ -28,9 +28,9 @@ Get-NetTCPConnection -LocalPort 8082,8083,3000 -State Listen |
 8. Click `Check Sanctions List (OFAC)` → Connect selected activity
 9. Click `Assess Credit Risk` → Connect selected activity
 10. Complete current task(s)
-11. Click `Approve Transfer Amount` → Connect selected activity → Complete current task(s)
-12. Click `Execute Wire Transfer` → Connect selected activity → Complete current task(s)
-13. Click `Notify Customer of Completion` → Connect selected activity → Complete current task(s)
+11. Click `Approve Transfer Amount` → Connect selected activity → Bridge selected activity → Complete current task(s)
+12. Click `Execute Wire Transfer` → Connect selected activity → Bridge selected activity → Complete current task(s)
+13. Click `Notify Customer of Completion` → Connect selected activity → Bridge selected activity → Complete current task(s)
 14. Complete current task(s)
 
 ---
