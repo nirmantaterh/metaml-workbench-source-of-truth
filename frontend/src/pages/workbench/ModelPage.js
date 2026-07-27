@@ -142,11 +142,8 @@ const ModelPage = () => {
         }
     };
 
-    // the manual Refresh button specifically - also pulls the diagram back in, since pasting
-    // an old twin id (after a restart, say) otherwise leaves whatever's on the canvas totally
-    // disconnected from the twin you're actually looking at. skip this on the auto-refreshes
-    // after Connect/Evolve/Bridge/etc - the canvas is already right in those cases, no reason
-    // to reimport and blow away the current selection.
+    // manual Refresh only - also pulls the diagram back in, since pasting an old twin id
+    // otherwise leaves the canvas showing whatever it already had, not that twin's model
     const handleRefreshTwin = async () => {
         const t = twinId.trim();
         if (!t) return;

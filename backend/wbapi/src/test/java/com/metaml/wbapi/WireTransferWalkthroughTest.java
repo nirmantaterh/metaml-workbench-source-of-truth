@@ -41,7 +41,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 
 /**
- * The DEMO_SCRIPT walkthrough, run against the real embedded engine instead of by hand:
+ * The HOW_TO_RUN walkthrough, run against the real embedded engine instead of by hand:
  * save + deploy the Citi wire transfer model, launch the twin, connect activities, let the
  * auto-bridge do its thing, and drive the original all the way to EndEvent_Success.
  *
@@ -91,8 +91,8 @@ class WireTransferWalkthroughTest {
             String type = call.getArgument(0);
             return new AgentAvailabilityResult(type, true, type + "-agent-01", "stub catalog");
         });
-        // seven activities get bridged on one twin below, and the default cap is 3. same thing
-        // section 0 of DEMO_SCRIPT tells you to do before presenting.
+        // seven activities get bridged on one twin below, well past the default cap of 5. same
+        // thing the governance row in HOW_TO_RUN has you raise before running through it by hand.
         governanceService.updatePolicy(Set.of(), 20);
     }
 
