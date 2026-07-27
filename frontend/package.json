@@ -17,7 +17,6 @@
     "bootstrap": "^5.3.8",
     "bpmn-js": "^18.21.0",
     "bpmn-js-token-simulation": "^0.40.0",
-    "camunda-bpmn-moddle": "^7.0.1",
     "chart.js": "^4.4.3",
     "chartist": "^1.5.0",
     "compass-mixins": "^0.12.12",

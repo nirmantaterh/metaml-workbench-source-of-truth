@@ -12,8 +12,9 @@ import java.time.Instant;
 public class ProcessModel {
     private String id;
     private String name;
-    // Task metadata (assignee/input/output/notes) lives in here as real camunda-namespace
-    // extension elements, not a separate field -- see frontend/camundaProperties.js.
+    // Task/process metadata (name, description, MetaML data items) lives in here as real BPMN
+    // documentation and metaml-namespace extension elements, not a separate field -- see
+    // frontend/src/components/bpmn/bpmnUtils.js for how it's read and written.
     private String bpmnXml;
     private Instant createdAt;
     private String processDefinitionId;
