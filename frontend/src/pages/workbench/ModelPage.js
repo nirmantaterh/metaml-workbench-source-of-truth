@@ -142,6 +142,36 @@ const ModelPage = () => {
         }
     };
 
+    // the manual Refresh button specifically - also pulls the diagram back in, since pasting
+    // an old twin id (after a restart, say) otherwise leaves whatever's on the canvas totally
+    // disconnected from the twin you're actually looking at. skip this on the auto-refreshes
+    // after Connect/Evolve/Bridge/etc - the canvas is already right in those cases, no reason
+    // to reimport and blow away the current selection.
+    const handleRefreshTwin = async () => {
+        const t = twinId.trim();
+        if (!t) return;
+        setBusy(true);
+        try {
+            const res = await getTwin(t);
+            const twin = res.data || res;
+            setTwinLog(Array.isArray(twin.eventLog) ? twin.eventLog : []);
+            if (twin.modelId) {
+                const modelRes = await getModel(twin.modelId);
+                const model = modelRes.data || modelRes;
+                if (model?.bpmnXml) {
+                    await modelerRef.current.importXML(model.bpmnXml);
+                    fitViewport(modelerRef.current);
+                    setModelName(model.name || "Untitled");
+                    setLoadId(model.id || twin.modelId);
+                }
+            }
+        } catch (err) {
+            // log/diagram refresh failing shouldn't wipe whatever's already showing
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const handleNew = async () => {
         try {
             await modelerRef.current.importXML(defaultDiagram);
@@ -622,7 +652,7 @@ const ModelPage = () => {
                             size="sm"
                             variant="outline-secondary"
                             className="py-0"
-                            onClick={() => refreshTwinLog()}
+                            onClick={handleRefreshTwin}
                             disabled={busy || !twinId.trim()}
                         >
                             Refresh
