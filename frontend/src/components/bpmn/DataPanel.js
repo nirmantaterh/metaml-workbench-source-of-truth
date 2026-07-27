@@ -10,6 +10,9 @@ import {
     canBeDefaultFlow,
     isDefaultFlow,
     setDefaultFlow,
+    canRunAgent,
+    hasAgentExecutionListener,
+    setAgentExecutionListener,
     getDataItems,
     addDataItem,
     updateDataItem,
@@ -37,6 +40,7 @@ const DataPanel = ({ modeler, element }) => {
     // process root takes no label, so the Name box there just ate keystrokes. disable it.
     const renameable = canRename(element);
     const defaultFlowCapable = canBeDefaultFlow(element);
+    const agentCapable = canRunAgent(element);
 
     return (
         <div className="bpmn-sidebar-body">
@@ -83,6 +87,22 @@ const DataPanel = ({ modeler, element }) => {
                     />
                     <Form.Text className="text-muted">
                         This is the flow taken when no other condition matches.
+                    </Form.Text>
+                </Form.Group>
+            )}
+
+            {agentCapable && (
+                <Form.Group className="mb-3">
+                    <Form.Check
+                        type="checkbox"
+                        id="bpmn-run-agent"
+                        label="Run agent on complete"
+                        checked={hasAgentExecutionListener(element)}
+                        onChange={(e) => setAgentExecutionListener(modeler, element, e.target.checked)}
+                    />
+                    <Form.Text className="text-muted">
+                        When this task completes, whatever agent the twin evolved for it actually
+                        runs, instead of just sitting on the twin as an unread variable.
                     </Form.Text>
                 </Form.Group>
             )}

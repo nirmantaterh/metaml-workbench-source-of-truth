@@ -10,6 +10,7 @@ import TokenSimulationModule from "bpmn-js-token-simulation";
 import "bpmn-js-token-simulation/assets/css/bpmn-js-token-simulation.css";
 
 import metamlModdle from "../../components/bpmn/moddle/metamlModdle.json";
+import camundaModdle from "camunda-bpmn-moddle/resources/camunda.json";
 import defaultDiagram from "../../components/bpmn/defaultDiagram";
 import DataPanel from "../../components/bpmn/DataPanel";
 import "../../components/bpmn/BpmnEditor.css";
@@ -80,7 +81,7 @@ const ModelPage = () => {
         const container = canvasRef.current;
         const modeler = new BpmnModeler({
             container,
-            moddleExtensions: { metaml: metamlModdle },
+            moddleExtensions: { metaml: metamlModdle, camunda: camundaModdle },
             additionalModules: [TokenSimulationModule],
         });
         modelerRef.current = modeler;

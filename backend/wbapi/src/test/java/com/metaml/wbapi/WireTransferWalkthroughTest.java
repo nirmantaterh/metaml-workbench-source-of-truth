@@ -119,6 +119,10 @@ class WireTransferWalkthroughTest {
         connect(twin, AML, OFAC, CREDIT);
         assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(1);
 
+        // the "complete" task listener on Task_KYC fires here, on the real (original) instance
+        // finishing the task - proves the agent execution delegate actually ran, not just deployed
+        assertThat(agentExecuted(twin, KYC)).isEqualTo(BRIDGE_AGENT);
+
         // genuine parallel split - three tasks open at the same time, not one after another
         assertThat(openActivities(twin)).containsExactlyInAnyOrder(AML, OFAC, CREDIT);
 
@@ -309,6 +313,10 @@ class WireTransferWalkthroughTest {
 
     private Object evolvedAgent(TwinProcess twin, String twinActivityId) {
         return runtimeService.getVariable(twin.getTwinProcessId(), "evolvedAgent_" + twinActivityId);
+    }
+
+    private Object agentExecuted(TwinProcess twin, String activityId) {
+        return runtimeService.getVariable(twin.getOriginalProcessId(), "agentExecuted_" + activityId);
     }
 
     private boolean reached(TwinProcess twin, String activityId) {

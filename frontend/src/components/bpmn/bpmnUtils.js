@@ -145,3 +145,54 @@ export function setDefaultFlow(modeler, element, isDefault) {
     const flowBo = getBusinessObject(element);
     modeler.get("modeling").updateProperties(element.source, { default: isDefault ? flowBo : null });
 }
+
+// only user tasks - a camunda:taskListener fires on the user-task lifecycle (create, assign,
+// complete...), it's not implementation for a service task and doesn't apply to gateways/events
+const AGENT_EXECUTION_DELEGATE = "${agentExecutionDelegate}";
+
+export function canRunAgent(element) {
+    return is(element, "bpmn:UserTask");
+}
+
+function findAgentExecutionListener(ee) {
+    return (ee.get("values") || []).find(
+        (v) => is(v, "camunda:TaskListener")
+            && v.get("event") === "complete"
+            && v.get("delegateExpression") === AGENT_EXECUTION_DELEGATE
+    );
+}
+
+export function hasAgentExecutionListener(element) {
+    if (!canRunAgent(element)) return false;
+    const ee = getExtensionElements(getBusinessObject(element));
+    if (!ee) return false;
+    return Boolean(findAgentExecutionListener(ee));
+}
+
+// same ensure-then-toggle shape as the DataItems container above, just a different moddle type
+export function setAgentExecutionListener(modeler, element, enabled) {
+    if (!canRunAgent(element)) return;
+    const modeling = modeler.get("modeling");
+    const moddle = modeler.get("moddle");
+    const bo = getBusinessObject(element);
+
+    let ee = getExtensionElements(bo);
+    if (!ee) {
+        if (!enabled) return; // nothing to remove
+        ee = createModdle(moddle, "bpmn:ExtensionElements", { values: [] }, bo);
+        modeling.updateModdleProperties(element, bo, { extensionElements: ee });
+    }
+
+    const existing = findAgentExecutionListener(ee);
+    if (enabled && !existing) {
+        const listener = createModdle(moddle, "camunda:TaskListener",
+            { event: "complete", delegateExpression: AGENT_EXECUTION_DELEGATE }, ee);
+        modeling.updateModdleProperties(element, ee, {
+            values: [...(ee.get("values") || []), listener],
+        });
+    } else if (!enabled && existing) {
+        modeling.updateModdleProperties(element, ee, {
+            values: (ee.get("values") || []).filter((v) => v !== existing),
+        });
+    }
+}

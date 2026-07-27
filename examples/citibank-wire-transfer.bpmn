@@ -4,6 +4,7 @@
                   xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
                   xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
                   xmlns:metaml="http://metaml.com/schema/bpmn/metaml"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
                   id="Definitions_CitiWire"
                   targetNamespace="http://metaml.com/bpmn">
   <bpmn:process id="Process_WireTransfer" name="Citi Bank - Large Wire Transfer Review" isExecutable="true">
@@ -27,6 +28,7 @@
           <metaml:dataItem name="identityDocumentType" type="string" value="Passport" />
           <metaml:dataItem name="identityVerified" type="boolean" value="true" />
         </metaml:dataItems>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1</bpmn:incoming>
       <bpmn:outgoing>Flow_2</bpmn:outgoing>
@@ -56,17 +58,24 @@
           <metaml:dataItem name="amlWatchlistHit" type="boolean" value="false" />
           <metaml:dataItem name="amlScreeningProvider" type="string" value="Refinitiv World-Check" />
         </metaml:dataItems>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_Split_AML</bpmn:incoming>
       <bpmn:outgoing>Flow_AML_Join</bpmn:outgoing>
     </bpmn:userTask>
 
     <bpmn:userTask id="Task_OFAC" name="Check Sanctions List (OFAC)">
+      <bpmn:extensionElements>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
       <bpmn:incoming>Flow_Split_OFAC</bpmn:incoming>
       <bpmn:outgoing>Flow_OFAC_Join</bpmn:outgoing>
     </bpmn:userTask>
 
     <bpmn:userTask id="Task_Credit" name="Assess Credit Risk">
+      <bpmn:extensionElements>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
       <bpmn:incoming>Flow_Split_Credit</bpmn:incoming>
       <bpmn:outgoing>Flow_Credit_Join</bpmn:outgoing>
     </bpmn:userTask>
@@ -85,6 +94,9 @@
     </bpmn:exclusiveGateway>
 
     <bpmn:userTask id="Task_Escalate" name="Escalate to Compliance Officer">
+      <bpmn:extensionElements>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
       <bpmn:incoming>Flow_Checks_Fail</bpmn:incoming>
       <bpmn:outgoing>Flow_Escalate_ToDecision</bpmn:outgoing>
     </bpmn:userTask>
@@ -106,6 +118,7 @@
           <metaml:dataItem name="approverId" type="string" value="MGR-4021" />
           <metaml:dataItem name="approvedAmount" type="number" value="250000" />
         </metaml:dataItems>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_Checks_Pass</bpmn:incoming>
       <bpmn:incoming>Flow_Officer_Approve</bpmn:incoming>
@@ -120,6 +133,9 @@
     </bpmn:boundaryEvent>
 
     <bpmn:userTask id="Task_EscalateTimeout" name="Escalate to Senior Approver">
+      <bpmn:extensionElements>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
       <bpmn:incoming>Flow_Timeout_ToEscalate</bpmn:incoming>
       <bpmn:outgoing>Flow_EscalateTimeout_ToEnd</bpmn:outgoing>
     </bpmn:userTask>
@@ -129,11 +145,17 @@
     </bpmn:endEvent>
 
     <bpmn:userTask id="Task_Execute" name="Execute Wire Transfer">
+      <bpmn:extensionElements>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
       <bpmn:incoming>Flow_Approve_ToExecute</bpmn:incoming>
       <bpmn:outgoing>Flow_Execute_ToNotify</bpmn:outgoing>
     </bpmn:userTask>
 
     <bpmn:userTask id="Task_Notify" name="Notify Customer of Completion">
+      <bpmn:extensionElements>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
       <bpmn:incoming>Flow_Execute_ToNotify</bpmn:incoming>
       <bpmn:outgoing>Flow_Notify_ToEnd</bpmn:outgoing>
     </bpmn:userTask>
