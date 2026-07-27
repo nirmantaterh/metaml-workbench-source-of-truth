@@ -16,6 +16,7 @@ public class WorkbenchUrlMapping {
     public static final String TRANSMUTE_EVOLVE = WB_TRANSMUTE + "/evolve";
     public static final String TRANSMUTE_TWIN = WB_TRANSMUTE + "/twin";
     public static final String TRANSMUTE_BRIDGE = WB_TRANSMUTE + "/bridge";
+    public static final String TRANSMUTE_COMPLETE_TASK = WB_TRANSMUTE + "/complete-task";
 
     public static final String TRANSMUTE_SAMPLE_ONLY = WB_TRANSMUTE + "/sample";
     /* ======== End Transmute API ======== */

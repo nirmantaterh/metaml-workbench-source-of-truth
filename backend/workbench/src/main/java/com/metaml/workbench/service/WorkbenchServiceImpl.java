@@ -4,9 +4,11 @@ import org.camunda.bpm.engine.HistoryService;
 import org.camunda.bpm.engine.ProcessEngineException;
 import org.camunda.bpm.engine.RepositoryService;
 import org.camunda.bpm.engine.RuntimeService;
+import org.camunda.bpm.engine.TaskService;
 import org.camunda.bpm.engine.repository.Deployment;
 import org.camunda.bpm.engine.repository.ProcessDefinition;
 import org.camunda.bpm.engine.runtime.ProcessInstance;
+import org.camunda.bpm.engine.task.Task;
 import org.camunda.bpm.model.bpmn.BpmnModelInstance;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
@@ -24,6 +26,8 @@ import com.metaml.workbench.model.TwinProcess;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
@@ -46,14 +50,17 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     private final RuntimeService runtimeService;
     private final RepositoryService repositoryService;
     private final HistoryService historyService;
+    private final TaskService taskService;
 
     public WorkbenchServiceImpl(NodeManagerClient nodeManagerClient, GovernanceService governanceService,
-            RuntimeService runtimeService, RepositoryService repositoryService, HistoryService historyService) {
+            RuntimeService runtimeService, RepositoryService repositoryService, HistoryService historyService,
+            TaskService taskService) {
         this.nodeManagerClient = nodeManagerClient;
         this.governanceService = governanceService;
         this.runtimeService = runtimeService;
         this.repositoryService = repositoryService;
         this.historyService = historyService;
+        this.taskService = taskService;
     }
 
     @Override
@@ -355,6 +362,52 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             twin.getForwardedBridgeActivities().remove(activityId);
             throw e;
         }
+    }
+
+    // Nothing else in the workbench ever completes a user task, so the original process
+    // instance used to park at its first one forever -- and since both evolveActivity and
+    // bridgeActivityEvent gate on hasReachedActivityInOriginal, only that very first activity
+    // could ever be evolved or bridged no matter how many steps the diagram had.
+    //
+    // Deliberately completes EVERY task currently open on the original instance rather than one
+    // named task: a parallel gateway leaves several open simultaneously, and "advance whatever
+    // can currently advance" is the whole intent -- so there is nothing to pick between and no
+    // task-selection UI to build. Only the original instance is advanced; the twin instance is
+    // where evolution writes its evolvedAgent_* variables, and nothing reads its execution
+    // position.
+    @Override
+    public List<String> completeCurrentTasks(String twinProcessId) {
+        TwinProcess twin = getTwinProcess(twinProcessId);
+
+        List<Task> tasks = taskService.createTaskQuery()
+                .processInstanceId(twin.getOriginalProcessId())
+                .list();
+        if (tasks.isEmpty()) {
+            twin.getEventLog().add("No open user tasks to complete on original process instance "
+                    + twin.getOriginalProcessId());
+            logger.info("No open tasks to complete on original instance {} of twin {}",
+                    twin.getOriginalProcessId(), twinProcessId);
+            return List.of();
+        }
+
+        List<String> completed = new ArrayList<>();
+        for (Task task : tasks) {
+            // The task definition key is the BPMN activity id, i.e. exactly the value
+            // connect/evolve/bridge are keyed on -- so reporting it alongside the human name
+            // tells the caller which activity ids just became reachable.
+            String label = task.getName() == null
+                    ? task.getTaskDefinitionKey()
+                    : task.getName() + " (" + task.getTaskDefinitionKey() + ")";
+            taskService.complete(task.getId());
+            completed.add(label);
+        }
+
+        twin.getEventLog().add("Completed " + completed.size()
+                + " open user task(s) on original process instance " + twin.getOriginalProcessId()
+                + ": " + String.join(", ", completed));
+        logger.info("Completed {} open task(s) on original instance {} of twin {}: {}",
+                completed.size(), twin.getOriginalProcessId(), twinProcessId, completed);
+        return completed;
     }
 
     private boolean isActivityLinked(TwinProcess twin, String activityId) {

@@ -63,6 +63,16 @@ export async function bridgeActivity(twinProcessId, activityId) {
     return result.data;
 }
 
+// Advance the ORIGINAL process instance by completing every user task currently open on it, so
+// execution moves to the next activity and that activity becomes evolvable/bridgeable (both gate
+// on the activity having actually been reached in the original instance). Completes all open
+// tasks, not a chosen one -- a parallel gateway leaves several open simultaneously. Returns the
+// list of completed task labels ("name (activityId)"), empty if nothing was open.
+export async function completeCurrentTasks(twinProcessId) {
+    const result = await api.post(`/wb/transmute/complete-task/${twinProcessId}`);
+    return result.data;
+}
+
 // Governance is the second gate on evolve, independent of the node manager's agent catalog:
 // it can deny an agent type the catalog would allow, and caps how many evolutions a single
 // twin gets. The policy is global, server-side state -- not per-session, not per-twin.

@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 import static org.springframework.http.HttpStatus.*;
 
+import java.util.List;
 import java.util.NoSuchElementException;
 
 import com.metaml.workbench.client.NodeManagerUnavailableException;
@@ -149,6 +150,26 @@ public class WorkbenchController {
             return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
         } catch (NodeManagerUnavailableException e) {
             return ResponseEntity.status(SERVICE_UNAVAILABLE).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    // Advances the twin's ORIGINAL process instance. Without this there is no TaskService call
+    // anywhere in the backend, so the original instance parks at its first user task forever and
+    // only that first activity can ever be evolved or bridged (both gate on the activity having
+    // actually been reached in the original instance's history). Completes every task currently
+    // open -- a parallel gateway leaves several open at once -- rather than one named task, so
+    // no task-selection UI is needed. Returns a label per completed task.
+    @PostMapping(WorkbenchUrlMapping.TRANSMUTE_COMPLETE_TASK + "/{twinId}")
+    public ResponseEntity<ApiResponse> completeCurrentTasks(@PathVariable String twinId) {
+        try {
+            List<String> completed = workbenchService.completeCurrentTasks(twinId);
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, completed));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
         } catch (Exception e) {
             return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
         }

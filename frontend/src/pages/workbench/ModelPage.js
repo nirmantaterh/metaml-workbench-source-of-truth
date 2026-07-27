@@ -22,6 +22,7 @@ import {
     connectActivity,
     evolveActivity,
     bridgeActivity,
+    completeCurrentTasks,
     getGovernancePolicy,
     updateGovernancePolicy,
     getGovernanceUsage,
@@ -399,6 +400,44 @@ const ModelPage = () => {
         }
     };
 
+    // Evolve and Bridge both require the activity to have actually been reached in the original
+    // process instance, and that instance stops dead at its first user task -- so without this
+    // only the first activity of any diagram is ever reachable. Completes whatever is open right
+    // now (all of it: a parallel gateway leaves several tasks open at once), which is why there
+    // is no activity to select and no task to pick.
+    const handleCompleteTasks = async () => {
+        const twin = twinId.trim();
+        if (!twin) {
+            setStatus({ type: "err", text: "Deploy first (or paste a twin id) before completing tasks." });
+            return;
+        }
+        setBusy(true);
+        try {
+            const res = await completeCurrentTasks(twin);
+            const completed = res.data || res;
+            const names = Array.isArray(completed) ? completed : [];
+            await refreshTwinLog(twin);
+            if (names.length === 0) {
+                setStatus({
+                    type: "info",
+                    text: "No open user tasks on the original process instance — nothing to complete (it may have ended, or be waiting on something other than a user task).",
+                });
+            } else {
+                setStatus({
+                    type: "ok",
+                    text: `Completed ${names.length} open task(s): ${names.join(", ")}. The next activity is now reachable — select it and Connect/Evolve/Bridge it.`,
+                });
+            }
+        } catch (err) {
+            setStatus({
+                type: "err",
+                text: "Complete task(s) failed: " + (err.response?.data?.message || err.message),
+            });
+        } finally {
+            setBusy(false);
+        }
+    };
+
     // --- Governance handlers ---
     // A failed axios call's err.message is a generic "Request failed with status code 400" that
     // hides the backend's real message; that lives in err.response.data.message. Prefer it.
@@ -550,6 +589,17 @@ const ModelPage = () => {
                     disabled={busy || !twinId.trim() || !selectedActivityId}
                 >
                     Bridge selected activity
+                </Button>
+                {/* Not tied to the canvas selection: this advances the original process instance
+                    from wherever it currently is, which is what makes the NEXT activity reachable
+                    (and therefore evolvable/bridgeable) at all. */}
+                <Button
+                    size="sm"
+                    variant="outline-success"
+                    onClick={handleCompleteTasks}
+                    disabled={busy || !twinId.trim()}
+                >
+                    Complete current task(s)
                 </Button>
                 <span className="bpmn-status text-muted">
                     {selectedActivityId
