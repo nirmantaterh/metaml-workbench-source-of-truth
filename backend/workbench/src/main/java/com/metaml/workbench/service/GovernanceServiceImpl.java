@@ -15,12 +15,10 @@ import java.util.stream.Collectors;
 @Service
 public class GovernanceServiceImpl implements GovernanceService {
 
-    // Low enough to hit by clicking "Evolve" a few times in the demo UI, not a considered
-    // production default.
+    // kept low so the quota is easy to hit in a demo
     private static final int DEFAULT_MAX_EVOLUTIONS_PER_TWIN = 3;
 
-    // A whole-set swap (not a mutable ConcurrentHashMap.newKeySet() mutated via clear()+
-    // addAll()) so a concurrent getPolicy() can never observe a torn state mid-update.
+    // swap the whole set rather than mutating one, otherwise getPolicy() can catch it half-updated
     private volatile Set<String> deniedAgentTypes = Set.of();
     private volatile int maxEvolutionsPerTwin = DEFAULT_MAX_EVOLUTIONS_PER_TWIN;
     private final Map<String, AtomicInteger> evolutionCounts = new ConcurrentHashMap<>();
@@ -32,9 +30,7 @@ public class GovernanceServiceImpl implements GovernanceService {
 
     @Override
     public GovernancePolicy updatePolicy(Set<String> newDeniedAgentTypes, Integer newMaxEvolutionsPerTwin) {
-        // Both fields are independently optional so a caller can update just the quota, or
-        // just the denylist, without needing to first fetch and echo back the other's
-        // current value.
+        // both optional so you can update just one of them
         if (newDeniedAgentTypes != null) {
             deniedAgentTypes = normalize(newDeniedAgentTypes);
         }
@@ -47,9 +43,7 @@ public class GovernanceServiceImpl implements GovernanceService {
         return getPolicy();
     }
 
-    // Denylist entries are free text from a human-edited form field -- trim/lowercase both
-    // here and at match time so "Validator" in the policy actually blocks a request for
-    // "validator" (the real, exact-case node manager catalog key).
+    // denylist comes straight from a text box, so trim/lowercase here and at match time
     private static Set<String> normalize(Set<String> agentTypes) {
         return agentTypes.stream()
                 .map(type -> type.trim().toLowerCase())
@@ -57,12 +51,8 @@ public class GovernanceServiceImpl implements GovernanceService {
                 .collect(Collectors.toUnmodifiableSet());
     }
 
-    // Denylist and quota are checked and (for the quota) reserved atomically in one call,
-    // instead of a separate check-then-record pair: two concurrent requests for the same
-    // twin process arriving at count == max-1 could otherwise both pass a read-only check
-    // before either recorded its evolution, letting the quota be exceeded. Reserving via
-    // incrementAndGet() up front and rolling back with decrementAndGet() if that puts the
-    // twin over quota closes that race -- only one caller can ever win the last slot.
+    // Increment first and roll back if we went over, instead of check-then-increment: with a
+    // separate check, two requests sitting at max-1 can both pass it and both take the last slot.
     @Override
     public GovernanceDecision reserveEvolutionSlot(String twinProcessId, String agentType) {
         if (deniedAgentTypes.contains(agentType.trim().toLowerCase())) {
@@ -70,10 +60,7 @@ public class GovernanceServiceImpl implements GovernanceService {
                     "Agent type '" + agentType + "' is denied by governance policy");
         }
 
-        // Read the volatile quota once: comparing against it and then reading it again to
-        // build the message could otherwise straddle a concurrent updatePolicy and report a
-        // limit that isn't the one the request was actually rejected against.
-        int max = maxEvolutionsPerTwin;
+        int max = maxEvolutionsPerTwin; // read once so the message matches what we compared against
         AtomicInteger counter = evolutionCounts.computeIfAbsent(twinProcessId, id -> new AtomicInteger());
         int reserved = counter.incrementAndGet();
         if (reserved > max) {
@@ -85,10 +72,7 @@ public class GovernanceServiceImpl implements GovernanceService {
         return new GovernanceDecision(true, "Allowed by governance policy");
     }
 
-    // Called when a reserved slot's evolution did NOT end up succeeding (node manager
-    // unreachable or reported the agent unavailable) -- a request blocked before reservation
-    // (by the denylist, or by governance's own quota check) never touches the counter and so
-    // never needs releasing.
+    // only for slots we actually reserved - denylist/quota blocks never touch the counter
     @Override
     public void releaseEvolutionSlot(String twinProcessId) {
         AtomicInteger counter = evolutionCounts.get(twinProcessId);

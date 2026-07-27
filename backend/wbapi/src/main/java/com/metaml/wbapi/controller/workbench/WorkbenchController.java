@@ -130,17 +130,9 @@ public class WorkbenchController {
         }
     }
 
-    // The manual, on-demand way to bridge one activity. Bridging is no longer driven from here:
-    // AutoBridgeTrigger fires the same service method automatically when the original process
-    // instance actually reaches an activity. This endpoint stays because it is still the way to
-    // bridge an activity that was connected only AFTER the original had already walked past it
-    // (there is no second start event to catch), and because it makes the step explicit in a
-    // demo. It reads Camunda's own history for the twin's original process instance and, if the
-    // given activity has actually been reached there, forwards it through the same evolve path
-    // /evolve uses. Safe to call more than once for the same activity -- the idempotency
-    // marker on the twin itself (TwinProcess.forwardedBridgeActivities) is what makes a repeat
-    // call a no-op. Governance's quota would NOT prevent that: it caps how many evolutions a
-    // twin gets in total, so duplicate forwards would simply burn the twin's budget.
+    // Manual bridge. AutoBridgeTrigger normally does this by itself now, but this is still the
+    // only way to bridge an activity that was connected after the original already walked past
+    // it (no second start event to catch). Idempotent - repeat calls are a no-op.
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_BRIDGE + "/{twinId}/{activityId}")
     public ResponseEntity<ApiResponse> bridgeActivityEvent(@PathVariable String twinId,
             @PathVariable String activityId) {
@@ -158,12 +150,8 @@ public class WorkbenchController {
         }
     }
 
-    // Advances the twin's ORIGINAL process instance. Without this there is no TaskService call
-    // anywhere in the backend, so the original instance parks at its first user task forever and
-    // only that first activity can ever be evolved or bridged (both gate on the activity having
-    // actually been reached in the original instance's history). Completes every task currently
-    // open -- a parallel gateway leaves several open at once -- rather than one named task, so
-    // no task-selection UI is needed. Returns a label per completed task.
+    // Advances the ORIGINAL instance so the next activity becomes evolvable/bridgeable.
+    // Completes everything currently open, since a parallel gateway leaves several tasks open.
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_COMPLETE_TASK + "/{twinId}")
     public ResponseEntity<ApiResponse> completeCurrentTasks(@PathVariable String twinId) {
         try {

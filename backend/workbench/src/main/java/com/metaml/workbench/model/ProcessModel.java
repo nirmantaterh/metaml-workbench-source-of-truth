@@ -12,9 +12,8 @@ import java.time.Instant;
 public class ProcessModel {
     private String id;
     private String name;
-    // Task/process metadata (name, description, MetaML data items) lives in here as real BPMN
-    // documentation and metaml-namespace extension elements, not a separate field -- see
-    // frontend/src/components/bpmn/bpmnUtils.js for how it's read and written.
+    // metadata (description, data items) lives inside the XML as bpmn:documentation +
+    // metaml extension elements, not separate fields. See frontend bpmnUtils.js.
     private String bpmnXml;
     private Instant createdAt;
     private String processDefinitionId;
