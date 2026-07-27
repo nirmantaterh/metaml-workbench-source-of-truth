@@ -34,9 +34,10 @@ governance results).
 
 > **SAY:** "Today I'm walking through Tasks 1 through 3 of the MetaML workbench on a realistic
 > multi-step process — a Citi Bank wire-transfer review — modeling it, deploying it with a twin,
-> letting the two communicate as the process actually advances step by step, requesting agents
-> through the node manager, and enforcing governance on top of that. Everything you'll see is live
-> — real Camunda engine, real HTTP calls, nothing mocked."
+> and letting the two communicate **automatically** as the process actually advances step by step —
+> no button-click required for that communication past the very first activity — while requesting
+> agents through the node manager and enforcing governance on top of that. Everything you'll see is
+> live — real Camunda engine, real HTTP calls, nothing mocked."
 
 ---
 
@@ -80,49 +81,66 @@ filling in.
 > **SAY:** "That starts two real Camunda process instances from the same definition — the original
 > and its twin."
 
-### 1.4 — KYC: connect, bridge, advance
+### 1.4 — KYC: the one activity that has to be bridged manually, and why
 **DO:** Click `Verify Customer Identity (KYC)` → **Connect selected activity** → **Bridge selected
 activity**.
 
 ✅ **WATCH FOR (approved):** green, `approved → agent validator-agent-01`.
 
-> **SAY:** "Bridge is the piece that actually satisfies 'the twin process activities communicate' —
-> no human picked an agent here. It reads Camunda's own execution history for the original, sees
-> that KYC was genuinely reached, and forwards that event to the twin through the same governance
-> and node-manager path a manual request would use."
+> **SAY:** "Bridge is the piece that satisfies 'the twin process activities communicate.' It reads
+> Camunda's own execution history for the original, sees that KYC was genuinely reached, and
+> forwards that event to the twin through the same governance and node-manager path a manual
+> request would use. KYC is the one activity in this whole walkthrough where I have to click that
+> button myself — it starts the instant the process launches, before there's anything to connect
+> yet. Every activity after this one, the platform bridges on its own — watch."
 
 **DO:** Twin row → **Complete current task(s)**.
 
 ✅ **WATCH FOR:** `Completed 1 open task(s): Verify Customer Identity (KYC)... The next activity is
 now reachable.`
 
-> **SAY:** "This is the piece that used to be missing entirely: completing the real Camunda task in
-> the *original* instance, so the process actually moves to its next step instead of sitting frozen
-> at activity one forever. Everything from here on is only reachable because we just did this."
+> **SAY:** "Completing the real Camunda task in the *original* instance is what moves the process to
+> its next step instead of sitting frozen at activity one forever."
 
-### 1.5 — The parallel compliance checks: bridge two, watch all three complete
-**DO:** Click `Run AML Screening` → **Connect** → **Bridge**. Click `Check Sanctions List (OFAC)` →
-**Connect** → **Bridge**. (Deliberately skip `Assess Credit Risk` — don't connect or bridge it.)
+### 1.5 — The parallel compliance checks: connect, complete, never touch Bridge
+**DO:** Click `Run AML Screening` → **Connect selected activity**. Click `Check Sanctions List
+(OFAC)` → **Connect selected activity**. Click `Assess Credit Risk` → **Connect selected activity**.
+
+**Do not click Bridge or Evolve on any of them.**
 
 **DO:** Twin row → **Complete current task(s)**.
 
 ✅ **WATCH FOR:** `Completed 3 open task(s): Run AML Screening, Check Sanctions List (OFAC), Assess
-Credit Risk` — **all three**, even though Credit Risk was never touched.
+Credit Risk` — all three at once (a real Camunda parallel gateway, three tasks genuinely open
+together) — **and then, with zero further clicks**, the Twin Event Log fills in `Original activity
+... reached` → `Forwarded event to twin` → `Contacting node manager` → an agent assigned, three
+times over, one per activity.
 
-> **SAY:** "This is a real parallel gateway — three tasks genuinely open at once in Camunda. One
-> click on Complete advances all of them together, exactly like a real user working through a
-> parallel review would. The third one didn't need an agent request to move forward — advancing a
-> process and evolving an activity are two different things, and this shows they're independent."
+> **SAY:** "Nobody clicked Bridge for any of these three. The moment Camunda genuinely advances the
+> original process, the platform notices on its own and does the whole governance-checked,
+> node-manager-checked agent handoff — automatically, in the background. That's the actual answer
+> to 'does this require a human to click a button to communicate' — it doesn't, past the very first
+> step."
 
 ### 1.6 — Approve, Execute, Notify
-**DO, repeated three times** (once per activity): click the activity → **Connect** → **Evolve
-selected activity** (agent type already `validator`) → **Complete current task(s)**.
+**DO, repeated three times** (once per activity): click the activity → **Connect selected
+activity** → **Complete current task(s)**. Don't click Bridge or Evolve on these either.
 
 Order: `Approve Transfer Amount` → `Execute Wire Transfer` → `Notify Customer of Completion`.
 
-> **SAY:** "Same mechanism, three more times, on activities that only became reachable because we
-> kept advancing the real process. This is the difference between 'we can poke at the first box of
-> a diagram' and 'here's a process actually running through to the end.'"
+✅ **WATCH FOR**, after each Complete: the event log auto-fills the same
+reached→forwarded→node-manager→agent-assigned sequence with no manual trigger.
+
+> **SAY:** "Same automatic mechanism, three more times, on activities that only became reachable
+> because we kept advancing the real process. This is the difference between 'we can poke at the
+> first box of a diagram' and 'here's a process actually running through to the end, talking to its
+> twin the whole way, without anyone driving it by hand.'"
+
+ℹ️ **If you want to show manual Evolve too** (a human explicitly picking an agent, as distinct from
+the automatic bridge): the manual **Bridge**/**Evolve** buttons still work exactly as before — this
+is additive, not a replacement. Clicking Bridge on an already-auto-bridged activity is a harmless,
+idempotent no-op (`already forwarded to the twin`, shown muted, not red) — good to demonstrate on
+purpose if asked "what happens if I click it anyway."
 
 ### 1.7 — Confirm it's actually done
 **DO:** Click **Complete current task(s)** one more time.
