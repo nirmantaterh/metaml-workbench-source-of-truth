@@ -299,10 +299,13 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     // twinProcessId+activityId+agentType directly, this checks whether the original process
     // has actually reached an activity that has a twin link, and if so forwards it through
     // the same governance/node-manager path evolveActivity uses -- with a default agent type,
-    // since there's no caller here to ask for one. Called by the bridge REST endpoint, which
-    // is polled/triggered after launch+connect rather than wired to a live Camunda listener
-    // (see WorkbenchController for why: a listener would need to be attached per-deployment
-    // to arbitrary user-authored BPMN, which is more moving parts than this demo needs).
+    // since there's no caller here to ask for one.
+    //
+    // Two things call this, and neither changes what it does. AutoBridgeTrigger calls it off a
+    // live Camunda activity-start event on the original instance, which is how bridging normally
+    // happens now; the bridge REST endpoint calls it for the same twin+activity on demand. The
+    // forwardedBridgeActivities guard below is what makes the second one a safe no-op after the
+    // first, in either order.
     @Override
     public AgentDecision bridgeActivityEvent(String twinProcessId, String activityId) {
         TwinProcess twin = getTwinProcess(twinProcessId);

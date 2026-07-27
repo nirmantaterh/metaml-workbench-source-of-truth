@@ -130,10 +130,13 @@ public class WorkbenchController {
         }
     }
 
-    // Pragmatic stand-in for a real Camunda execution listener on the linked activity: rather
-    // than attaching a listener to arbitrary user-authored BPMN at deploy time, this reads
-    // Camunda's own history for the twin's original process instance and, if the given
-    // activity has actually been reached there, forwards it through the same evolve path
+    // The manual, on-demand way to bridge one activity. Bridging is no longer driven from here:
+    // AutoBridgeTrigger fires the same service method automatically when the original process
+    // instance actually reaches an activity. This endpoint stays because it is still the way to
+    // bridge an activity that was connected only AFTER the original had already walked past it
+    // (there is no second start event to catch), and because it makes the step explicit in a
+    // demo. It reads Camunda's own history for the twin's original process instance and, if the
+    // given activity has actually been reached there, forwards it through the same evolve path
     // /evolve uses. Safe to call more than once for the same activity -- the idempotency
     // marker on the twin itself (TwinProcess.forwardedBridgeActivities) is what makes a repeat
     // call a no-op. Governance's quota would NOT prevent that: it caps how many evolutions a
