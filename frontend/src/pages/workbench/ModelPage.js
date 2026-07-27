@@ -591,7 +591,9 @@ const ModelPage = () => {
                     Complete current task(s)
                 </Button>
                 <span className="bpmn-status text-muted">
-                    {selectedActivityId
+                    {!twinId.trim()
+                        ? "Deploy + Twin first"
+                        : selectedActivityId
                         ? `Target activity: "${selectedActivityId}"`
                         : "Select an activity on the canvas"}
                 </span>

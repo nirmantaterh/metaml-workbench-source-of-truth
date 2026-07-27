@@ -55,6 +55,16 @@
     font-size: 0.85rem;
 }
 
+/* outline buttons barely change at the default 0.65 opacity, still full-color border/text.
+   grey them out for real so it's obvious the button isn't clickable yet. */
+.bpmn-toolbar .btn:disabled {
+    opacity: 1;
+    color: #9aa5ad;
+    border-color: #ced4da;
+    background-color: #eceff1;
+    cursor: not-allowed;
+}
+
 .bpmn-main {
     display: flex;
     flex: 1;
