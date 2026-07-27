@@ -8,6 +8,10 @@ backend/**/build/
 backend/**/target/
 .mvn/wrapper/maven-wrapper.jar
 
+# local h2 file for the camunda engine, whichever directory the app got launched from
+backend/data/
+backend/**/data/
+
 # IDE / OS
 .idea/
 .vscode/

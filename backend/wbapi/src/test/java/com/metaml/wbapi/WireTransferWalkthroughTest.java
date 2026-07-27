@@ -50,7 +50,9 @@ import static org.mockito.BDDMockito.given;
  * nobody runs. Everything else here is the real thing - real deployment, real user tasks, real
  * parallel gateway, real transaction-synchronised bridge.
  */
-@SpringBootTest
+// mem, not the file db the app itself now uses - see WbapiApplicationTests. same url string on
+// purpose so both classes share one context instead of booting the engine twice.
+@SpringBootTest(properties = "spring.datasource.url=jdbc:h2:mem:metaml-test;DB_CLOSE_DELAY=-1")
 class WireTransferWalkthroughTest {
 
     private static final String KYC = "Task_KYC";
