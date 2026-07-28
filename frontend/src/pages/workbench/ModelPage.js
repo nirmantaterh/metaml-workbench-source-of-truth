@@ -15,6 +15,16 @@ import defaultDiagram from "../../components/bpmn/defaultDiagram";
 import DataPanel from "../../components/bpmn/DataPanel";
 import "../../components/bpmn/BpmnEditor.css";
 
+// the real Camunda properties panel - Implementation type, Listeners, Field Injections, etc,
+// same as the Camunda Modeler desktop app, not our own custom sidebar
+import {
+    BpmnPropertiesPanelModule,
+    BpmnPropertiesProviderModule,
+    CamundaPlatformPropertiesProviderModule,
+} from "bpmn-js-properties-panel";
+import "@bpmn-io/properties-panel/assets/properties-panel.css";
+import camundaPlatformBehaviors from "camunda-bpmn-js-behaviors/lib/camunda-platform";
+
 import {
     saveModel,
     launchModel,
@@ -48,6 +58,7 @@ function fitViewport(modeler) {
 
 const ModelPage = () => {
     const canvasRef = useRef(null);
+    const propertiesPanelRef = useRef(null);
     const modelerRef = useRef(null);
     const fileInputRef = useRef(null);
 
@@ -81,8 +92,15 @@ const ModelPage = () => {
         const container = canvasRef.current;
         const modeler = new BpmnModeler({
             container,
+            propertiesPanel: { parent: propertiesPanelRef.current },
             moddleExtensions: { metaml: metamlModdle, camunda: camundaModdle },
-            additionalModules: [TokenSimulationModule],
+            additionalModules: [
+                TokenSimulationModule,
+                BpmnPropertiesPanelModule,
+                BpmnPropertiesProviderModule,
+                CamundaPlatformPropertiesProviderModule,
+                camundaPlatformBehaviors,
+            ],
         });
         modelerRef.current = modeler;
 
@@ -642,6 +660,7 @@ const ModelPage = () => {
 
             <div className="bpmn-main">
                 <div className="bpmn-canvas" ref={canvasRef} />
+                <div className="bpmn-properties-panel" ref={propertiesPanelRef} />
                 <div className="bpmn-sidebar">
                     <div className="bpmn-sidebar-header">Element Details</div>
                     <DataPanel modeler={modelerRef.current} element={selected} />
