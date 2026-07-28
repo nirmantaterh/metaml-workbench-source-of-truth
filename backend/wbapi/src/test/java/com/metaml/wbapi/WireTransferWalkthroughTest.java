@@ -40,17 +40,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 
-/**
- * Runs the wire transfer walkthrough against the real embedded engine instead of by hand:
- * save + deploy the Citi wire transfer model, launch the twin, connect activities, let the
- * auto-bridge do its thing, and drive the original all the way to EndEvent_Success.
- *
- * <p>The node manager is the one thing stubbed. It's a static catalog behind an HTTP call on a
- * fixed port, and a test that needs a second Spring Boot app already listening on 8083 is a test
- * nobody runs. Everything else runs for real, engine and all.
- */
-// mem, not the file db the app itself now uses - see WbapiApplicationTests. same url string on
-// purpose so both classes share one context instead of booting the engine twice.
+// full walkthrough against a real embedded engine - only the node manager is stubbed
+// mem db, not the file one the app uses - same url as WbapiApplicationTests so they share a context
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:metaml-test;DB_CLOSE_DELAY=-1",
         "workbench.state.persist=false"
@@ -163,10 +154,7 @@ class WireTransferWalkthroughTest {
         assertThat(workbenchService.completeCurrentTasks(twin.getId())).isEmpty();
     }
 
-    // connectActivity lets the twin's activity id differ from the original's - runEvolution
-    // writes evolvedAgent_ under the TWIN id, so the delegate has to resolve through the link
-    // rather than assume the original and twin ids match, which the happy-path test above never
-    // catches since connect() always maps id to itself.
+    // connect() above always maps id to itself, so it never catches original/twin ids differing
     @Test
     void agentExecutionResolvesThroughANonIdentityActivityLink() throws IOException {
         ProcessModel model = workbenchService.saveProcessModel(null,
@@ -214,9 +202,7 @@ class WireTransferWalkthroughTest {
         assertThat(openActivities(twin)).containsExactly(APPROVE);
     }
 
-    // manual evolve and the auto-bridge landing on the same activity at the same moment. the
-    // stubbed catalog parks whoever gets in first, so the second one is guaranteed to arrive while
-    // the first is still mid-evolution rather than us hoping the threads happen to overlap.
+    // stubbed catalog parks whoever gets in first, guaranteeing the second one arrives mid-evolution
     @Test
     void evolveAndBridgeAtOnceOnlyBurnOneSlot() throws Exception {
         assertOneSlotWhenRacing(true);
@@ -265,9 +251,7 @@ class WireTransferWalkthroughTest {
         assertThat(governanceService.getUsage(twin.getId()).getEvolutionCount()).isEqualTo(1);
     }
 
-    // regression test for the flat-set bug: forwardedBridgeActivities used to key on activityId
-    // alone, so a sequential multi-instance task's second visit looked like a duplicate of the
-    // first and got silently skipped instead of bridged.
+    // forwardedBridgeActivities used to key on activityId alone, so visit #2 looked like a duplicate
     @Test
     void multiInstanceActivityBridgesEveryVisitNotJustTheFirst() throws IOException {
         ProcessModel model = workbenchService.saveProcessModel(null, "loop task test", loopBpmn());
@@ -280,9 +264,7 @@ class WireTransferWalkthroughTest {
         assertThat(firstVisit.isApproved()).isTrue();
         assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(1);
 
-        // completing visit #1 immediately opens visit #2 of the same multi-instance activity -
-        // same activityId, a different activityInstanceId under the hood. auto-bridge should pick
-        // this one up on its own rather than treating it as already forwarded.
+        // completing visit #1 opens visit #2 - same activityId, different activityInstanceId
         assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(1);
 
         assertThat(reached(twin, "EndEvent_1")).isTrue();
@@ -345,9 +327,7 @@ class WireTransferWalkthroughTest {
                 .count() > 0;
     }
 
-    // surefire runs from backend/wbapi, an IDE might run from somewhere else. walk up until the
-    // examples folder turns up rather than copying the bpmn into test resources and letting the
-    // two drift.
+    // walk up to find examples/ instead of copying the bpmn into test resources and letting them drift
     private static String citibankBpmn() throws IOException {
         Path dir = Path.of("").toAbsolutePath();
         while (dir != null) {

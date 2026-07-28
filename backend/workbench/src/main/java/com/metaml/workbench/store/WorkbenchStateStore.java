@@ -22,16 +22,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-/**
- * Keeps the workbench's own models and twins in a json file next to the h2 db, because Camunda
- * persisting its engine state doesn't help us - the maps in WorkbenchServiceImpl are ours and the
- * engine knows nothing about them. Whole thing is rewritten on every change; there are a handful
- * of twins in a demo, not thousands, so that's cheaper than working out what changed.
- *
- * <p>Nothing in here is allowed to throw at the caller. A state file that's missing, truncated or
- * from an older shape of the model has to degrade to "start empty" - losing yesterday's twins is
- * annoying, a backend that won't boot ten minutes before a demo is not.
- */
+// keeps the workbench's own models/twins in a json file, since Camunda's own persistence
+// doesn't know these maps exist. rewrites the whole file every time - fine at demo scale.
+// never throws to the caller: a missing or corrupt file just starts empty instead of
+// failing boot.
 @Component
 public class WorkbenchStateStore {
 
@@ -100,8 +94,7 @@ public class WorkbenchStateStore {
             dto.twins.add(TwinProcessDto.of(twin));
         }
 
-        // one writer at a time, and via a temp file - a half-written snapshot that then fails to
-        // parse would silently cost every twin on the next boot
+        // temp file + one writer at a time - a half-written snapshot costs every twin on next boot
         synchronized (writeLock) {
             try {
                 Path parent = file.toAbsolutePath().getParent();
@@ -127,10 +120,9 @@ public class WorkbenchStateStore {
         return list == null ? List.of() : list;
     }
 
-    // Plain dtos rather than serialising the model classes straight. TwinProcess initialises its
-    // collections to CopyOnWriteArrayList / newKeySet and the code leans on that - the forwarded
-    // set's atomic add() is the bridge's guard. Jackson binding into the real object would hand
-    // those fields a plain ArrayList/HashSet and quietly take the thread safety away.
+    // plain dtos instead of binding straight to the model classes - Jackson would replace
+    // TwinProcess's CopyOnWriteArrayList/newKeySet fields with plain ones and silently
+    // drop the thread safety the bridge's forwarded-set guard depends on
     static final class StateDto {
         public List<ProcessModelDto> models;
         public List<TwinProcessDto> twins;

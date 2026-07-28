@@ -45,9 +45,8 @@ public class GovernanceServiceImpl implements GovernanceService {
         return getPolicy();
     }
 
-    // denylist comes straight out of a text box, so trim + lowercase here and at match time.
-    // jackson happily hands us a set containing null for {"deniedAgentTypes": [null]}, which
-    // used to NPE its way to a 500.
+    // trim + lowercase since this comes straight out of a text box; also filters null,
+    // which jackson happily hands us for {"deniedAgentTypes": [null]} and used to NPE
     private static Set<String> normalize(Set<String> agentTypes) {
         return agentTypes.stream()
                 .filter(Objects::nonNull)

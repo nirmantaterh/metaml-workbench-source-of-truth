@@ -24,10 +24,8 @@ public interface WorkbenchService {
 
     AgentDecision bridgeActivityEvent(String twinProcessId, String activityId);
 
-    // activityInstanceId distinguishes repeat visits to the same activityId (a loop, a
-    // multi-instance task) so each visit gets bridged on its own instead of only the first one.
-    // pass null when there's no instance to distinguish, e.g. the manual "Bridge selected
-    // activity" button, which only ever means "the current occurrence of this activity".
+    // activityInstanceId tells repeat visits (loops, multi-instance) apart - pass null for the
+    // manual button, which only ever means "the current occurrence"
     AgentDecision bridgeActivityEvent(String twinProcessId, String activityId, String activityInstanceId);
 
     // every open user task on the ORIGINAL instance, not the twin. returns a label per task

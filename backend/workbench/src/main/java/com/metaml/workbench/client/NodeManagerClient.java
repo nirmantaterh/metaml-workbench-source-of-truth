@@ -17,10 +17,8 @@ public class NodeManagerClient {
     // RestTemplate doesn't escape "/" in a path variable, so restrict it.
     private static final Pattern SAFE_AGENT_TYPE = Pattern.compile("^[a-z0-9-]+$");
 
-    // A bare RestTemplate has no timeouts at all - a node manager that accepts the connection and
-    // then never answers hangs the caller forever. That's worse than it sounds: the auto-bridge
-    // runs on one thread, so one stuck call and no activity ever gets bridged again. Keep both
-    // under AutoBridgeTrigger's 10s wait so the worker can't outlive the thing waiting on it.
+    // a bare RestTemplate never times out - one stuck call here and the auto-bridge's single
+    // thread never bridges anything again. both stay under AutoBridgeTrigger's 10s wait.
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(5);
 

@@ -17,16 +17,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Fires the bridge on its own when the original reaches an activity, so nobody has to click
- * "Bridge selected activity". It's only a trigger - calls the same service method the REST
- * endpoint calls and leans on that method's guards. Manual button still works.
- *
- * <p>Rides the ExecutionEvents the Camunda Spring Boot starter already publishes
- * (camunda.bpm.eventing.execution, on by default) rather than a hand-written BpmnParseListener.
- * Tried the listener first; it also meant touching the engine's history handler, and
- * hasReachedActivityInOriginal reads exactly those history rows, so no thanks.
- */
+// fires the bridge automatically when the original reaches an activity - same service call
+// the manual "Bridge selected activity" button makes, so the manual button still works too
 @Component
 public class AutoBridgeTrigger {
 
@@ -44,8 +36,7 @@ public class AutoBridgeTrigger {
     // one thread on purpose: activity starts are ordered anyway, and it caps us at one extra conn
     private final ExecutorService bridgeExecutor;
 
-    // set in @PreDestroy. the engine can still be committing while we're being torn down, and
-    // submitting to a dead executor throws.
+    // engine can still be committing during shutdown; submitting to a dead executor throws
     private volatile boolean shuttingDown = false;
 
     public AutoBridgeTrigger(WorkbenchService workbenchService) {
@@ -57,15 +48,11 @@ public class AutoBridgeTrigger {
         });
     }
 
-    // AFTER_COMMIT, not a plain @EventListener. Whatever raises this event runs mid-command,
-    // before the engine flushes, so the HISTORIC_ACTIVITY_INSTANCE row isn't there yet and every
-    // single activity comes back "has not been reached yet". Cost me an afternoon.
-    // fallbackExecution so the event isn't just dropped if there's no tx synchronization around.
+    // has to be AFTER_COMMIT, not a plain @EventListener - a plain one runs before the engine
+    // flushes and every activity comes back "has not been reached yet". cost me an afternoon.
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onActivityStarted(ExecutionEvent event) {
-        // Nothing below may escape. Spring lets an afterCommit exception propagate straight out
-        // of the commit call, so a throw here surfaces as the engine command failing - the user
-        // sees "complete task" blow up because of a bridge that's meant to be a side effect.
+        // can't let anything escape here or Camunda surfaces it as the task-complete call failing
         try {
             handleActivityStarted(event);
         } catch (RuntimeException e) {
@@ -80,29 +67,24 @@ public class AutoBridgeTrigger {
         }
         String businessKey = event.getProcessBusinessKey();
         if (businessKey == null || !businessKey.startsWith(ORIGINAL_BUSINESS_KEY_PREFIX)) {
-            // twin runs the same definition and emits the same ids, so skip it or everything
-            // gets bridged twice. no logging, this is most events on a normal run.
+            // twin emits the same activity ids, skip it or everything bridges twice
             return;
         }
         String twinId = businessKey.substring(ORIGINAL_BUSINESS_KEY_PREFIX.length());
         String activityId = event.getCurrentActivityId();
-        // a bare "original-" key, or a scope execution with no activity of its own. neither can
-        // bridge anything, and going ahead just writes junk into somebody's event log.
+        // bare "original-" key or a scope execution with no activity - nothing to bridge
         if (twinId.isBlank() || activityId == null || activityId.isBlank()) {
             return;
         }
         if (shuttingDown) {
             return;
         }
-        // distinguishes a loop or multi-instance activity's repeat visits from each other, so the
-        // service doesn't treat the second lap as "already forwarded" and skip it
+        // lets a loop/multi-instance activity's repeat visits bridge separately instead of
+        // getting skipped as "already forwarded"
         String activityInstanceId = event.getActivityInstanceId();
 
-        // Don't inline this back onto the current thread. AFTER_COMMIT still has the committed
-        // transaction's resources bound here (isActualTransactionActive() is true, I checked -
-        // Spring only unbinds later in cleanupAfterCompletion), so a same-thread call joins an
-        // already-committed transaction and its writes survive on luck. Also pins that connection
-        // across the node manager HTTP call. Worker thread gets its own tx and its own connection.
+        // same-thread call would join the already-committed transaction on luck -
+        // isActualTransactionActive() is still true here, Spring only unbinds it later
         Future<?> bridged;
         try {
             bridged = bridgeExecutor.submit(() -> runBridge(twinId, activityId, activityInstanceId));
@@ -112,8 +94,7 @@ public class AutoBridgeTrigger {
             return;
         }
 
-        // waiting instead of fire-and-forget so the UI refetch after "Complete current task(s)"
-        // always sees the bridge. no locks held here, worst case is a logged timeout.
+        // wait so the UI refetch after "Complete current task(s)" always sees the bridge result
         try {
             bridged.get(BRIDGE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
@@ -128,16 +109,15 @@ public class AutoBridgeTrigger {
         try {
             workbenchService.bridgeActivityEvent(twinId, activityId, activityInstanceId);
         } catch (RuntimeException e) {
-            // debug, not warn - this is normal. unconnected activities land here, and so does
-            // whatever the process hits first: those events fire before launchProcess has even
-            // stored the TwinProcess. That's why KYC gets bridged by hand in the demo.
+            // debug not warn - unconnected activities land here normally, same as whatever the
+            // process hits before launchProcess even registers the twin (why KYC is bridged by hand)
             logger.debug("Auto-bridge of activity {} on twin {} did nothing: {}",
                     activityId, twinId, e.toString());
         }
     }
 
-    // shutdownNow() on its own interrupted whatever bridge was mid-flight, which can leave the
-    // activity marked as forwarded with no agent actually assigned. Give it a moment first.
+    // shutdownNow() alone can interrupt a bridge mid-flight and leave it marked forwarded
+    // with no agent actually assigned, so give it a moment first
     @PreDestroy
     void shutdown() {
         shuttingDown = true;
