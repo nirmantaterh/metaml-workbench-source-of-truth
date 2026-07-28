@@ -15,22 +15,14 @@ import com.metaml.workbench.service.WorkbenchService;
 
 /**
  * "complete" task listener (camunda:taskListener delegateExpression="${agentExecutionDelegate}")
- * for user tasks. When the original finishes a task, go find whatever agent the twin evolved for
- * that same activity and record it against the original, so evolvedAgent_* stops being a variable
- * nobody ever reads.
+ * for user tasks. Finds whatever agent the twin evolved for this activity and records it against
+ * the original, so evolvedAgent_* stops being a variable nobody reads. Nothing real to call yet -
+ * node manager only hands back a name - so agentExecuted_* is the honest version of "it ran".
  *
- * <p>Gates on the ORIGINAL side, not the twin. completeCurrentTasks only moves the original and
- * nothing in here ever completes the twin's own copy of the task, so gating the other way round
- * would mean this never fires at all. The variable lives on the twin though, hence going through
- * WorkbenchService rather than reading this execution's own variables.
- *
- * <p>Goes through the twin's activityLinks before building the variable name - runEvolution
- * writes evolvedAgent_&lt;twinActivityId&gt;, and connectActivity lets that differ from the
- * original's activity id. Reading evolvedAgent_&lt;originalActivityId&gt; blindly missed that
- * case entirely.
- *
- * <p>Nothing runnable to call yet - the node manager hands back a name, not a component.
- * agentExecuted_* is the honest version of "it ran".
+ * <p>Gates on the original, not the twin, since completeCurrentTasks never touches the twin's own
+ * copy of the task - that branch would just never fire. Goes through activityLinks before building
+ * the variable name too, since connectActivity lets the twin's id differ from the original's and
+ * runEvolution already writes evolvedAgent_ under the twin one.
  */
 @Component("agentExecutionDelegate")
 public class AgentExecutionDelegate implements TaskListener {
