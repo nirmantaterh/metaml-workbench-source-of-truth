@@ -660,9 +660,10 @@ const ModelPage = () => {
 
             <div className="bpmn-main">
                 <div className="bpmn-canvas" ref={canvasRef} />
-                <div className="bpmn-properties-panel" ref={propertiesPanelRef} />
                 <div className="bpmn-sidebar">
-                    <div className="bpmn-sidebar-header">Element Details</div>
+                    <div className="bpmn-properties-panel" ref={propertiesPanelRef} />
+
+                    <div className="bpmn-sidebar-header">Data</div>
                     <DataPanel modeler={modelerRef.current} element={selected} />
 
                     <div className="bpmn-sidebar-header bpmn-log-header">

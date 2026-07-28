@@ -86,14 +86,11 @@
     background: #fff;
 }
 
-/* the real Camunda properties panel (Implementation, Listeners, Field Injections...),
-   separate from bpmn-sidebar which is our own custom Data/Twin log/Governance panel */
+/* the real Camunda properties panel (Implementation, Listeners, Field Injections...) -
+   sits at the top of bpmn-sidebar, above our own Data/Twin log/Governance sections, so
+   there's one canvas and one side column, not a second one next to it */
 .bpmn-properties-panel {
-    width: 320px;
-    border-left: 1px solid #e3e6ea;
-    overflow-y: auto;
-    background: #fff;
-    flex-shrink: 0;
+    border-bottom: 1px solid #e3e6ea;
 }
 
 .bpmn-sidebar-header {

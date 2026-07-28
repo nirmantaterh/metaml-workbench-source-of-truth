@@ -73,45 +73,6 @@ export function removeDataItem(modeler, element, item) {
     modeler.get("modeling").updateModdleProperties(element, container, { items });
 }
 
-// "description" in the sidebar is just native bpmn:documentation, no custom field for it
-export function getDocumentation(element) {
-    const bo = getBusinessObject(element);
-    const docs = bo && bo.get("documentation");
-    return docs && docs.length ? docs[0].text || "" : "";
-}
-
-export function setDocumentation(modeler, element, text) {
-    const modeling = modeler.get("modeling");
-    const moddle = modeler.get("moddle");
-    const bo = getBusinessObject(element);
-    const documentation = text ? [createModdle(moddle, "bpmn:Documentation", { text })] : [];
-    modeling.updateModdleProperties(element, bo, { documentation });
-}
-
-// copied from bpmn-js getLabelAttr (lib/util/LabelUtil.js). anything not in here makes
-// updateLabel a silent no-op, bpmn:Process included - and that's what's selected on load.
-const LABELABLE = [
-    "bpmn:FlowElement",
-    "bpmn:Participant",
-    "bpmn:Lane",
-    "bpmn:SequenceFlow",
-    "bpmn:MessageFlow",
-    "bpmn:DataInput",
-    "bpmn:DataOutput",
-    "bpmn:TextAnnotation",
-    "bpmn:Group",
-];
-
-export function canRename(element) {
-    if (!element) return false;
-    return LABELABLE.some((type) => is(element, type));
-}
-
-export function setName(modeler, element, name) {
-    if (!canRename(element)) return;
-    modeler.get("modeling").updateLabel(element, name);
-}
-
 // only these four declare `default` in the moddle. do NOT widen to bpmn:Gateway - on a
 // parallel one it serialises as default="[object Object]" and the whole file is invalid.
 const DEFAULT_FLOW_SOURCES = [
@@ -144,55 +105,4 @@ export function setDefaultFlow(modeler, element, isDefault) {
     if (!canBeDefaultFlow(element)) return;
     const flowBo = getBusinessObject(element);
     modeler.get("modeling").updateProperties(element.source, { default: isDefault ? flowBo : null });
-}
-
-// only user tasks - a camunda:taskListener fires on the user-task lifecycle (create, assign,
-// complete...), it's not implementation for a service task and doesn't apply to gateways/events
-const AGENT_EXECUTION_DELEGATE = "${agentExecutionDelegate}";
-
-export function canRunAgent(element) {
-    return is(element, "bpmn:UserTask");
-}
-
-function findAgentExecutionListener(ee) {
-    return (ee.get("values") || []).find(
-        (v) => is(v, "camunda:TaskListener")
-            && v.get("event") === "complete"
-            && v.get("delegateExpression") === AGENT_EXECUTION_DELEGATE
-    );
-}
-
-export function hasAgentExecutionListener(element) {
-    if (!canRunAgent(element)) return false;
-    const ee = getExtensionElements(getBusinessObject(element));
-    if (!ee) return false;
-    return Boolean(findAgentExecutionListener(ee));
-}
-
-// same ensure-then-toggle shape as the DataItems container above, just a different moddle type
-export function setAgentExecutionListener(modeler, element, enabled) {
-    if (!canRunAgent(element)) return;
-    const modeling = modeler.get("modeling");
-    const moddle = modeler.get("moddle");
-    const bo = getBusinessObject(element);
-
-    let ee = getExtensionElements(bo);
-    if (!ee) {
-        if (!enabled) return; // nothing to remove
-        ee = createModdle(moddle, "bpmn:ExtensionElements", { values: [] }, bo);
-        modeling.updateModdleProperties(element, bo, { extensionElements: ee });
-    }
-
-    const existing = findAgentExecutionListener(ee);
-    if (enabled && !existing) {
-        const listener = createModdle(moddle, "camunda:TaskListener",
-            { event: "complete", delegateExpression: AGENT_EXECUTION_DELEGATE }, ee);
-        modeling.updateModdleProperties(element, ee, {
-            values: [...(ee.get("values") || []), listener],
-        });
-    } else if (!enabled && existing) {
-        modeling.updateModdleProperties(element, ee, {
-            values: (ee.get("values") || []).filter((v) => v !== existing),
-        });
-    }
 }
