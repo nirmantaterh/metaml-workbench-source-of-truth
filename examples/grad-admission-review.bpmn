@@ -1,0 +1,323 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:metaml="http://metaml.com/schema/bpmn/metaml"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                  id="Definitions_GradAdmission"
+                  targetNamespace="http://metaml.com/bpmn">
+  <bpmn:process id="Process_GradAdmission" name="Graduate Admission Application Review" isExecutable="true">
+    <bpmn:extensionElements>
+      <metaml:dataItems>
+        <metaml:dataItem name="applicantId" type="string" value="APP-20481" />
+        <metaml:dataItem name="programName" type="string" value="MS Computer Science" />
+        <metaml:dataItem name="submittedDate" type="date" value="2026-06-01" />
+      </metaml:dataItems>
+    </bpmn:extensionElements>
+
+    <bpmn:startEvent id="StartEvent_1" name="Application Received">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:userTask id="Task_Transcript" name="Verify Transcript">
+      <bpmn:documentation>Confirm the transcript on file matches the applicant's claimed GPA and institution before anything else runs.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <metaml:dataItems>
+          <metaml:dataItem name="gpaScore" type="number" value="3.8" />
+          <metaml:dataItem name="institution" type="string" value="NYU" />
+        </metaml:dataItems>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:exclusiveGateway id="Gateway_TranscriptValid" name="Transcript Valid?" default="Flow_Transcript_Continue">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_Transcript_Reject</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Transcript_Continue</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:endEvent id="EndEvent_RejectedTranscript" name="Rejected - Invalid Transcript">
+      <bpmn:incoming>Flow_Transcript_Reject</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:parallelGateway id="Gateway_ParallelSplit" name="Run Application Checks">
+      <bpmn:incoming>Flow_Transcript_Continue</bpmn:incoming>
+      <bpmn:outgoing>Flow_Split_Recs</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Split_Scores</bpmn:outgoing>
+    </bpmn:parallelGateway>
+
+    <bpmn:userTask id="Task_Recommendations" name="Check Recommendation Letters">
+      <bpmn:extensionElements>
+        <metaml:dataItems>
+          <metaml:dataItem name="lettersReceived" type="number" value="3" />
+        </metaml:dataItems>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Split_Recs</bpmn:incoming>
+      <bpmn:outgoing>Flow_Recs_Join</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_TestScores" name="Check Standardized Test Scores">
+      <bpmn:extensionElements>
+        <metaml:dataItems>
+          <metaml:dataItem name="gmatScore" type="number" value="710" />
+        </metaml:dataItems>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Split_Scores</bpmn:incoming>
+      <bpmn:outgoing>Flow_Scores_Join</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:parallelGateway id="Gateway_ParallelJoin" name="Checks Complete">
+      <bpmn:incoming>Flow_Recs_Join</bpmn:incoming>
+      <bpmn:incoming>Flow_Scores_Join</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToCommittee</bpmn:outgoing>
+    </bpmn:parallelGateway>
+
+    <bpmn:userTask id="Task_CommitteeReview" name="Committee Member Review">
+      <bpmn:documentation>Three committee members review the same file independently, one after another. This is the one activity in the process that visits more than once per applicant.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <metaml:dataItems>
+          <metaml:dataItem name="recommendation" type="string" value="Admit" />
+        </metaml:dataItems>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ToCommittee</bpmn:incoming>
+      <bpmn:outgoing>Flow_Committee_Done</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="true">
+        <bpmn:loopCardinality>3</bpmn:loopCardinality>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:userTask>
+
+    <bpmn:boundaryEvent id="BoundaryEvent_CommitteeTimeout" name="Committee Timeout (4 hrs)" attachedToRef="Task_CommitteeReview" cancelActivity="true">
+      <bpmn:outgoing>Flow_Timeout_ToEscalate</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="TimerEventDefinition_1">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">PT4H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+
+    <bpmn:userTask id="Task_EscalateTimeout" name="Escalate to Senior Reviewer">
+      <bpmn:extensionElements>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Timeout_ToEscalate</bpmn:incoming>
+      <bpmn:outgoing>Flow_EscalateTimeout_ToEnd</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:endEvent id="EndEvent_EscalatedTimeout" name="Escalated - Awaiting Senior Review">
+      <bpmn:incoming>Flow_EscalateTimeout_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:exclusiveGateway id="Gateway_MajorityApproved" name="Majority Approved?" default="Flow_Majority_Approve">
+      <bpmn:incoming>Flow_Committee_Done</bpmn:incoming>
+      <bpmn:outgoing>Flow_Majority_Reject</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Majority_Approve</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:userTask id="Task_EscalateDean" name="Escalate to Dean">
+      <bpmn:extensionElements>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Majority_Reject</bpmn:incoming>
+      <bpmn:outgoing>Flow_Escalate_ToDecision</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:exclusiveGateway id="Gateway_DeanDecision" name="Dean Decision?" default="Flow_Dean_Approve">
+      <bpmn:incoming>Flow_Escalate_ToDecision</bpmn:incoming>
+      <bpmn:outgoing>Flow_Dean_Reject</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Dean_Approve</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:endEvent id="EndEvent_RejectedByDean" name="Rejected by Dean">
+      <bpmn:incoming>Flow_Dean_Reject</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:userTask id="Task_SendOffer" name="Send Admission Offer">
+      <bpmn:extensionElements>
+        <metaml:dataItems>
+          <metaml:dataItem name="offerSentDate" type="date" value="2026-07-01" />
+        </metaml:dataItems>
+        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Majority_Approve</bpmn:incoming>
+      <bpmn:incoming>Flow_Dean_Approve</bpmn:incoming>
+      <bpmn:outgoing>Flow_ToEnd</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:endEvent id="EndEvent_Admitted" name="Applicant Admitted">
+      <bpmn:incoming>Flow_ToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Task_Transcript" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_Transcript" targetRef="Gateway_TranscriptValid" />
+    <bpmn:sequenceFlow id="Flow_Transcript_Reject" name="No" sourceRef="Gateway_TranscriptValid" targetRef="EndEvent_RejectedTranscript">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${false}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Transcript_Continue" name="Yes" sourceRef="Gateway_TranscriptValid" targetRef="Gateway_ParallelSplit" />
+    <bpmn:sequenceFlow id="Flow_Split_Recs" sourceRef="Gateway_ParallelSplit" targetRef="Task_Recommendations" />
+    <bpmn:sequenceFlow id="Flow_Split_Scores" sourceRef="Gateway_ParallelSplit" targetRef="Task_TestScores" />
+    <bpmn:sequenceFlow id="Flow_Recs_Join" sourceRef="Task_Recommendations" targetRef="Gateway_ParallelJoin" />
+    <bpmn:sequenceFlow id="Flow_Scores_Join" sourceRef="Task_TestScores" targetRef="Gateway_ParallelJoin" />
+    <bpmn:sequenceFlow id="Flow_ToCommittee" sourceRef="Gateway_ParallelJoin" targetRef="Task_CommitteeReview" />
+    <bpmn:sequenceFlow id="Flow_Timeout_ToEscalate" sourceRef="BoundaryEvent_CommitteeTimeout" targetRef="Task_EscalateTimeout" />
+    <bpmn:sequenceFlow id="Flow_EscalateTimeout_ToEnd" sourceRef="Task_EscalateTimeout" targetRef="EndEvent_EscalatedTimeout" />
+    <bpmn:sequenceFlow id="Flow_Committee_Done" sourceRef="Task_CommitteeReview" targetRef="Gateway_MajorityApproved" />
+    <bpmn:sequenceFlow id="Flow_Majority_Reject" name="No" sourceRef="Gateway_MajorityApproved" targetRef="Task_EscalateDean">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${false}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Majority_Approve" name="Yes" sourceRef="Gateway_MajorityApproved" targetRef="Task_SendOffer" />
+    <bpmn:sequenceFlow id="Flow_Escalate_ToDecision" sourceRef="Task_EscalateDean" targetRef="Gateway_DeanDecision" />
+    <bpmn:sequenceFlow id="Flow_Dean_Reject" name="Reject" sourceRef="Gateway_DeanDecision" targetRef="EndEvent_RejectedByDean">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${false}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Dean_Approve" name="Approve" sourceRef="Gateway_DeanDecision" targetRef="Task_SendOffer" />
+    <bpmn:sequenceFlow id="Flow_ToEnd" sourceRef="Task_SendOffer" targetRef="EndEvent_Admitted" />
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_GradAdmission">
+
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="152" y="182" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Transcript_di" bpmnElement="Task_Transcript">
+        <dc:Bounds x="240" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_TranscriptValid_di" bpmnElement="Gateway_TranscriptValid" isMarkerVisible="true">
+        <dc:Bounds x="390" y="175" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_RejectedTranscript_di" bpmnElement="EndEvent_RejectedTranscript">
+        <dc:Bounds x="390" y="300" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_ParallelSplit_di" bpmnElement="Gateway_ParallelSplit">
+        <dc:Bounds x="490" y="175" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Recommendations_di" bpmnElement="Task_Recommendations">
+        <dc:Bounds x="600" y="60" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_TestScores_di" bpmnElement="Task_TestScores">
+        <dc:Bounds x="600" y="280" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_ParallelJoin_di" bpmnElement="Gateway_ParallelJoin">
+        <dc:Bounds x="760" y="175" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_CommitteeReview_di" bpmnElement="Task_CommitteeReview">
+        <dc:Bounds x="860" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BoundaryEvent_CommitteeTimeout_di" bpmnElement="BoundaryEvent_CommitteeTimeout">
+        <dc:Bounds x="892" y="222" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_EscalateTimeout_di" bpmnElement="Task_EscalateTimeout">
+        <dc:Bounds x="860" y="320" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_EscalatedTimeout_di" bpmnElement="EndEvent_EscalatedTimeout">
+        <dc:Bounds x="1020" y="342" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_MajorityApproved_di" bpmnElement="Gateway_MajorityApproved" isMarkerVisible="true">
+        <dc:Bounds x="1010" y="175" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_EscalateDean_di" bpmnElement="Task_EscalateDean">
+        <dc:Bounds x="980" y="460" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_DeanDecision_di" bpmnElement="Gateway_DeanDecision" isMarkerVisible="true">
+        <dc:Bounds x="1130" y="475" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_RejectedByDean_di" bpmnElement="EndEvent_RejectedByDean">
+        <dc:Bounds x="1130" y="600" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SendOffer_di" bpmnElement="Task_SendOffer">
+        <dc:Bounds x="1120" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_Admitted_di" bpmnElement="EndEvent_Admitted">
+        <dc:Bounds x="1280" y="182" width="36" height="36" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="188" y="200" />
+        <di:waypoint x="240" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="340" y="200" />
+        <di:waypoint x="390" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Transcript_Reject_di" bpmnElement="Flow_Transcript_Reject">
+        <di:waypoint x="415" y="225" />
+        <di:waypoint x="415" y="318" />
+        <di:waypoint x="426" y="318" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Transcript_Continue_di" bpmnElement="Flow_Transcript_Continue">
+        <di:waypoint x="440" y="200" />
+        <di:waypoint x="490" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Split_Recs_di" bpmnElement="Flow_Split_Recs">
+        <di:waypoint x="515" y="175" />
+        <di:waypoint x="515" y="100" />
+        <di:waypoint x="600" y="100" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Split_Scores_di" bpmnElement="Flow_Split_Scores">
+        <di:waypoint x="515" y="225" />
+        <di:waypoint x="515" y="320" />
+        <di:waypoint x="600" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Recs_Join_di" bpmnElement="Flow_Recs_Join">
+        <di:waypoint x="700" y="100" />
+        <di:waypoint x="785" y="100" />
+        <di:waypoint x="785" y="175" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Scores_Join_di" bpmnElement="Flow_Scores_Join">
+        <di:waypoint x="700" y="320" />
+        <di:waypoint x="785" y="320" />
+        <di:waypoint x="785" y="225" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToCommittee_di" bpmnElement="Flow_ToCommittee">
+        <di:waypoint x="810" y="200" />
+        <di:waypoint x="860" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Timeout_ToEscalate_di" bpmnElement="Flow_Timeout_ToEscalate">
+        <di:waypoint x="910" y="258" />
+        <di:waypoint x="910" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_EscalateTimeout_ToEnd_di" bpmnElement="Flow_EscalateTimeout_ToEnd">
+        <di:waypoint x="960" y="360" />
+        <di:waypoint x="1020" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Committee_Done_di" bpmnElement="Flow_Committee_Done">
+        <di:waypoint x="960" y="200" />
+        <di:waypoint x="1010" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Majority_Reject_di" bpmnElement="Flow_Majority_Reject">
+        <di:waypoint x="1035" y="225" />
+        <di:waypoint x="1035" y="500" />
+        <di:waypoint x="980" y="500" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Majority_Approve_di" bpmnElement="Flow_Majority_Approve">
+        <di:waypoint x="1060" y="200" />
+        <di:waypoint x="1120" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Escalate_ToDecision_di" bpmnElement="Flow_Escalate_ToDecision">
+        <di:waypoint x="1080" y="500" />
+        <di:waypoint x="1130" y="500" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Dean_Reject_di" bpmnElement="Flow_Dean_Reject">
+        <di:waypoint x="1155" y="525" />
+        <di:waypoint x="1155" y="600" />
+        <di:waypoint x="1148" y="600" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Dean_Approve_di" bpmnElement="Flow_Dean_Approve">
+        <di:waypoint x="1155" y="475" />
+        <di:waypoint x="1250" y="475" />
+        <di:waypoint x="1250" y="140" />
+        <di:waypoint x="1170" y="140" />
+        <di:waypoint x="1170" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ToEnd_di" bpmnElement="Flow_ToEnd">
+        <di:waypoint x="1220" y="200" />
+        <di:waypoint x="1280" y="200" />
+      </bpmndi:BPMNEdge>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
