@@ -45,9 +45,7 @@ const NON_ACTIVITY_TYPES = ["bpmn:Process", "bpmn:Collaboration", "bpmn:Sequence
 // comes back shaped like a denial (approved:false + reason) but really means "already done"
 const BRIDGE_ALREADY_FORWARDED_REASON = "Activity event already forwarded to twin";
 
-// throws on a cold first paint - canvas has no layout yet, size 0, bpmn-js gets a non-finite
-// scale. showed up as a red "could not load diagram" on a diagram that had loaded perfectly
-// fine. zoom is cosmetic so just eat it.
+// throws on a cold first paint (canvas has no layout yet) - zoom is cosmetic so just eat it
 function fitViewport(modeler) {
     try {
         modeler.get("canvas").zoom("fit-viewport");

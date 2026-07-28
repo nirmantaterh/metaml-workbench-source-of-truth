@@ -1,12 +1,6 @@
-// blank canvas for a new model. metaml namespace declared up front so data round-trips.
-//
-// The user task in the middle is not decoration. A start-event-only diagram deploys and
-// launches fine, but both instances run straight to their end event, and then every Evolve
-// and Bridge came back "Twin process instance ... could not be updated (it may have already
-// ended)". The userTask is a real Camunda wait state, which is the only thing keeping the
-// twin alive long enough to do anything to it.
-//
-// isExecutable="true" or Camunda deploys it and then refuses to start an instance.
+// blank canvas for a new model. the user task is load-bearing, not decoration - a
+// start-event-only diagram runs straight to its end event and every Evolve/Bridge
+// after that fails with "twin process instance could not be updated (already ended)".
 const defaultDiagram = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
                   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
