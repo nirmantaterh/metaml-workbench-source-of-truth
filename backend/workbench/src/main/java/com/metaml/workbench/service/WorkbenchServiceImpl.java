@@ -430,11 +430,10 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                     "Activity event already being forwarded to twin");
         }
 
-        // a loop or a multi-instance activity revisits the same activityId more than once in one
-        // instance, and each visit is a real, separate thing to bridge - not a duplicate. the auto
-        // trigger knows which visit this is (Camunda hands it a fresh activityInstanceId every
-        // time), so key the guard on that when we have it. the manual button has no visit to point
-        // at, only "the current occurrence of this activity", so it keeps keying on activityId.
+        // a loop or multi-instance activity comes back round to the same activityId, and each
+        // visit needs bridging on its own. Camunda gives the trigger a fresh activityInstanceId
+        // per visit, so key on that where we have one. the manual button can't say which visit it
+        // means, so it stays on activityId.
         String forwardedKey = (activityInstanceId == null || activityInstanceId.isBlank())
                 ? activityId
                 : activityInstanceId;

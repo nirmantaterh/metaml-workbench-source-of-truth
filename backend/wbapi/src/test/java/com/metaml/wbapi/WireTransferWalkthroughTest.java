@@ -47,8 +47,7 @@ import static org.mockito.BDDMockito.given;
  *
  * <p>The node manager is the one thing stubbed. It's a static catalog behind an HTTP call on a
  * fixed port, and a test that needs a second Spring Boot app already listening on 8083 is a test
- * nobody runs. Everything else here is the real thing - real deployment, real user tasks, real
- * parallel gateway, real transaction-synchronised bridge.
+ * nobody runs. Everything else runs for real, engine and all.
  */
 // mem, not the file db the app itself now uses - see WbapiApplicationTests. same url string on
 // purpose so both classes share one context instead of booting the engine twice.
@@ -162,6 +161,26 @@ class WireTransferWalkthroughTest {
         assertThat(governanceService.getUsage(twin.getId()).getEvolutionCount()).isEqualTo(7);
 
         assertThat(workbenchService.completeCurrentTasks(twin.getId())).isEmpty();
+    }
+
+    // connectActivity lets the twin's activity id differ from the original's - runEvolution
+    // writes evolvedAgent_ under the TWIN id, so the delegate has to resolve through the link
+    // rather than assume the original and twin ids match, which the happy-path test above never
+    // catches since connect() always maps id to itself.
+    @Test
+    void agentExecutionResolvesThroughANonIdentityActivityLink() throws IOException {
+        ProcessModel model = workbenchService.saveProcessModel(null,
+                "citi wire transfer mismatched link", citibankBpmn());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+
+        workbenchService.connectActivity(twin.getId(), KYC, AML);
+        AgentDecision kyc = workbenchService.bridgeActivityEvent(twin.getId(), KYC);
+        assertThat(kyc.isApproved()).isTrue();
+        assertThat(evolvedAgent(twin, AML)).isEqualTo(BRIDGE_AGENT);
+
+        assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(1);
+
+        assertThat(agentExecuted(twin, KYC)).isEqualTo(BRIDGE_AGENT);
     }
 
     @Test
