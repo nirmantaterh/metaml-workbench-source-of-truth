@@ -49,8 +49,7 @@ public class NodeManagerClient {
             throw new NodeManagerUnavailableException(
                     "Node manager returned an empty response for agent type " + agentType);
         }
-        // available with no agent name is nonsense, and it used to come back as an approved
-        // decision with a null agent that then got written into evolvedAgent_*
+        // available with no agent name is nonsense, and it used to come back as an approved decision with a null agent that then got written into evolvedAgent_*
         if (result.isAvailable() && (result.getAgentName() == null || result.getAgentName().isBlank())) {
             return new AgentAvailabilityResult(agentType, false, null,
                     "Node manager reported the agent type as available but named no agent");
