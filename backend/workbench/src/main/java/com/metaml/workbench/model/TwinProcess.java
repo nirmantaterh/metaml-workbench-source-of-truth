@@ -26,4 +26,14 @@ public class TwinProcess {
     // activities the bridge already forwarded, so a repeat is a no-op instead of eating more
     // quota. add() is atomic, so two at once still only get one through.
     private Set<String> forwardedBridgeActivities = ConcurrentHashMap.newKeySet();
+
+    // three different call sites needed this same lookup, so it lives here now instead of
+    // copy-pasted in each one
+    public String resolveTwinActivityId(String originalActivityId) {
+        return activityLinks.stream()
+                .filter(link -> link.getOriginalActivityId().equals(originalActivityId))
+                .map(ActivityLink::getTwinActivityId)
+                .findFirst()
+                .orElse(originalActivityId);
+    }
 }

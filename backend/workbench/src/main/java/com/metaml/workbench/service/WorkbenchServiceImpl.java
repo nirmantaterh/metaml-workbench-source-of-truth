@@ -448,11 +448,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                         "Activity event already forwarded to twin");
             }
 
-            String twinActivityId = twin.getActivityLinks().stream()
-                    .filter(link -> link.getOriginalActivityId().equals(activityId))
-                    .map(ActivityLink::getTwinActivityId)
-                    .findFirst()
-                    .orElse(activityId);
+            String twinActivityId = twin.resolveTwinActivityId(activityId);
 
             twin.getEventLog().add("Original activity " + activityId + " reached");
             twin.getEventLog().add("Forwarded event to twin activity " + twinActivityId);
@@ -619,11 +615,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                 return new AgentDecision(agentType, false, null, availability.getReason());
             }
 
-            String twinActivityId = twin.getActivityLinks().stream()
-                    .filter(link -> link.getOriginalActivityId().equals(activityId))
-                    .map(ActivityLink::getTwinActivityId)
-                    .findFirst()
-                    .orElse(activityId);
+            String twinActivityId = twin.resolveTwinActivityId(activityId);
 
             // this variable is the only real effect an evolution has. if it doesn't land
             // (usually the twin already ended) then nothing happened, so don't say approved.

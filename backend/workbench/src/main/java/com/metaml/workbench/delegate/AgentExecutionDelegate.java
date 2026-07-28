@@ -10,7 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import com.metaml.workbench.model.ActivityLink;
 import com.metaml.workbench.model.TwinProcess;
 import com.metaml.workbench.service.WorkbenchService;
 
@@ -81,12 +80,7 @@ public class AgentExecutionDelegate implements TaskListener {
         }
 
         String activityId = delegateTask.getTaskDefinitionKey();
-        // same lookup runEvolution uses to decide which variable name it writes - has to match
-        String twinActivityId = twin.getActivityLinks().stream()
-                .filter(link -> link.getOriginalActivityId().equals(activityId))
-                .map(ActivityLink::getTwinActivityId)
-                .findFirst()
-                .orElse(activityId);
+        String twinActivityId = twin.resolveTwinActivityId(activityId);
 
         Object agent;
         try {
