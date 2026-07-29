@@ -12,6 +12,9 @@ backend/**/target/
 backend/data/
 backend/**/data/
 
+# Word's lock files, left behind whenever a .md in here gets opened in Office
+~$*
+
 # IDE / OS
 .idea/
 .vscode/

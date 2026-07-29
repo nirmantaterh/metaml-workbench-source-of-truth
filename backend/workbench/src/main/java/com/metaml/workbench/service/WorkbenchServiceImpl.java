@@ -5,8 +5,10 @@ import org.camunda.bpm.engine.ProcessEngineException;
 import org.camunda.bpm.engine.RepositoryService;
 import org.camunda.bpm.engine.RuntimeService;
 import org.camunda.bpm.engine.TaskService;
+import org.camunda.bpm.engine.history.HistoricActivityInstance;
 import org.camunda.bpm.engine.repository.Deployment;
 import org.camunda.bpm.engine.repository.ProcessDefinition;
+import org.camunda.bpm.engine.runtime.ActivityInstance;
 import org.camunda.bpm.engine.runtime.ProcessInstance;
 import org.camunda.bpm.engine.task.Task;
 import org.camunda.bpm.model.bpmn.BpmnModelInstance;
@@ -19,6 +21,7 @@ import com.metaml.workbench.client.NodeManagerClient;
 import com.metaml.workbench.client.NodeManagerUnavailableException;
 import com.metaml.workbench.model.ActivityLink;
 import com.metaml.workbench.model.AgentDecision;
+import com.metaml.workbench.model.AgentVariables;
 import com.metaml.workbench.model.GovernanceDecision;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinProcess;
@@ -47,8 +50,9 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     // still the live copy - WorkbenchStateStore just mirrors these to a file after each change
     private final Map<String, ProcessModel> processModels = new ConcurrentHashMap<>();
     private final Map<String, TwinProcess> twinProcesses = new ConcurrentHashMap<>();
-    // twin+activity being evolved right now - forwardedBridgeActivities alone can't tell you
-    // that, since evolve is allowed to re-run on an activity already in there
+    // twin+visit being evolved right now - forwardedBridgeActivities alone can't tell you that,
+    // since evolve is allowed to re-run on a visit already in there. Keyed per visit like
+    // everything else, or two visits of a multi-instance activity block each other for nothing.
     private final Map<String, Boolean> evolutionsInFlight = new ConcurrentHashMap<>();
     private final NodeManagerClient nodeManagerClient;
     private final GovernanceService governanceService;
@@ -233,6 +237,11 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         return twin;
     }
 
+    @Override
+    public TwinProcess findTwinProcess(String id) {
+        return id == null ? null : twinProcesses.get(id);
+    }
+
     private String computeStatus(TwinProcess twin) {
         boolean originalRunning = isInstanceRunning(twin.getOriginalProcessId());
         boolean twinRunning = isInstanceRunning(twin.getTwinProcessId());
@@ -315,7 +324,8 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         twin.getEventLog().add("Original activity " + activityId
                 + " requested evolution with agent type " + agentType);
 
-        if (!isActivityLinked(twin, activityId)) {
+        String twinActivityId = twin.findTwinActivityId(activityId).orElse(null);
+        if (twinActivityId == null) {
             twin.getEventLog().add("Evolution blocked: activity " + activityId
                     + " is not connected to a twin activity");
             logger.info("Evolve blocked for activity {} on twin {}: activity not connected",
@@ -324,7 +334,8 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                     "Activity not connected to twin process");
         }
 
-        if (!hasReachedActivityInOriginal(twin, activityId)) {
+        String visitId = currentVisitId(twin, activityId);
+        if (visitId == null) {
             twin.getEventLog().add("Evolution blocked: activity " + activityId
                     + " has not actually been reached in the original process instance "
                     + twin.getOriginalProcessId());
@@ -336,7 +347,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
         twin.getEventLog().add("Twin activity received evolution request");
 
-        String claim = evolutionClaim(twinProcessId, activityId);
+        String claim = evolutionClaim(twinProcessId, visitId);
         if (evolutionsInFlight.putIfAbsent(claim, Boolean.TRUE) != null) {
             twin.getEventLog().add("Evolution skipped: activity " + activityId
                     + " is already being evolved right now");
@@ -346,10 +357,13 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                     "Activity " + activityId + " is already being evolved");
         }
         try {
-            AgentDecision decision = runEvolution(twin, twinProcessId, activityId, agentType);
-            // marks it handled so a later bridge doesn't stomp evolvedAgent_* with the default type
+            AgentDecision decision = runEvolution(twin, twinProcessId, activityId,
+                    AgentVariables.evolvedAgent(twinActivityId, loopCounterOf(twin, activityId, visitId)),
+                    agentType);
+            // marks this visit handled so a later bridge doesn't stomp evolvedAgent_* with the
+            // default type. same key the auto-bridge uses, or it would never match.
             if (decision.isApproved()) {
-                twin.getForwardedBridgeActivities().add(activityId);
+                twin.getForwardedBridgeActivities().add(visitId);
             }
             return decision;
         } finally {
@@ -357,18 +371,25 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         }
     }
 
-    private static String evolutionClaim(String twinProcessId, String activityId) {
-        // twin ids are uuids, bpmn ids are NCNames - neither can contain a colon, so this never collides
-        return twinProcessId + ":" + activityId;
+    private static String evolutionClaim(String twinProcessId, String activityInstanceId) {
+        // twin ids are uuids, so the first colon here is always the separator
+        return twinProcessId + ":" + activityInstanceId;
     }
 
     // evolveActivity's path with the default agent type, for callers that have no type of their
-    // own (AutoBridgeTrigger, the manual endpoint) - forwarded guard makes the second one a no-op
+    // own. This is the manual Bridge button's entry point: it names an activity, so we work out
+    // which visit of it we're talking about before the forwarded guard runs.
     @Override
     public AgentDecision bridgeActivityEvent(String twinProcessId, String activityId) {
-        return bridgeActivityEvent(twinProcessId, activityId, null);
+        TwinProcess twin = getTwinProcess(twinProcessId);
+        try {
+            return bridgeOnce(twin, twinProcessId, activityId, currentVisitId(twin, activityId));
+        } finally {
+            persistState();
+        }
     }
 
+    // AutoBridgeTrigger's entry point: the engine already named the visit that just started
     @Override
     public AgentDecision bridgeActivityEvent(String twinProcessId, String activityId, String activityInstanceId) {
         TwinProcess twin = getTwinProcess(twinProcessId);
@@ -382,7 +403,8 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
     private AgentDecision bridgeOnce(TwinProcess twin, String twinProcessId, String activityId,
             String activityInstanceId) {
-        if (!isActivityLinked(twin, activityId)) {
+        String twinActivityId = twin.findTwinActivityId(activityId).orElse(null);
+        if (twinActivityId == null) {
             twin.getEventLog().add("Bridge skipped: activity " + activityId
                     + " is not connected to a twin activity");
             logger.info("Bridge skipped for activity {} on twin {}: activity not connected",
@@ -391,7 +413,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                     "Activity not connected to twin process");
         }
 
-        if (!hasReachedActivityInOriginal(twin, activityId)) {
+        if (activityInstanceId == null) {
             twin.getEventLog().add("Bridge skipped: activity " + activityId
                     + " has not been reached in the original process instance "
                     + twin.getOriginalProcessId() + " yet");
@@ -403,7 +425,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
         // claim before touching the forwarded set - a manual evolve doesn't touch that set until
         // after it already has a quota slot, so without this the bridge would take a second one
-        String claim = evolutionClaim(twinProcessId, activityId);
+        String claim = evolutionClaim(twinProcessId, activityInstanceId);
         if (evolutionsInFlight.putIfAbsent(claim, Boolean.TRUE) != null) {
             twin.getEventLog().add("Bridge skipped: activity " + activityId
                     + " is already being evolved right now");
@@ -413,14 +435,8 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                     "Activity event already being forwarded to twin");
         }
 
-        // loops/multi-instance revisit the same activityId - key on activityInstanceId when we
-        // have one so each visit bridges on its own. manual button has no visit to name, stays on activityId
-        String forwardedKey = (activityInstanceId == null || activityInstanceId.isBlank())
-                ? activityId
-                : activityInstanceId;
-
         try {
-            if (!twin.getForwardedBridgeActivities().add(forwardedKey)) {
+            if (!twin.getForwardedBridgeActivities().add(activityInstanceId)) {
                 twin.getEventLog().add("Bridge skipped: activity " + activityId
                         + " was already forwarded to twin");
                 logger.info("Bridge skipped for activity {} on twin {}: already forwarded",
@@ -428,8 +444,6 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                 return new AgentDecision(DEFAULT_BRIDGE_AGENT_TYPE, false, null,
                         "Activity event already forwarded to twin");
             }
-
-            String twinActivityId = twin.resolveTwinActivityId(activityId);
 
             twin.getEventLog().add("Original activity " + activityId + " reached");
             twin.getEventLog().add("Forwarded event to twin activity " + twinActivityId);
@@ -441,13 +455,15 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             // un-mark on failure or a governance block / node manager outage leaves it stuck forwarded
             try {
                 AgentDecision decision = runEvolution(twin, twinProcessId, activityId,
+                        AgentVariables.evolvedAgent(twinActivityId,
+                                loopCounterOf(twin, activityId, activityInstanceId)),
                         DEFAULT_BRIDGE_AGENT_TYPE);
                 if (!decision.isApproved()) {
-                    twin.getForwardedBridgeActivities().remove(forwardedKey);
+                    twin.getForwardedBridgeActivities().remove(activityInstanceId);
                 }
                 return decision;
             } catch (RuntimeException e) {
-                twin.getForwardedBridgeActivities().remove(forwardedKey);
+                twin.getForwardedBridgeActivities().remove(activityInstanceId);
                 throw e;
             }
         } finally {
@@ -544,21 +560,58 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         return taskService.createTaskQuery().taskId(taskId).singleResult() == null;
     }
 
-    private boolean isActivityLinked(TwinProcess twin, String activityId) {
-        return twin.getActivityLinks().stream()
-                .anyMatch(link -> link.getOriginalActivityId().equals(activityId));
+    @Override
+    public void recordAgentExecution(String twinProcessId, String variableName, Object agentName) {
+        TwinProcess twin = twinProcesses.get(twinProcessId);
+        if (twin == null) {
+            return;
+        }
+        twin.getEventLog().add("Set process variable '" + variableName + "' = " + agentName
+                + " on original process instance " + twin.getOriginalProcessId());
+        persistState();
     }
 
-    private boolean hasReachedActivityInOriginal(TwinProcess twin, String activityId) {
-        return !historyService.createHistoricActivityInstanceQuery()
+    // Everything that guards against doing an activity twice keys on Camunda's activity instance
+    // id, because a loop or multi-instance activity comes round again under the same activity id.
+    // Callers that only know the activity id (the manual Bridge button, manual Evolve) have to
+    // resolve the same id here or their guard is looking at a different namespace than the
+    // auto-bridge's. Null means the original never got there.
+    private String currentVisitId(TwinProcess twin, String activityId) {
+        List<HistoricActivityInstance> visits = historyService.createHistoricActivityInstanceQuery()
                 .processInstanceId(twin.getOriginalProcessId())
                 .activityId(activityId)
-                .list()
-                .isEmpty();
+                .orderByHistoricActivityInstanceStartTime().desc()
+                .list();
+        // one it's sitting on right now is what the button means. if it already walked past,
+        // the newest finished visit is the closest thing to what the caller is pointing at.
+        for (HistoricActivityInstance visit : visits) {
+            if (visit.getEndTime() == null) {
+                return visit.getId();
+            }
+        }
+        return visits.isEmpty() ? null : visits.get(0).getId();
+    }
+
+    // AgentExecutionDelegate reads loopCounter straight off the execution it's completing; over
+    // here all we have is the visit, so go the long way round to the same value. Null for a plain
+    // activity, which is what keeps its variable name short.
+    private Object loopCounterOf(TwinProcess twin, String activityId, String activityInstanceId) {
+        ActivityInstance tree = runtimeService.getActivityInstance(twin.getOriginalProcessId());
+        if (tree == null) {
+            // original already ended, so nothing is holding a loop counter any more
+            return null;
+        }
+        for (ActivityInstance visit : tree.getActivityInstances(activityId)) {
+            if (visit.getId().equals(activityInstanceId) && visit.getExecutionIds().length > 0) {
+                return runtimeService.getVariableLocal(visit.getExecutionIds()[0], "loopCounter");
+            }
+        }
+        return null;
     }
 
     // shared tail of evolve and bridge, both have already checked linked + reached by here
-    private AgentDecision runEvolution(TwinProcess twin, String twinProcessId, String activityId, String agentType) {
+    private AgentDecision runEvolution(TwinProcess twin, String twinProcessId, String activityId,
+            String evolvedAgentVariable, String agentType) {
         // governance before the node manager on purpose - it can deny a type the catalog is fine with
         GovernanceDecision reservation = governanceService.reserveEvolutionSlot(twinProcessId, agentType);
         if (!reservation.isAllowed()) {
@@ -590,15 +643,13 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                 return new AgentDecision(agentType, false, null, availability.getReason());
             }
 
-            String twinActivityId = twin.resolveTwinActivityId(activityId);
-
             // this variable is the only real effect an evolution has. if it doesn't land
             // (usually the twin already ended) then nothing happened, so don't say approved.
             boolean variableSet = false;
             try {
-                runtimeService.setVariable(twin.getTwinProcessId(), "evolvedAgent_" + twinActivityId,
+                runtimeService.setVariable(twin.getTwinProcessId(), evolvedAgentVariable,
                         availability.getAgentName());
-                twin.getEventLog().add("Set process variable 'evolvedAgent_" + twinActivityId
+                twin.getEventLog().add("Set process variable '" + evolvedAgentVariable
                         + "' = " + availability.getAgentName() + " on twin process instance "
                         + twin.getTwinProcessId());
                 variableSet = true;

@@ -14,6 +14,16 @@ Get-NetTCPConnection -LocalPort 8082,8083,3000 -State Listen |
 4. Open `http://localhost:3000/wb/model`
 5. Governance row: clear Denied agent types, set Max evolutions/twin to 20, Update policy
 
+Don't skip step 5. The default cap is 5 evolutions per twin and both examples need more than
+that: `citibank-wire-transfer.bpmn` bridges 7 activities on its happy path, and
+`grad-admission-review.bpmn` also needs 7, because its committee review is a multi-instance
+activity that runs three times and each visit takes its own slot. Leave the cap at 5 and the
+walkthrough dies partway through with a governance rejection.
+
+Both files in `examples/` are fixtures for this app, not portable BPMN samples. Every user task
+in them carries `delegateExpression="${agentExecutionDelegate}"`, which is a Spring bean that
+only exists here, so deploying them to a stock Camunda engine fails at the first task completion.
+
 ---
 
 ## 1. Task 1

@@ -27,8 +27,11 @@ public class AutoBridgeTrigger {
     private static final String ORIGINAL_BUSINESS_KEY_PREFIX = "original-";
     // activities emit start/end, sequence flows emit "take". we only want entry.
     private static final String ACTIVITY_START_EVENT_NAME = "start";
-    // real cost is milliseconds, this only trips if something is genuinely stuck
-    private static final long BRIDGE_TIMEOUT_SECONDS = 10;
+    // real cost is milliseconds, this only trips if something is genuinely stuck. Has to stay
+    // above NodeManagerClient's 1s connect + 2s read or we'd give up on a call still in flight,
+    // and can't go much above it either: a multi-instance activity fires this once per visit and
+    // the whole lot happens while the browser waits on one click.
+    private static final long BRIDGE_TIMEOUT_SECONDS = 4;
     private static final long SHUTDOWN_GRACE_SECONDS = 5;
 
     private final WorkbenchService workbenchService;

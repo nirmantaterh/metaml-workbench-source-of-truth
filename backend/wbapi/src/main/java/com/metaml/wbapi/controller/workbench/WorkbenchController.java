@@ -138,7 +138,8 @@ public class WorkbenchController {
 
     // Manual bridge. AutoBridgeTrigger handles this on its own now, but it's still the only way
     // to bridge an activity you connected after the original already walked past it - there's no
-    // second start event coming. Repeat calls are a no-op.
+    // second start event coming. Repeat calls on the same visit are a no-op, including a click
+    // on something the auto-bridge already picked up.
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_BRIDGE + "/{twinId}/{activityId}")
     public ResponseEntity<ApiResponse> bridgeActivityEvent(@PathVariable String twinId,
             @PathVariable String activityId) {

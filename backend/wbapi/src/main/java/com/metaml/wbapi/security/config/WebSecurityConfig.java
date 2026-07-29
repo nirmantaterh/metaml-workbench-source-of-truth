@@ -17,6 +17,15 @@ import lombok.RequiredArgsConstructor;
 public class WebSecurityConfig {
     // authorizeRequests is deprecated for removal and shouted a WARN on every startup. Same
     // permitAll as before - the Camunda webapp does its own auth and we're loopback-only.
+    //
+    // Worth being blunt about what permitAll now costs, since it got worse when the Camunda
+    // properties panel went into the modeler: Implementation type on a service task offers
+    // camunda:class and camunda:delegateExpression from the UI, saveProcessModel deploys
+    // whatever BPMN it is handed straight to the embedded engine, and CSRF is off. So anyone
+    // who can POST to this API can run arbitrary code in this JVM without hand-writing any XML.
+    // The only thing keeping that acceptable is server.address=127.0.0.1 in
+    // application.properties. If this ever needs to listen on anything else, this filter chain
+    // has to grow real authentication first.
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.authorizeHttpRequests(requests -> requests.anyRequest().permitAll())

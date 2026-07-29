@@ -18,9 +18,12 @@ public class NodeManagerClient {
     private static final Pattern SAFE_AGENT_TYPE = Pattern.compile("^[a-z0-9-]+$");
 
     // a bare RestTemplate never times out - one stuck call here and the auto-bridge's single
-    // thread never bridges anything again. both stay under AutoBridgeTrigger's 10s wait.
-    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
-    private static final Duration READ_TIMEOUT = Duration.ofSeconds(5);
+    // thread never bridges anything again. Was 2s/5s, which put the worst case at 7s and forced
+    // AutoBridgeTrigger's wait to be at least that long; a multi-instance activity pays that per
+    // visit, so it's now 3s worst case for what is a call to localhost. Anything slower than
+    // this isn't a stub having a bad day, it's something actually broken.
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(2);
 
     private final RestTemplate restTemplate = new RestTemplate(requestFactory());
 

@@ -4,6 +4,7 @@ import org.camunda.bpm.engine.HistoryService;
 import org.camunda.bpm.engine.RepositoryService;
 import org.camunda.bpm.engine.RuntimeService;
 import org.camunda.bpm.engine.TaskService;
+import org.camunda.bpm.engine.history.HistoricVariableInstance;
 import org.camunda.bpm.engine.task.Task;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -112,6 +114,8 @@ class WireTransferWalkthroughTest {
         // the "complete" task listener on Task_KYC fires here, on the real (original) instance
         // finishing the task - proves the agent execution delegate actually ran, not just deployed
         assertThat(agentExecuted(twin, KYC)).isEqualTo(BRIDGE_AGENT);
+        // and it's in the event log, so the UI shows it like every other operation
+        assertThat(twin.getEventLog()).anyMatch(entry -> entry.contains("agentExecuted_" + KYC));
 
         // genuine parallel split - three tasks open at the same time, not one after another
         assertThat(openActivities(twin)).containsExactlyInAnyOrder(AML, OFAC, CREDIT);
@@ -169,6 +173,68 @@ class WireTransferWalkthroughTest {
         assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(1);
 
         assertThat(agentExecuted(twin, KYC)).isEqualTo(BRIDGE_AGENT);
+    }
+
+    // the auto-bridge keys its already-forwarded guard on the activity instance, the manual button
+    // used to key on the bare activity id, so the two guards lived in namespaces that could never
+    // match and a redundant click bought a second quota slot
+    @Test
+    void manualBridgeAfterTheAutoBridgeChangesNothing() throws IOException {
+        ProcessModel model = workbenchService.saveProcessModel(null, "citi wire transfer double bridge",
+                citibankBpmn());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        connect(twin, KYC, AML);
+
+        assertThat(workbenchService.bridgeActivityEvent(twin.getId(), KYC).isApproved()).isTrue();
+        assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(1);
+        assertThat(evolvedAgent(twin, AML)).isEqualTo(BRIDGE_AGENT);
+
+        int used = governanceService.getUsage(twin.getId()).getEvolutionCount();
+        AgentDecision again = workbenchService.bridgeActivityEvent(twin.getId(), AML);
+
+        assertThat(again.isApproved()).isFalse();
+        assertThat(again.getReason()).contains("already forwarded");
+        assertThat(governanceService.getUsage(twin.getId()).getEvolutionCount()).isEqualTo(used);
+    }
+
+    // the delegate used to read the twin's variables blind and let the engine throw. the catch
+    // around it never helped: the transaction is rollback-only by then, so completing the task
+    // failed with UnexpectedRollbackException and the real cause only showed up as a warn line
+    @Test
+    void completingATaskStillWorksAfterTheTwinInstanceIsGone() throws IOException {
+        ProcessModel model = workbenchService.saveProcessModel(null, "citi wire transfer lost twin",
+                citibankBpmn());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        workbenchService.connectActivity(twin.getId(), KYC, KYC);
+        assertThat(workbenchService.bridgeActivityEvent(twin.getId(), KYC).isApproved()).isTrue();
+
+        runtimeService.deleteProcessInstance(twin.getTwinProcessId(), "twin ended before the original");
+        assertThat(workbenchService.getTwinProcess(twin.getId()).getStatus())
+                .isEqualTo("ORIGINAL_RUNNING_TWIN_ENDED");
+
+        assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(1);
+        assertThat(openActivities(twin)).containsExactlyInAnyOrder(AML, OFAC, CREDIT);
+        assertThat(agentExecuted(twin, KYC)).isNull();
+    }
+
+    // the delegate looked the twin activity up with a resolver that fell back to the activity's
+    // own id, so completing an activity nobody connected read whatever agent another link had
+    // parked under that name and reported it as executed
+    @Test
+    void anUnconnectedActivityNeverReportsAnAgentExecution() throws IOException {
+        ProcessModel model = workbenchService.saveProcessModel(null, "citi wire transfer unconnected",
+                citibankBpmn());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+
+        workbenchService.connectActivity(twin.getId(), KYC, AML);
+        assertThat(workbenchService.bridgeActivityEvent(twin.getId(), KYC).isApproved()).isTrue();
+        assertThat(evolvedAgent(twin, AML)).isEqualTo(BRIDGE_AGENT);
+
+        assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(1);
+        // Task_AML is one of the three that just opened, and it was never connected to anything
+        assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(3);
+
+        assertThat(agentExecuted(twin, AML)).isNull();
     }
 
     @Test
@@ -251,9 +317,20 @@ class WireTransferWalkthroughTest {
         assertThat(governanceService.getUsage(twin.getId()).getEvolutionCount()).isEqualTo(1);
     }
 
-    // forwardedBridgeActivities used to key on activityId alone, so visit #2 looked like a duplicate
+    // forwardedBridgeActivities used to key on activityId alone, so visit #2 looked like a
+    // duplicate. Then the guard got fixed but the variables didn't: both visits still wrote
+    // evolvedAgent_Task_Loop, so visit #2 quietly overwrote visit #1 and two real evolutions
+    // were indistinguishable from one.
     @Test
     void multiInstanceActivityBridgesEveryVisitNotJustTheFirst() throws IOException {
+        // a different agent per call, so a variable that survived from the wrong visit shows up
+        AtomicInteger nextAgent = new AtomicInteger();
+        given(nodeManagerClient.checkAgentAvailability(anyString())).willAnswer(call -> {
+            String type = call.getArgument(0);
+            return new AgentAvailabilityResult(type, true,
+                    type + "-agent-0" + nextAgent.incrementAndGet(), "stub catalog");
+        });
+
         ProcessModel model = workbenchService.saveProcessModel(null, "loop task test", loopBpmn());
         TwinProcess twin = workbenchService.launchProcess(model.getId());
         workbenchService.connectActivity(twin.getId(), "Task_Loop", "Task_Loop");
@@ -269,6 +346,15 @@ class WireTransferWalkthroughTest {
 
         assertThat(reached(twin, "EndEvent_1")).isTrue();
         assertThat(governanceService.getUsage(twin.getId()).getEvolutionCount()).isEqualTo(2);
+
+        // both evolutions still there at the end, each with the agent its own visit was given
+        assertThat(evolvedAgent(twin, "Task_Loop_0")).isEqualTo("validator-agent-01");
+        assertThat(evolvedAgent(twin, "Task_Loop_1")).isEqualTo("validator-agent-02");
+        assertThat(agentExecuted(twin, "Task_Loop_0")).isEqualTo("validator-agent-01");
+        assertThat(agentExecuted(twin, "Task_Loop_1")).isEqualTo("validator-agent-02");
+        // the unsuffixed name is what the old one-per-activity write used
+        assertThat(evolvedAgent(twin, "Task_Loop")).isNull();
+        assertThat(agentExecuted(twin, "Task_Loop")).isNull();
     }
 
     @Test
@@ -316,8 +402,14 @@ class WireTransferWalkthroughTest {
         return runtimeService.getVariable(twin.getTwinProcessId(), "evolvedAgent_" + twinActivityId);
     }
 
+    // via history, not runtimeService - the original has already ended by the time some of these
+    // assertions run and reading a variable off a finished instance throws
     private Object agentExecuted(TwinProcess twin, String activityId) {
-        return runtimeService.getVariable(twin.getOriginalProcessId(), "agentExecuted_" + activityId);
+        HistoricVariableInstance variable = historyService.createHistoricVariableInstanceQuery()
+                .processInstanceId(twin.getOriginalProcessId())
+                .variableName("agentExecuted_" + activityId)
+                .singleResult();
+        return variable == null ? null : variable.getValue();
     }
 
     private boolean reached(TwinProcess twin, String activityId) {
@@ -342,17 +434,23 @@ class WireTransferWalkthroughTest {
     }
 
     // small enough to just inline rather than another file in examples/ - only exists to give a
-    // real sequential multi-instance activity for the bridge-tracking regression test above
+    // real sequential multi-instance activity for the bridge-tracking regression test above.
+    // Carries the same complete listener as the two example models, or the test would only ever
+    // exercise the bridge and never the delegate.
     private static String loopBpmn() {
         return """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                                   xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
                                    id="Definitions_Loop" targetNamespace="http://metaml.com/test">
                   <bpmn:process id="Process_LoopTask" isExecutable="true">
                     <bpmn:startEvent id="StartEvent_1">
                       <bpmn:outgoing>Flow_1</bpmn:outgoing>
                     </bpmn:startEvent>
                     <bpmn:userTask id="Task_Loop" name="Loop Task">
+                      <bpmn:extensionElements>
+                        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+                      </bpmn:extensionElements>
                       <bpmn:incoming>Flow_1</bpmn:incoming>
                       <bpmn:outgoing>Flow_2</bpmn:outgoing>
                       <bpmn:multiInstanceLoopCharacteristics isSequential="true">

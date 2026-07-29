@@ -154,6 +154,10 @@ public class WorkbenchStateStore {
         }
     }
 
+    // no forwardedBridgeActivities here on purpose. It's a dedupe hint, one entry per activity
+    // visit now rather than per activity, so on a long-running twin it would grow without limit
+    // in a file we rewrite from scratch on every single mutation. Governance counters don't
+    // survive a restart either, so restoring it wouldn't be protecting a quota that still exists.
     static final class TwinProcessDto {
         public String id;
         public String modelId;
@@ -163,7 +167,6 @@ public class WorkbenchStateStore {
         public String status;
         public Long launchedAtEpochMillis;
         public List<String> eventLog;
-        public List<String> forwardedBridgeActivities;
         public List<ActivityLinkDto> activityLinks;
 
         static TwinProcessDto of(TwinProcess twin) {
@@ -178,7 +181,6 @@ public class WorkbenchStateStore {
                     ? null
                     : twin.getLaunchedAt().toEpochMilli();
             dto.eventLog = new ArrayList<>(twin.getEventLog());
-            dto.forwardedBridgeActivities = new ArrayList<>(twin.getForwardedBridgeActivities());
             dto.activityLinks = new ArrayList<>();
             for (ActivityLink link : twin.getActivityLinks()) {
                 ActivityLinkDto linkDto = new ActivityLinkDto();
@@ -202,7 +204,6 @@ public class WorkbenchStateStore {
                     : Instant.ofEpochMilli(launchedAtEpochMillis));
             // add into the collections the constructor already made, don't replace them
             twin.getEventLog().addAll(nullToEmpty(eventLog));
-            twin.getForwardedBridgeActivities().addAll(nullToEmpty(forwardedBridgeActivities));
             for (ActivityLinkDto link : nullToEmpty(activityLinks)) {
                 twin.getActivityLinks().add(
                         new ActivityLink(link.originalActivityId, link.twinActivityId));
