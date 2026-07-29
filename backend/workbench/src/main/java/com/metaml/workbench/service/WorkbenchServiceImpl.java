@@ -357,9 +357,8 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                     "Activity " + activityId + " is already being evolved");
         }
         try {
-            AgentDecision decision = runEvolution(twin, twinProcessId, activityId,
-                    AgentVariables.evolvedAgent(twinActivityId, loopCounterOf(twin, activityId, visitId)),
-                    agentType);
+            AgentDecision decision = runEvolution(twin, twinProcessId, activityId, twinActivityId,
+                    loopCounterOf(twin, activityId, visitId), agentType);
             // marks this visit handled so a later bridge doesn't stomp evolvedAgent_* with the
             // default type. same key the auto-bridge uses, or it would never match.
             if (decision.isApproved()) {
@@ -454,10 +453,8 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
             // un-mark on failure or a governance block / node manager outage leaves it stuck forwarded
             try {
-                AgentDecision decision = runEvolution(twin, twinProcessId, activityId,
-                        AgentVariables.evolvedAgent(twinActivityId,
-                                loopCounterOf(twin, activityId, activityInstanceId)),
-                        DEFAULT_BRIDGE_AGENT_TYPE);
+                AgentDecision decision = runEvolution(twin, twinProcessId, activityId, twinActivityId,
+                        loopCounterOf(twin, activityId, activityInstanceId), DEFAULT_BRIDGE_AGENT_TYPE);
                 if (!decision.isApproved()) {
                     twin.getForwardedBridgeActivities().remove(activityInstanceId);
                 }
@@ -611,7 +608,8 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
     // shared tail of evolve and bridge, both have already checked linked + reached by here
     private AgentDecision runEvolution(TwinProcess twin, String twinProcessId, String activityId,
-            String evolvedAgentVariable, String agentType) {
+            String twinActivityId, Object loopCounter, String agentType) {
+        String evolvedAgentVariable = AgentVariables.evolvedAgent(twinActivityId, loopCounter);
         // governance before the node manager on purpose - it can deny a type the catalog is fine with
         GovernanceDecision reservation = governanceService.reserveEvolutionSlot(twinProcessId, agentType);
         if (!reservation.isAllowed()) {
@@ -653,6 +651,8 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                         + "' = " + availability.getAgentName() + " on twin process instance "
                         + twin.getTwinProcessId());
                 variableSet = true;
+
+                writeAgentOutputs(twin, twinActivityId, loopCounter, availability.getOutputs());
             } catch (ProcessEngineException e) {
                 twin.getEventLog().add("Could not set process variable on twin instance "
                         + twin.getTwinProcessId() + " (it may have already ended): " + e.getMessage());
@@ -670,7 +670,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
             evolutionSucceeded = true;
             AgentDecision decision = new AgentDecision(agentType, true, availability.getAgentName(),
-                    availability.getReason());
+                    availability.getReason(), availability.isRiskFlagged());
             twin.getEventLog().add("Node manager reports agent type " + agentType
                     + " available; selected agent " + availability.getAgentName());
             logger.info("Evolve approved for activity {} on twin {} with agent type {}",
@@ -682,6 +682,41 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             if (!evolutionSucceeded) {
                 governanceService.releaseEvolutionSlot(twinProcessId);
             }
+        }
+    }
+
+    // Has to be reconciled both ways, not just written. Re-evolving Task_Credit with an ordinary
+    // agent after a credit-risk-assessor run left the old risk flag sitting there otherwise, and
+    // the process kept escalating even though the twin now showed a plain agent with nothing
+    // wrong. Which outputs the last evolution left behind isn't something you can work out from
+    // the current ones, hence the index variable alongside them.
+    private void writeAgentOutputs(TwinProcess twin, String twinActivityId, Object loopCounter,
+            Map<String, Object> outputs) {
+        Map<String, Object> current = outputs == null ? Map.of() : outputs;
+        String indexVariable = AgentVariables.evolvedAgentOutputIndex(twinActivityId, loopCounter);
+
+        for (String previousName : AgentVariables.outputNamesIn(
+                runtimeService.getVariable(twin.getTwinProcessId(), indexVariable))) {
+            if (!current.containsKey(previousName)) {
+                runtimeService.removeVariable(twin.getTwinProcessId(),
+                        AgentVariables.evolvedAgentOutput(previousName, twinActivityId, loopCounter));
+            }
+        }
+
+        for (Map.Entry<String, Object> output : current.entrySet()) {
+            String outputVariable = AgentVariables.evolvedAgentOutput(output.getKey(), twinActivityId,
+                    loopCounter);
+            runtimeService.setVariable(twin.getTwinProcessId(), outputVariable, output.getValue());
+            twin.getEventLog().add("Set process variable '" + outputVariable + "' = " + output.getValue()
+                    + " on twin process instance " + twin.getTwinProcessId());
+        }
+
+        // absence means "this evolution reported nothing", same convention the outputs themselves use
+        if (current.isEmpty()) {
+            runtimeService.removeVariable(twin.getTwinProcessId(), indexVariable);
+        } else {
+            runtimeService.setVariable(twin.getTwinProcessId(), indexVariable,
+                    AgentVariables.outputIndexValue(current.keySet()));
         }
     }
 

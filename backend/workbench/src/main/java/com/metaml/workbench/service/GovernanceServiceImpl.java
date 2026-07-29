@@ -1,5 +1,6 @@
 package com.metaml.workbench.service;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.metaml.workbench.model.GovernanceDecision;
@@ -17,13 +18,21 @@ import java.util.stream.Collectors;
 @Service
 public class GovernanceServiceImpl implements GovernanceService {
 
-    private static final int DEFAULT_MAX_EVOLUTIONS_PER_TWIN = 5;
-
     // swap the whole set, never mutate it - getPolicy() can otherwise read it half updated
     private volatile Set<String> deniedAgentTypes = Set.of();
-    private volatile int maxEvolutionsPerTwin = DEFAULT_MAX_EVOLUTIONS_PER_TWIN;
+    private volatile int maxEvolutionsPerTwin;
     // TODO: nothing ever removes a twin's counter, this map only grows
     private final Map<String, AtomicInteger> evolutionCounts = new ConcurrentHashMap<>();
+
+    // Was a hardcoded 5, which the citi walkthrough alone blew past - it bridges seven activities
+    // on one twin and the sixth onwards were being refused for no reason anybody watching the
+    // demo could see. How many a twin gets depends entirely on how big the attached project's
+    // process is, so it's a property. updatePolicy still overrides it at runtime, this is only
+    // where the number starts.
+    public GovernanceServiceImpl(
+            @Value("${workbench.governance.max-evolutions-per-twin:25}") int maxEvolutionsPerTwin) {
+        this.maxEvolutionsPerTwin = maxEvolutionsPerTwin;
+    }
 
     @Override
     public GovernancePolicy getPolicy() {

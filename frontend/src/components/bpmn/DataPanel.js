@@ -13,6 +13,11 @@ import {
     addDataItem,
     updateDataItem,
     removeDataItem,
+    canDeclareAgentOutputs,
+    getAgentOutputs,
+    addAgentOutput,
+    updateAgentOutput,
+    removeAgentOutput,
 } from "./bpmnUtils";
 
 const DATA_TYPES = ["string", "number", "boolean", "date", "json"];
@@ -30,6 +35,8 @@ const DataPanel = ({ modeler, element }) => {
     const typeLabel = (bo.$type || "").replace("bpmn:", "");
     const supportsData = canHoldData(element);
     const items = supportsData ? getDataItems(element) : [];
+    const supportsAgentOutputs = canDeclareAgentOutputs(element);
+    const agentOutputs = supportsAgentOutputs ? getAgentOutputs(element) : [];
     const defaultFlowCapable = canBeDefaultFlow(element);
 
     return (
@@ -122,6 +129,80 @@ const DataPanel = ({ modeler, element }) => {
                                                 variant="link"
                                                 className="text-danger p-1"
                                                 onClick={() => removeDataItem(modeler, element, item)}
+                                            >
+                                                <FontAwesomeIcon icon={faTrash} />
+                                            </Button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </Table>
+                    )}
+                </div>
+            )}
+
+            {supportsAgentOutputs && (
+                <div className="bpmn-data-section mt-3">
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                        <span className="bpmn-field-label mb-0">Agent outputs</span>
+                        <Button
+                            size="sm"
+                            variant="outline-primary"
+                            onClick={() => addAgentOutput(modeler, element)}
+                        >
+                            <FontAwesomeIcon icon={faPlus} /> Add
+                        </Button>
+                    </div>
+
+                    {agentOutputs.length === 0 ? (
+                        <p className="text-muted small mb-0">
+                            Nothing declared. An evolved agent&apos;s outputs always land as
+                            agentOutput_&lt;activity&gt;_&lt;output&gt;; add a row here to publish one of
+                            them under a shorter name a gateway condition can read. Only takes effect on
+                            a task carrying the agent execution listener.
+                        </p>
+                    ) : (
+                        <Table size="sm" borderless className="bpmn-data-table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Output</th>
+                                    <th>Variable</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {agentOutputs.map((output, idx) => (
+                                    <tr key={idx}>
+                                        <td>
+                                            <Form.Control
+                                                size="sm"
+                                                type="text"
+                                                value={output.name || ""}
+                                                onChange={(e) =>
+                                                    updateAgentOutput(modeler, element, output, {
+                                                        name: e.target.value,
+                                                    })
+                                                }
+                                            />
+                                        </td>
+                                        <td>
+                                            <Form.Control
+                                                size="sm"
+                                                type="text"
+                                                value={output.variable || ""}
+                                                onChange={(e) =>
+                                                    updateAgentOutput(modeler, element, output, {
+                                                        variable: e.target.value,
+                                                    })
+                                                }
+                                            />
+                                        </td>
+                                        <td className="text-end">
+                                            <Button
+                                                size="sm"
+                                                variant="link"
+                                                className="text-danger p-1"
+                                                onClick={() => removeAgentOutput(modeler, element, output)}
                                             >
                                                 <FontAwesomeIcon icon={faTrash} />
                                             </Button>

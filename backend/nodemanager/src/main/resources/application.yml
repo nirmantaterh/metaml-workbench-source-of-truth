@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: nodemanager
+
+server:
+  # 8082 got pinned to loopback for the obvious reasons; this one was still on 0.0.0.0. It has no
+  # spring-security on the classpath at all, so it was the one genuinely open port on the machine.
+  # The workbench calls it over localhost, so nothing local cares.
+  address: 127.0.0.1
+  port: 8083
+
+# The agent catalog. Yaml rather than the .properties file this module used to have, because
+# outputs is a nested map and, more to the point, .properties has no types: every value in it
+# arrives as a String, and a gateway condition asking whether riskFlagged == true would then
+# always be comparing against "true" and always be false.
+nodemanager:
+  agents:
+    data-enricher:
+      agent-name: data-enricher-agent-01
+    notifier:
+      agent-name: notifier-agent-01
+    validator:
+      agent-name: validator-agent-01
+    recommender:
+      agent-name: recommender-agent-01
+    # the credit assessor is still the one entry in here that reports back on the work rather
+    # than just saying it exists. Everything else has nothing to report and says nothing.
+    credit-risk-assessor:
+      agent-name: credit-risk-agent-01
+      outputs:
+        riskFlagged: true

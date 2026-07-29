@@ -54,12 +54,18 @@ class WireTransferWalkthroughTest {
     private static final String AML = "Task_AML";
     private static final String OFAC = "Task_OFAC";
     private static final String CREDIT = "Task_Credit";
+    private static final String ESCALATE = "Task_Escalate";
     private static final String APPROVE = "Task_Approve";
     private static final String EXECUTE = "Task_Execute";
     private static final String NOTIFY = "Task_Notify";
 
     // what the bridge picks when no caller supplied a type, and what the real catalog answers
     private static final String BRIDGE_AGENT = "validator-agent-01";
+
+    // the one catalog entry that comes back with a flag raised, and the variable that flag turns
+    // into on the original once the delegate has run
+    private static final String RISK_AGENT_TYPE = "credit-risk-assessor";
+    private static final String RISK_FLAG = "agentFlaggedRisk";
 
     @MockitoBean
     private NodeManagerClient nodeManagerClient;
@@ -81,7 +87,10 @@ class WireTransferWalkthroughTest {
     void stubTheCatalogAndOpenTheQuota() {
         given(nodeManagerClient.checkAgentAvailability(anyString())).willAnswer(call -> {
             String type = call.getArgument(0);
-            return new AgentAvailabilityResult(type, true, type + "-agent-01", "stub catalog");
+            // same rule the real NodeManagerServiceImpl catalog uses: only the credit assessor
+            // ever comes back flagged
+            return new AgentAvailabilityResult(type, true, type + "-agent-01", "stub catalog",
+                    RISK_AGENT_TYPE.equals(type));
         });
         // seven activities get bridged on one twin below, well past the default cap of 5, so
         // the quota needs raising first.
@@ -156,6 +165,66 @@ class WireTransferWalkthroughTest {
         assertThat(governanceService.getUsage(twin.getId()).getEvolutionCount()).isEqualTo(7);
 
         assertThat(workbenchService.completeCurrentTasks(twin.getId())).isEmpty();
+    }
+
+    // up to now an evolution was pure bookkeeping - it recorded which agent was picked and the
+    // original ran exactly the same either way. Task_Credit is the one activity where the agent's
+    // answer steers the process, so these two runs differ in nothing but which agent evolved it.
+    @Test
+    void aRiskFlaggingAgentSendsTheTransferToTheComplianceOfficer() throws IOException {
+        TwinProcess plain = walkToTheComplianceChecks("citi wire transfer plain credit check");
+        assertThat(workbenchService.completeCurrentTasks(plain.getId())).hasSize(3);
+
+        assertThat(originalVariable(plain, RISK_FLAG)).isNull();
+        assertThat(openActivities(plain)).containsExactly(APPROVE);
+        assertThat(reached(plain, ESCALATE)).isFalse();
+        // and out the far end the way it always did
+        assertThat(workbenchService.completeCurrentTasks(plain.getId())).hasSize(1);
+        assertThat(workbenchService.completeCurrentTasks(plain.getId())).hasSize(1);
+        assertThat(workbenchService.completeCurrentTasks(plain.getId())).hasSize(1);
+        assertThat(reached(plain, "EndEvent_Success")).isTrue();
+
+        TwinProcess flagged = walkToTheComplianceChecks("citi wire transfer risk assessed credit check");
+        AgentDecision credit = workbenchService.evolveActivity(flagged.getId(), CREDIT, RISK_AGENT_TYPE);
+        assertThat(credit.isApproved()).isTrue();
+        assertThat(credit.isRiskFlagged()).isTrue();
+        assertThat(evolvedAgent(flagged, CREDIT)).isEqualTo(RISK_AGENT_TYPE + "-agent-01");
+
+        assertThat(workbenchService.completeCurrentTasks(flagged.getId())).hasSize(3);
+
+        assertThat(originalVariable(flagged, RISK_FLAG)).isEqualTo(true);
+        assertThat(openActivities(flagged)).containsExactly(ESCALATE);
+        assertThat(reached(flagged, APPROVE)).isFalse();
+    }
+
+    // caught by an adversarial review pass, not written test-first: evolving with an ordinary
+    // agent after a flagged one left the old flag sitting on the twin, so the UI would show a
+    // plain agent assigned while the process kept escalating anyway
+    @Test
+    void reEvolvingWithAnOrdinaryAgentClearsAnEarlierRiskFlag() throws IOException {
+        TwinProcess twin = walkToTheComplianceChecks("citi wire transfer re-evolved credit check");
+
+        assertThat(workbenchService.evolveActivity(twin.getId(), CREDIT, RISK_AGENT_TYPE).isRiskFlagged()).isTrue();
+        assertThat(workbenchService.evolveActivity(twin.getId(), CREDIT, "validator").isRiskFlagged()).isFalse();
+
+        assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(3);
+
+        assertThat(originalVariable(twin, RISK_FLAG)).isNull();
+        assertThat(openActivities(twin)).containsExactly(APPROVE);
+        assertThat(reached(twin, ESCALATE)).isFalse();
+    }
+
+    // the shared front half of both runs above: launch, bridge KYC by hand, and stop with the
+    // three compliance checks open and connected
+    private TwinProcess walkToTheComplianceChecks(String modelName) throws IOException {
+        ProcessModel model = workbenchService.saveProcessModel(null, modelName, citibankBpmn());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        connect(twin, KYC, AML, OFAC, CREDIT);
+
+        assertThat(workbenchService.bridgeActivityEvent(twin.getId(), KYC).isApproved()).isTrue();
+        assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(1);
+        assertThat(openActivities(twin)).containsExactlyInAnyOrder(AML, OFAC, CREDIT);
+        return twin;
     }
 
     // connect() above always maps id to itself, so it never catches original/twin ids differing
@@ -290,7 +359,7 @@ class WireTransferWalkthroughTest {
                 firstIsInside.countDown();
                 secondIsDone.await(20, TimeUnit.SECONDS);
             }
-            return new AgentAvailabilityResult(type, true, type + "-agent-01", "stub catalog");
+            return new AgentAvailabilityResult(type, true, type + "-agent-01", "stub catalog", false);
         });
 
         Callable<AgentDecision> first = evolveGoesFirst
@@ -328,7 +397,7 @@ class WireTransferWalkthroughTest {
         given(nodeManagerClient.checkAgentAvailability(anyString())).willAnswer(call -> {
             String type = call.getArgument(0);
             return new AgentAvailabilityResult(type, true,
-                    type + "-agent-0" + nextAgent.incrementAndGet(), "stub catalog");
+                    type + "-agent-0" + nextAgent.incrementAndGet(), "stub catalog", false);
         });
 
         ProcessModel model = workbenchService.saveProcessModel(null, "loop task test", loopBpmn());
@@ -402,12 +471,16 @@ class WireTransferWalkthroughTest {
         return runtimeService.getVariable(twin.getTwinProcessId(), "evolvedAgent_" + twinActivityId);
     }
 
+    private Object agentExecuted(TwinProcess twin, String activityId) {
+        return originalVariable(twin, "agentExecuted_" + activityId);
+    }
+
     // via history, not runtimeService - the original has already ended by the time some of these
     // assertions run and reading a variable off a finished instance throws
-    private Object agentExecuted(TwinProcess twin, String activityId) {
+    private Object originalVariable(TwinProcess twin, String variableName) {
         HistoricVariableInstance variable = historyService.createHistoricVariableInstanceQuery()
                 .processInstanceId(twin.getOriginalProcessId())
-                .variableName("agentExecuted_" + activityId)
+                .variableName(variableName)
                 .singleResult();
         return variable == null ? null : variable.getValue();
     }

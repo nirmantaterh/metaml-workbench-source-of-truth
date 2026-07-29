@@ -27,6 +27,26 @@
         { "name": "type", "type": "String", "isAttr": true },
         { "name": "value", "type": "String", "isAttr": true }
       ]
+    },
+    {
+      "name": "AgentOutputs",
+      "superClass": ["Element"],
+      "meta": { "allowedIn": ["bpmn:Activity", "bpmn:Task"] },
+      "properties": [
+        {
+          "name": "outputs",
+          "type": "AgentOutput",
+          "isMany": true
+        }
+      ]
+    },
+    {
+      "name": "AgentOutput",
+      "superClass": ["Element"],
+      "properties": [
+        { "name": "name", "type": "String", "isAttr": true },
+        { "name": "variable", "type": "String", "isAttr": true }
+      ]
     }
   ]
 }
