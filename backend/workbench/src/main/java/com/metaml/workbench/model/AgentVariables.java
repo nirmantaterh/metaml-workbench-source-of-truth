@@ -38,6 +38,19 @@ public final class AgentVariables {
         return "agentExecuted_" + perVisit(activityId, loopCounter);
     }
 
+    // The twin's side of the story, and the only variable on the twin that says an activity there
+    // actually executed rather than just having an agent assigned to it. Per-visit like
+    // evolvedAgent_* above and for the same reason.
+    public static String twinAutomation(String twinActivityId, Object loopCounter) {
+        return "twinAutomation_" + perVisit(twinActivityId, loopCounter);
+    }
+
+    // whatever the project's automation reported, one variable per name, same shape as the
+    // evolvedAgentOutput_* family so a model author only has to learn the one convention
+    public static String twinAutomationOutput(String outputName, String twinActivityId, Object loopCounter) {
+        return "twinAutomationOutput_" + outputName + "_" + perVisit(twinActivityId, loopCounter);
+    }
+
     // Deliberately not per-visit like the names above: gateway conditions downstream in the model
     // read this by hand and have no idea which visit of the activity produced it, same as the
     // agentFlaggedRisk flag it generalises. Nothing reconciles this one the way the twin side

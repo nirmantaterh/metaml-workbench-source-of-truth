@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import com.metaml.workbench.bpmn.AgentOutputDeclarations;
 import com.metaml.workbench.model.AgentVariables;
+import com.metaml.workbench.model.BusinessKeys;
 import com.metaml.workbench.model.TwinProcess;
 import com.metaml.workbench.service.WorkbenchService;
 
@@ -25,7 +26,6 @@ public class AgentExecutionDelegate implements TaskListener {
 
     private static final Logger logger = LoggerFactory.getLogger(AgentExecutionDelegate.class);
 
-    private static final String ORIGINAL_BUSINESS_KEY_PREFIX = "original-";
     // Camunda's own, set on the execution inside a multi-instance body
     private static final String LOOP_COUNTER_VARIABLE = "loopCounter";
     // read by a gateway further down the model, so it is deliberately one flag for the whole
@@ -50,13 +50,13 @@ public class AgentExecutionDelegate implements TaskListener {
     @Override
     public void notify(DelegateTask delegateTask) {
         String businessKey = delegateTask.getExecution().getProcessBusinessKey();
-        if (businessKey == null || !businessKey.startsWith(ORIGINAL_BUSINESS_KEY_PREFIX)) {
+        if (!BusinessKeys.isOriginalKey(businessKey)) {
             // completeCurrentTasks only ever touches the original, but Camunda Tasklist ships
             // with this app and will happily complete the twin's copy of a task by hand, so this
             // is a real check and not just belt and braces
             return;
         }
-        String twinId = businessKey.substring(ORIGINAL_BUSINESS_KEY_PREFIX.length());
+        String twinId = BusinessKeys.twinIdFromOriginalKey(businessKey);
 
         TwinProcess twin = workbenchService.findTwinProcess(twinId);
         if (twin == null) {
@@ -104,6 +104,17 @@ public class AgentExecutionDelegate implements TaskListener {
         Map<String, String> declared = outputDeclarations.forActivity(
                 delegateTask.getProcessDefinitionId(), activityId);
         Object riskFlag = null;
+        // Phase 9/10 red team finding: this used to treat ANY output literally named "riskFlagged"
+        // as routing-relevant, on every activity, in every project, whether or not that project's
+        // BPMN ever opted into it - the one write-back channel from Twin to Original that isn't
+        // gated the same way every other output already is (declaredVariable below). Now it
+        // requires the SAME opt-in every other output needs: the activity's own metaml:agentOutputs
+        // declaration has to name "riskFlagged" mapped to "agentFlaggedRisk" specifically. The
+        // citibank model already declares exactly that for Task_Credit (asserted directly in
+        // TwinExecutionWalkthroughTest), so this changes nothing for it - it only stops a future
+        // project's automation from inheriting this channel by accident, purely because one of its
+        // output names happens to collide with this one's.
+        boolean riskFlagDeclared = RISK_FLAG_VARIABLE.equals(declared.get(AgentVariables.RISK_FLAGGED_OUTPUT));
         for (String outputName : AgentVariables.outputNamesIn(outputIndex)) {
             Object value = runtimeService.getVariable(twin.getTwinProcessId(),
                     AgentVariables.evolvedAgentOutput(outputName, twinActivityId, loopCounter));
@@ -127,7 +138,7 @@ public class AgentExecutionDelegate implements TaskListener {
                 workbenchService.recordAgentExecution(twinId, declaredVariable, value);
             }
 
-            if (AgentVariables.RISK_FLAGGED_OUTPUT.equals(outputName)) {
+            if (riskFlagDeclared && AgentVariables.RISK_FLAGGED_OUTPUT.equals(outputName)) {
                 riskFlag = value;
             }
         }

@@ -84,18 +84,24 @@ public class WorkbenchStateStore {
         if (!enabled) {
             return;
         }
-        StateDto dto = new StateDto();
-        dto.models = new ArrayList<>();
-        for (ProcessModel model : models) {
-            dto.models.add(ProcessModelDto.of(model));
-        }
-        dto.twins = new ArrayList<>();
-        for (TwinProcess twin : twins) {
-            dto.twins.add(TwinProcessDto.of(twin));
-        }
-
-        // temp file + one writer at a time - a half-written snapshot costs every twin on next boot
+        // Phase 9/10 red team finding: the DTO snapshot used to be built OUTSIDE this lock, so two
+        // concurrent persistState() calls could interleave such that the logically OLDER snapshot
+        // won the write lock LAST, silently overwriting a file that a moment earlier correctly held
+        // newer data - a pure lost update, reproduced empirically (two threads racing save() with a
+        // deliberately older and newer snapshot; the newer one's already-written change vanished).
+        // Snapshotting and writing now happen inside the same lock, so one caller's full save()
+        // always finishes - snapshot included - before the next one can start theirs.
         synchronized (writeLock) {
+            StateDto dto = new StateDto();
+            dto.models = new ArrayList<>();
+            for (ProcessModel model : models) {
+                dto.models.add(ProcessModelDto.of(model));
+            }
+            dto.twins = new ArrayList<>();
+            for (TwinProcess twin : twins) {
+                dto.twins.add(TwinProcessDto.of(twin));
+            }
+
             try {
                 Path parent = file.toAbsolutePath().getParent();
                 if (parent != null) {
@@ -154,16 +160,19 @@ public class WorkbenchStateStore {
         }
     }
 
-    // no forwardedBridgeActivities here on purpose. It's a dedupe hint, one entry per activity
-    // visit now rather than per activity, so on a long-running twin it would grow without limit
-    // in a file we rewrite from scratch on every single mutation. Governance counters don't
-    // survive a restart either, so restoring it wouldn't be protecting a quota that still exists.
+    // TwinProcess no longer carries a forwardedBridgeActivities field to leave out here: the bridge
+    // dedupe guard now derives straight from the twin's own evolvedAgent_* runtime/history variables
+    // (see WorkbenchServiceImpl.alreadyEvolved), which already survive a restart on their own, so
+    // there was never anything to persist separately. Governance counters still don't survive a
+    // restart, but that isn't protecting a quota that still exists either.
     static final class TwinProcessDto {
         public String id;
         public String modelId;
         public String processDefinitionId;
+        public String twinProcessDefinitionId;
         public String originalProcessId;
         public String twinProcessId;
+        public String projectId;
         public String status;
         public Long launchedAtEpochMillis;
         public List<String> eventLog;
@@ -174,8 +183,10 @@ public class WorkbenchStateStore {
             dto.id = twin.getId();
             dto.modelId = twin.getModelId();
             dto.processDefinitionId = twin.getProcessDefinitionId();
+            dto.twinProcessDefinitionId = twin.getTwinProcessDefinitionId();
             dto.originalProcessId = twin.getOriginalProcessId();
             dto.twinProcessId = twin.getTwinProcessId();
+            dto.projectId = twin.getProjectId();
             dto.status = twin.getStatus();
             dto.launchedAtEpochMillis = twin.getLaunchedAt() == null
                     ? null
@@ -196,8 +207,18 @@ public class WorkbenchStateStore {
             twin.setId(id);
             twin.setModelId(modelId);
             twin.setProcessDefinitionId(processDefinitionId);
+            // Older snapshots predate the dedicated twin definition field. Keep those restorable by
+            // falling back to the original definition, which is what older twins were running.
+            twin.setTwinProcessDefinitionId(
+                    twinProcessDefinitionId == null || twinProcessDefinitionId.isBlank()
+                            ? processDefinitionId
+                            : twinProcessDefinitionId);
             twin.setOriginalProcessId(originalProcessId);
             twin.setTwinProcessId(twinProcessId);
+            // a snapshot written before twins had a project keeps the field's own default
+            if (projectId != null && !projectId.isBlank()) {
+                twin.setProjectId(projectId);
+            }
             twin.setStatus(status);
             twin.setLaunchedAt(launchedAtEpochMillis == null
                     ? null

@@ -41,7 +41,7 @@ public class GovernanceController {
     public ResponseEntity<ApiResponse> updatePolicy(@RequestBody UpdateGovernancePolicyRequest request) {
         try {
             GovernancePolicy policy = governanceService.updatePolicy(request.getDeniedAgentTypes(),
-                    request.getMaxEvolutionsPerTwin());
+                    request.getMaxEvolutionsPerTwin(), request.getMaxTwinExecutionsPerTwin());
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, policy));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));

@@ -11,4 +11,6 @@ public class GovernanceUsage {
     private String twinProcessId;
     private int evolutionCount;
     private int maxEvolutionsPerTwin;
+    private int twinExecutionCount;
+    private int maxTwinExecutionsPerTwin;
 }

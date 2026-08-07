@@ -2,6 +2,7 @@ package com.metaml.workbench.service;
 
 import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.model.ProcessModel;
+import com.metaml.workbench.model.TwinAdvance;
 import com.metaml.workbench.model.TwinProcess;
 
 import java.util.List;
@@ -14,6 +15,9 @@ public interface WorkbenchService {
 
     ProcessModel getProcessModel(String id);
 
+    // Starts both instances. The twin runs a definition of its own, generated from the original
+    // with the human taken out of every activity, so its token can actually be moved along with
+    // the original's rather than sitting on a user task nobody will ever open.
     TwinProcess launchProcess(String modelId);
 
     TwinProcess getTwinProcess(String id);
@@ -33,6 +37,20 @@ public interface WorkbenchService {
     // for callers that already know the visit. activityInstanceId is Camunda's own, which is
     // what tells repeat visits of a loop or multi-instance activity apart.
     AgentDecision bridgeActivityEvent(String twinProcessId, String activityId, String activityInstanceId);
+
+    // Moves the twin's own token through its copy of the named activity, by correlating the
+    // message its receive task is waiting on. Never call this from anywhere that runs inside an
+    // engine command: a failure on the twin's side can't be allowed to take the human's
+    // task-completion transaction down with it. AutoBridgeTrigger's after-commit worker is where
+    // it belongs.
+    TwinAdvance advanceTwinActivity(String twinProcessId, String activityId);
+
+    // Same, but for a parallel multi-instance activity, where more than one twin execution can be
+    // waiting on the identical message at once - originalExecutionId is the execution the
+    // original's own "start" event fired on, read for its local loopCounter to pick the one twin
+    // sibling that corresponds to it. Null (or an activity with no loopCounter at all) behaves
+    // exactly like the two-argument overload.
+    TwinAdvance advanceTwinActivity(String twinProcessId, String activityId, String originalExecutionId);
 
     // every open user task on the ORIGINAL instance, not the twin. returns a label per task
     // completed, empty list if there was nothing open.

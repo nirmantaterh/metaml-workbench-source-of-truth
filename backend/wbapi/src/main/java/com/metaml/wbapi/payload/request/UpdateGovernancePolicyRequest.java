@@ -6,11 +6,12 @@ import lombok.NoArgsConstructor;
 
 import java.util.Set;
 
-// both nullable on purpose - only what's in the body gets changed
+// all nullable on purpose - only what's in the body gets changed
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class UpdateGovernancePolicyRequest {
     private Set<String> deniedAgentTypes;
     private Integer maxEvolutionsPerTwin;
+    private Integer maxTwinExecutionsPerTwin;
 }
