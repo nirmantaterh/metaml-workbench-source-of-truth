@@ -21,6 +21,8 @@ import org.slf4j.LoggerFactory;
 
 import com.metaml.workbench.bpmn.TwinModelGenerator;
 import com.metaml.workbench.client.AgentAvailabilityResult;
+import com.metaml.workbench.codegen.DelegateClassGenerator;
+import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.client.NodeManagerClient;
 import com.metaml.workbench.client.NodeManagerUnavailableException;
 import com.metaml.workbench.model.ActivityLink;
@@ -70,11 +72,13 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     private final TwinModelGenerator twinModelGenerator;
     private final WorkbenchStateStore stateStore;
     private final ProcessModelFileStore modelFileStore;
+    private final DelegateClassGenerator delegateClassGenerator;
 
     public WorkbenchServiceImpl(NodeManagerClient nodeManagerClient, GovernanceService governanceService,
             RuntimeService runtimeService, RepositoryService repositoryService, HistoryService historyService,
             TaskService taskService, TwinModelGenerator twinModelGenerator,
-            WorkbenchStateStore stateStore, ProcessModelFileStore modelFileStore) {
+            WorkbenchStateStore stateStore, ProcessModelFileStore modelFileStore,
+            DelegateClassGenerator delegateClassGenerator) {
         this.nodeManagerClient = nodeManagerClient;
         this.governanceService = governanceService;
         this.runtimeService = runtimeService;
@@ -84,6 +88,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         this.twinModelGenerator = twinModelGenerator;
         this.stateStore = stateStore;
         this.modelFileStore = modelFileStore;
+        this.delegateClassGenerator = delegateClassGenerator;
     }
 
     @PostConstruct
@@ -205,6 +210,12 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             throw new NoSuchElementException("Process model not found: " + id);
         }
         return model;
+    }
+
+    @Override
+    public List<GeneratedDelegate> generateDelegates(String modelId) {
+        ProcessModel model = getProcessModel(modelId);
+        return delegateClassGenerator.generate(model.getBpmnXml());
     }
 
     // One launch, one twin, and the twin always gets a definition of its own that its token can

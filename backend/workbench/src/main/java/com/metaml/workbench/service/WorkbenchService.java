@@ -1,5 +1,6 @@
 package com.metaml.workbench.service;
 
+import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinAdvance;
@@ -14,6 +15,12 @@ public interface WorkbenchService {
     ProcessModel saveProcessModel(String id, String name, String bpmnXml);
 
     ProcessModel getProcessModel(String id);
+
+    // New scope item 3 (BPMN Processing): one generated Java Delegate class per unique
+    // delegateExpression on the saved model's service tasks. Read-only - this only generates
+    // source, it doesn't write anything to disk yet (that's the Spring Boot generation step,
+    // still blocked on the template project's exact shape).
+    List<GeneratedDelegate> generateDelegates(String modelId);
 
     // Starts both instances. The twin runs a definition of its own, generated from the original
     // with the human taken out of every activity, so its token can actually be moved along with

@@ -95,6 +95,8 @@ class WireTransferWalkthroughTest {
     private WorkbenchStateStore stateStore;
     @Autowired
     private com.metaml.workbench.store.ProcessModelFileStore modelFileStore;
+    @Autowired
+    private com.metaml.workbench.codegen.DelegateClassGenerator delegateClassGenerator;
 
     @BeforeEach
     void stubTheCatalogAndOpenTheQuota() {
@@ -123,6 +125,51 @@ class WireTransferWalkthroughTest {
         assertThat(modelFileStore.exists(model.getId())).isTrue();
         String onDisk = java.nio.file.Files.readString(modelFileStore.pathFor(model.getId()));
         assertThat(onDisk).isEqualTo(citibankBpmn());
+    }
+
+    // New scope item 3 (BPMN Processing), proven through the real saved-model path rather than
+    // against DelegateClassGenerator in isolation (that's covered separately in
+    // com.metaml.workbench.codegen.DelegateClassGeneratorTest). Neither example model in this repo
+    // exercises this - both use user tasks with a taskListener delegateExpression
+    // (agentExecutionDelegate) for agent execution, not a service task with a direct
+    // delegateExpression the way Joanna's own example does - so this needs its own small fixture.
+    @Test
+    void generateDelegatesReadsTheRealSavedModelNotJustARawXmlString() {
+        ProcessModel model = workbenchService.saveProcessModel(null, "delegate generation test",
+                loanApprovalBpmn());
+
+        List<com.metaml.workbench.codegen.GeneratedDelegate> generated =
+                workbenchService.generateDelegates(model.getId());
+
+        assertThat(generated).hasSize(1);
+        assertThat(generated.get(0).beanName()).isEqualTo("calculateInterestService");
+        assertThat(generated.get(0).className()).isEqualTo("CalculateInterestService");
+    }
+
+    private static String loanApprovalBpmn() {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_LoanApproval" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="loanApproval" name="Loan Approval" isExecutable="true">
+                    <bpmn2:startEvent id="StartEvent_1" name="Loan Request Received">
+                      <bpmn2:outgoing>SequenceFlow_1</bpmn2:outgoing>
+                    </bpmn2:startEvent>
+                    <bpmn2:serviceTask id="ServiceTask_1" name="Calculate Interest"
+                        camunda:delegateExpression="${calculateInterestService}">
+                      <bpmn2:incoming>SequenceFlow_1</bpmn2:incoming>
+                      <bpmn2:outgoing>SequenceFlow_2</bpmn2:outgoing>
+                    </bpmn2:serviceTask>
+                    <bpmn2:sequenceFlow id="SequenceFlow_1" sourceRef="StartEvent_1" targetRef="ServiceTask_1" />
+                    <bpmn2:endEvent id="EndEvent_1" name="Loan Approved">
+                      <bpmn2:incoming>SequenceFlow_2</bpmn2:incoming>
+                    </bpmn2:endEvent>
+                    <bpmn2:sequenceFlow id="SequenceFlow_2" sourceRef="ServiceTask_1" targetRef="EndEvent_1" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
     }
 
     @Test
@@ -364,7 +411,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl freshService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, stateStore,
-                modelFileStore);
+                modelFileStore, delegateClassGenerator);
         Field twinProcessesField = WorkbenchServiceImpl.class.getDeclaredField("twinProcesses");
         twinProcessesField.setAccessible(true);
         @SuppressWarnings("unchecked")

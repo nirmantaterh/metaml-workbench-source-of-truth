@@ -15,12 +15,14 @@ import java.util.List;
 import java.util.NoSuchElementException;
 
 import com.metaml.workbench.client.NodeManagerUnavailableException;
+import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinProcess;
 import com.metaml.workbench.service.WorkbenchService;
 import com.metaml.wbapi.payload.request.ConnectActivityRequest;
 import com.metaml.wbapi.payload.request.EvolveActivityRequest;
+import com.metaml.wbapi.payload.request.GenerateDelegatesRequest;
 import com.metaml.wbapi.payload.request.LaunchProcessRequest;
 import com.metaml.wbapi.payload.request.SaveProcessModelRequest;
 import com.metaml.wbapi.payload.response.ApiResponse;
@@ -67,6 +69,24 @@ public class WorkbenchController {
         try {
             ProcessModel model = workbenchService.getProcessModel(id);
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, model));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    // New scope item 3 (BPMN Processing): the first step of Model -> Generate -> Launch. Returns
+    // one generated Java Delegate class per unique delegateExpression on the saved model's service
+    // tasks - read-only, nothing is written to disk or deployed yet. That's the Spring Boot
+    // generation step, still waiting on the template project's exact controller shape.
+    @PostMapping(WorkbenchUrlMapping.TRANSMUTE_GENERATE)
+    public ResponseEntity<ApiResponse> generateDelegates(@RequestBody GenerateDelegatesRequest request) {
+        try {
+            List<GeneratedDelegate> delegates = workbenchService.generateDelegates(request.getModelId());
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, delegates));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
         } catch (NoSuchElementException e) {
