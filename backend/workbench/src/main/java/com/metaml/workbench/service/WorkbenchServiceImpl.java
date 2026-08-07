@@ -25,6 +25,8 @@ import com.metaml.workbench.codegen.DelegateClassGenerator;
 import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.client.NodeManagerClient;
 import com.metaml.workbench.client.NodeManagerUnavailableException;
+import com.metaml.workbench.generation.GeneratedProject;
+import com.metaml.workbench.generation.SpringBootProjectGenerator;
 import com.metaml.workbench.model.ActivityLink;
 import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.model.AgentVariables;
@@ -73,12 +75,13 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     private final WorkbenchStateStore stateStore;
     private final ProcessModelFileStore modelFileStore;
     private final DelegateClassGenerator delegateClassGenerator;
+    private final SpringBootProjectGenerator springBootProjectGenerator;
 
     public WorkbenchServiceImpl(NodeManagerClient nodeManagerClient, GovernanceService governanceService,
             RuntimeService runtimeService, RepositoryService repositoryService, HistoryService historyService,
             TaskService taskService, TwinModelGenerator twinModelGenerator,
             WorkbenchStateStore stateStore, ProcessModelFileStore modelFileStore,
-            DelegateClassGenerator delegateClassGenerator) {
+            DelegateClassGenerator delegateClassGenerator, SpringBootProjectGenerator springBootProjectGenerator) {
         this.nodeManagerClient = nodeManagerClient;
         this.governanceService = governanceService;
         this.runtimeService = runtimeService;
@@ -89,6 +92,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         this.stateStore = stateStore;
         this.modelFileStore = modelFileStore;
         this.delegateClassGenerator = delegateClassGenerator;
+        this.springBootProjectGenerator = springBootProjectGenerator;
     }
 
     @PostConstruct
@@ -216,6 +220,21 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     public List<GeneratedDelegate> generateDelegates(String modelId) {
         ProcessModel model = getProcessModel(modelId);
         return delegateClassGenerator.generate(model.getBpmnXml());
+    }
+
+    @Override
+    public GeneratedProject generateSpringBootProject(String modelId) {
+        ProcessModel model = getProcessModel(modelId);
+        // regenerated here rather than reusing generateDelegates' output - that method renders
+        // against DelegateClassGenerator's own default package, which is fine for previewing
+        // source but not where SpringBootProjectGenerator is about to place the file. Has to be
+        // SpringBootProjectGenerator.DELEGATE_PACKAGE specifically, or the class compiles but
+        // Spring's component scan never finds it (see that constant's own comment).
+        List<GeneratedDelegate> delegates = delegateClassGenerator.generate(model.getBpmnXml(),
+                SpringBootProjectGenerator.DELEGATE_PACKAGE);
+        GeneratedProject project = springBootProjectGenerator.generate(model.getBpmnXml(), delegates);
+        logger.info("Generated Spring Boot project {} for model {}", project.projectId(), modelId);
+        return project;
     }
 
     // One launch, one twin, and the twin always gets a definition of its own that its token can

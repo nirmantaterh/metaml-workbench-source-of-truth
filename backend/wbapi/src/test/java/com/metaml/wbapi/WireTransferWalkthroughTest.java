@@ -53,7 +53,9 @@ import static org.mockito.BDDMockito.given;
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:metaml-test;DB_CLOSE_DELAY=-1",
         "workbench.state.persist=false",
-        "workbench.models.directory=./target/test-data/models"
+        "workbench.models.directory=./target/test-data/models",
+        "workbench.generation.template-directory=../../templates/camundademo",
+        "workbench.generation.output-directory=./target/test-data/generated-projects"
 })
 class WireTransferWalkthroughTest {
 
@@ -97,6 +99,8 @@ class WireTransferWalkthroughTest {
     private com.metaml.workbench.store.ProcessModelFileStore modelFileStore;
     @Autowired
     private com.metaml.workbench.codegen.DelegateClassGenerator delegateClassGenerator;
+    @Autowired
+    private com.metaml.workbench.generation.SpringBootProjectGenerator springBootProjectGenerator;
 
     @BeforeEach
     void stubTheCatalogAndOpenTheQuota() {
@@ -144,6 +148,28 @@ class WireTransferWalkthroughTest {
         assertThat(generated).hasSize(1);
         assertThat(generated.get(0).beanName()).isEqualTo("calculateInterestService");
         assertThat(generated.get(0).className()).isEqualTo("CalculateInterestService");
+    }
+
+    // New scope item 4 (Spring Boot Generation), proven through the real saved-model path against
+    // the real template on disk - not the synthetic fixture SpringBootProjectGeneratorTest uses -
+    // so this is the one place that would have caught the delegate package/directory mismatch bug
+    // (see DelegateClassGenerator.DEFAULT_PACKAGE's own comment) if the earlier fix hadn't already
+    // been proven by a real mvn compile of a generated project.
+    @Test
+    void generateSpringBootProjectProducesADelegateWhosePackageMatchesWhereItsActuallyWritten() throws IOException {
+        ProcessModel model = workbenchService.saveProcessModel(null, "project generation test",
+                loanApprovalBpmn());
+
+        com.metaml.workbench.generation.GeneratedProject project =
+                workbenchService.generateSpringBootProject(model.getId());
+
+        assertThat(project.processKey()).isEqualTo("loanApproval");
+        java.nio.file.Path delegateFile = project.directory().resolve(
+                "src/main/java/com/example/camundademo/delegates/CalculateInterestService.java");
+        assertThat(delegateFile).exists();
+        assertThat(java.nio.file.Files.readString(delegateFile))
+                .contains("package com.example.camundademo.delegates;");
+        assertThat(project.directory().resolve("src/main/resources/processes/loanApproval.bpmn")).exists();
     }
 
     private static String loanApprovalBpmn() {
@@ -411,7 +437,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl freshService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, stateStore,
-                modelFileStore, delegateClassGenerator);
+                modelFileStore, delegateClassGenerator, springBootProjectGenerator);
         Field twinProcessesField = WorkbenchServiceImpl.class.getDeclaredField("twinProcesses");
         twinProcessesField.setAccessible(true);
         @SuppressWarnings("unchecked")

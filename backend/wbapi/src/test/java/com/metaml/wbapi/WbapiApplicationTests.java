@@ -8,7 +8,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:metaml-test;DB_CLOSE_DELAY=-1",
         "workbench.state.persist=false",
-        "workbench.models.directory=./target/test-data/models"
+        "workbench.models.directory=./target/test-data/models",
+        "workbench.generation.template-directory=../../templates/camundademo",
+        "workbench.generation.output-directory=./target/test-data/generated-projects"
 })
 class WbapiApplicationTests {
 

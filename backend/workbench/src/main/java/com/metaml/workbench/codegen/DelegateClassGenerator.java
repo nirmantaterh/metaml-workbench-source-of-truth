@@ -24,12 +24,26 @@ import java.util.Map;
 @Component
 public class DelegateClassGenerator {
 
-    private static final String GENERATED_PACKAGE = "com.metaml.generated.delegate";
+    // used when a caller doesn't care where the class ultimately lives (the standalone
+    // preview/inspection path) - a real generated project overrides this via the packageName
+    // parameter below so the class lands somewhere Spring's component scan will actually find it
+    static final String DEFAULT_PACKAGE = "com.metaml.generated.delegate";
+
+    public List<GeneratedDelegate> generate(String bpmnXml) {
+        return generate(bpmnXml, DEFAULT_PACKAGE);
+    }
 
     // one class per unique delegateExpression, not per task - two activities pointing at the same
     // delegateExpression share the one Spring bean already, generating it twice would just be two
-    // classes fighting over the same @Component name
-    public List<GeneratedDelegate> generate(String bpmnXml) {
+    // classes fighting over the same @Component name.
+    //
+    // packageName has to match wherever the caller is actually going to place the .java file -
+    // javac happily compiles a file whose package statement disagrees with its directory, but
+    // Spring Boot's default @ComponentScan only looks under the application class's own package,
+    // so a mismatch here means the bean silently never registers at runtime even though the build
+    // succeeds. SpringBootProjectGenerator passes the template's real delegates package for this
+    // reason instead of relying on the default.
+    public List<GeneratedDelegate> generate(String bpmnXml, String packageName) {
         BpmnModelInstance model = Bpmn.readModelFromStream(
                 new ByteArrayInputStream(bpmnXml.getBytes(StandardCharsets.UTF_8)));
 
@@ -42,7 +56,7 @@ public class DelegateClassGenerator {
             }
             byBeanName.computeIfAbsent(beanName, bn -> {
                 String className = toClassName(bn);
-                String source = renderSource(className, bn, task.getName());
+                String source = renderSource(packageName, className, bn, task.getName());
                 return new GeneratedDelegate(bn, className, task.getName(), source);
             });
         }
@@ -79,8 +93,19 @@ public class DelegateClassGenerator {
         return sanitized.toString();
     }
 
-    private static String renderSource(String className, String beanName, String taskName) {
-        String label = (taskName == null || taskName.isBlank()) ? "(unnamed activity)" : taskName;
+    // task labels are free-text from the modeler, not code - BPMN happily carries an embedded
+    // newline in a name attribute (Joanna's own loanApproval.bpmn does: "Calculate\nInterest"),
+    // and every use of this label lands inside a single-line // comment. An unsanitized newline
+    // there doesn't just look wrong, it breaks the comment mid-line and turns the rest of the
+    // label into a syntax error in the generated file - found by actually compiling generated
+    // output against the real template, not by the unit tests, none of which had a multi-line
+    // name in their fixtures.
+    private static String sanitizeForComment(String label) {
+        return label.replaceAll("\\s+", " ").trim();
+    }
+
+    private static String renderSource(String packageName, String className, String beanName, String taskName) {
+        String label = (taskName == null || taskName.isBlank()) ? "(unnamed activity)" : sanitizeForComment(taskName);
         return """
                 package %s;
 
@@ -99,6 +124,6 @@ public class DelegateClassGenerator {
                         // TODO: implement %s
                     }
                 }
-                """.formatted(GENERATED_PACKAGE, label, beanName, beanName, className, label);
+                """.formatted(packageName, label, beanName, beanName, className, label);
     }
 }

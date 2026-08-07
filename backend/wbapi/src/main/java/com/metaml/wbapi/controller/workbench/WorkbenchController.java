@@ -16,6 +16,7 @@ import java.util.NoSuchElementException;
 
 import com.metaml.workbench.client.NodeManagerUnavailableException;
 import com.metaml.workbench.codegen.GeneratedDelegate;
+import com.metaml.workbench.generation.GeneratedProject;
 import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinProcess;
@@ -23,9 +24,11 @@ import com.metaml.workbench.service.WorkbenchService;
 import com.metaml.wbapi.payload.request.ConnectActivityRequest;
 import com.metaml.wbapi.payload.request.EvolveActivityRequest;
 import com.metaml.wbapi.payload.request.GenerateDelegatesRequest;
+import com.metaml.wbapi.payload.request.GenerateProjectRequest;
 import com.metaml.wbapi.payload.request.LaunchProcessRequest;
 import com.metaml.wbapi.payload.request.SaveProcessModelRequest;
 import com.metaml.wbapi.payload.response.ApiResponse;
+import com.metaml.wbapi.payload.response.GeneratedProjectResponse;
 import com.metaml.wbapi.utils.WorkbenchUrlMapping;
 import com.metaml.wbapi.utils.FeedbackMessage;
 
@@ -91,6 +94,26 @@ public class WorkbenchController {
             return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
         } catch (NoSuchElementException e) {
             return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    // New scope item 4 (Spring Boot Generation): the second step of Model -> Generate -> Launch.
+    // Assembles a full standalone Spring Boot project (Joanna's camundademo template, with the
+    // real BPMN and generated delegates dropped in) and writes it to disk. Doesn't launch it -
+    // that's still a separate step, not built yet.
+    @PostMapping(WorkbenchUrlMapping.TRANSMUTE_GENERATE_PROJECT)
+    public ResponseEntity<ApiResponse> generateSpringBootProject(@RequestBody GenerateProjectRequest request) {
+        try {
+            GeneratedProject project = workbenchService.generateSpringBootProject(request.getModelId());
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, GeneratedProjectResponse.from(project)));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
         } catch (Exception e) {
             return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
         }
