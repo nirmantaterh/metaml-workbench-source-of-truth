@@ -33,7 +33,8 @@ import static org.mockito.BDDMockito.given;
 // nobody wrote Java for, which is what the next project attaching to this platform will be doing.
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:metaml-test;DB_CLOSE_DELAY=-1",
-        "workbench.state.persist=false"
+        "workbench.state.persist=false",
+        "workbench.models.directory=./target/test-data/models"
 })
 class AgentOutputWalkthroughTest {
 
@@ -157,6 +158,34 @@ class AgentOutputWalkthroughTest {
         // Without this the test would pass just as well if every output got a bare name.
         assertThat(originalVariable(twin, "agentOutput_" + HOLDS + "_holdCount")).isEqualTo(3);
         assertThat(originalVariable(twin, "holdCount")).isNull();
+    }
+
+    // Phase 9/10 red team finding: riskFlagged used to reach the original as agentFlaggedRisk
+    // unconditionally, on any activity, in any project, purely because an output happened to be
+    // named "riskFlagged" - the one Twin-to-Original write-back that wasn't gated by the
+    // activity's own metaml:agentOutputs declaration the way every other output already is.
+    // Task_CheckHolds declares overdueFlagged but never riskFlagged, so an agent reporting
+    // riskFlagged=true for it must NOT reach agentFlaggedRisk - only the generic, always-safe
+    // agentOutput_<activityId>_riskFlagged name should.
+    @Test
+    void anUndeclaredRiskFlaggedOutputNeverReachesTheLegacyVariable() throws IOException {
+        given(nodeManagerClient.checkAgentAvailability(anyString())).willAnswer(call -> {
+            String type = call.getArgument(0);
+            return new AgentAvailabilityResult(type, true, type + "-agent-01", "stub catalog",
+                    Map.of("riskFlagged", true));
+        });
+
+        ProcessModel model = workbenchService.saveProcessModel(null, "library holds undeclared risk",
+                libraryBpmn());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        workbenchService.connectActivity(twin.getId(), HOLDS, HOLDS);
+        assertThat(workbenchService.evolveActivity(twin.getId(), HOLDS, "validator").isApproved()).isTrue();
+        assertThat(workbenchService.completeCurrentTasks(twin.getId())).hasSize(1);
+
+        // the generic, always-on name still carries it - nothing about the gate touches that path
+        assertThat(originalVariable(twin, "agentOutput_" + HOLDS + "_riskFlagged")).isEqualTo(true);
+        // but the legacy bare name, which a gateway elsewhere could be routing on, stays untouched
+        assertThat(originalVariable(twin, RISK_FLAG)).isNull();
     }
 
     // same shape as the real catalog: only the credit assessor reports anything, everything else

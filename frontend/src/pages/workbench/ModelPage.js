@@ -240,17 +240,6 @@ const ModelPage = () => {
         }
     };
 
-    const handleDownload = async () => {
-        const xml = await currentXml();
-        const blob = new Blob([xml], { type: "application/xml" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `${modelName || "process"}.bpmn`;
-        a.click();
-        URL.revokeObjectURL(url);
-    };
-
     // never send an id here. backend won't overwrite an existing model, so re-sending the id
     // from the last save broke every Save after the first one. each save is its own version.
     const handleSave = async () => {
@@ -527,9 +516,6 @@ const ModelPage = () => {
                 </Button>
                 <Button size="sm" variant="outline-secondary" onClick={() => fileInputRef.current.click()}>
                     Import
-                </Button>
-                <Button size="sm" variant="outline-secondary" onClick={handleDownload}>
-                    Download
                 </Button>
                 <input
                     ref={fileInputRef}

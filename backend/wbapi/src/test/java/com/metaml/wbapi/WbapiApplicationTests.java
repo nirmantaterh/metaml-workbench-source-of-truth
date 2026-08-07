@@ -7,7 +7,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 // the demo's one, and every one of these wants an empty engine anyway
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:metaml-test;DB_CLOSE_DELAY=-1",
-        "workbench.state.persist=false"
+        "workbench.state.persist=false",
+        "workbench.models.directory=./target/test-data/models"
 })
 class WbapiApplicationTests {
 
