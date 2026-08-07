@@ -2,6 +2,7 @@ package com.metaml.workbench.service;
 
 import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.generation.GeneratedProject;
+import com.metaml.workbench.generation.LaunchedProject;
 import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinAdvance;
@@ -29,6 +30,16 @@ public interface WorkbenchService {
     // produces its own standalone project directory - nothing here launches it (that's still
     // pending; see SpringBootProjectGenerator's own header comment).
     GeneratedProject generateSpringBootProject(String modelId);
+
+    // The last step of Model -> Generate -> Launch. Starts a project a prior call to
+    // generateSpringBootProject already produced, as its own background process on an
+    // auto-assigned port - multiple generated apps can run at once, each on its own port, per an
+    // explicit product decision rather than an assumption.
+    LaunchedProject launchGeneratedProject(String projectId);
+
+    // What's currently running, for the Evolve workflow's "connect to an existing deployed
+    // application" step to read from.
+    List<LaunchedProject> listRunningProjects();
 
     // Starts both instances. The twin runs a definition of its own, generated from the original
     // with the human taken out of every activity, so its token can actually be moved along with

@@ -13,6 +13,10 @@ public class WorkbenchUrlMapping {
     public static final String TRANSMUTE_MODELE = WB_TRANSMUTE + "/model";
     public static final String TRANSMUTE_GENERATE = WB_TRANSMUTE + "/generate";
     public static final String TRANSMUTE_GENERATE_PROJECT = WB_TRANSMUTE + "/generate-project";
+    // named distinctly from TRANSMUTE_LAUNCH, which starts a twin process instance - this starts
+    // a generated Spring Boot app as its own process, an unrelated notion of "launch"
+    public static final String TRANSMUTE_LAUNCH_PROJECT = WB_TRANSMUTE + "/launch-project";
+    public static final String TRANSMUTE_RUNNING_PROJECTS = WB_TRANSMUTE + "/running-projects";
     public static final String TRANSMUTE_LAUNCH = WB_TRANSMUTE + "/launch";
     public static final String TRANSMUTE_EVOLVE = WB_TRANSMUTE + "/evolve";
     public static final String TRANSMUTE_TWIN = WB_TRANSMUTE + "/twin";

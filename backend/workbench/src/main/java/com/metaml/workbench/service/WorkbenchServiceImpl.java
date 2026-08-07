@@ -26,7 +26,9 @@ import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.client.NodeManagerClient;
 import com.metaml.workbench.client.NodeManagerUnavailableException;
 import com.metaml.workbench.generation.GeneratedProject;
+import com.metaml.workbench.generation.LaunchedProject;
 import com.metaml.workbench.generation.SpringBootProjectGenerator;
+import com.metaml.workbench.generation.SpringBootProjectLauncher;
 import com.metaml.workbench.model.ActivityLink;
 import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.model.AgentVariables;
@@ -65,6 +67,10 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     // since it isn't set until an evolution actually succeeds. Keyed per visit like everything
     // else, or two visits of a multi-instance activity block each other for nothing.
     private final Map<String, Boolean> evolutionsInFlight = new ConcurrentHashMap<>();
+    // not persisted across a restart - a generated project is just a directory on disk, and
+    // launchGeneratedProject needs its path again; restart already forgets every launched process
+    // too, since those don't survive an app restart either
+    private final Map<String, GeneratedProject> generatedProjects = new ConcurrentHashMap<>();
     private final NodeManagerClient nodeManagerClient;
     private final GovernanceService governanceService;
     private final RuntimeService runtimeService;
@@ -76,12 +82,14 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     private final ProcessModelFileStore modelFileStore;
     private final DelegateClassGenerator delegateClassGenerator;
     private final SpringBootProjectGenerator springBootProjectGenerator;
+    private final SpringBootProjectLauncher springBootProjectLauncher;
 
     public WorkbenchServiceImpl(NodeManagerClient nodeManagerClient, GovernanceService governanceService,
             RuntimeService runtimeService, RepositoryService repositoryService, HistoryService historyService,
             TaskService taskService, TwinModelGenerator twinModelGenerator,
             WorkbenchStateStore stateStore, ProcessModelFileStore modelFileStore,
-            DelegateClassGenerator delegateClassGenerator, SpringBootProjectGenerator springBootProjectGenerator) {
+            DelegateClassGenerator delegateClassGenerator, SpringBootProjectGenerator springBootProjectGenerator,
+            SpringBootProjectLauncher springBootProjectLauncher) {
         this.nodeManagerClient = nodeManagerClient;
         this.governanceService = governanceService;
         this.runtimeService = runtimeService;
@@ -93,6 +101,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         this.modelFileStore = modelFileStore;
         this.delegateClassGenerator = delegateClassGenerator;
         this.springBootProjectGenerator = springBootProjectGenerator;
+        this.springBootProjectLauncher = springBootProjectLauncher;
     }
 
     @PostConstruct
@@ -233,8 +242,24 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         List<GeneratedDelegate> delegates = delegateClassGenerator.generate(model.getBpmnXml(),
                 SpringBootProjectGenerator.DELEGATE_PACKAGE);
         GeneratedProject project = springBootProjectGenerator.generate(model.getBpmnXml(), delegates);
+        generatedProjects.put(project.projectId(), project);
         logger.info("Generated Spring Boot project {} for model {}", project.projectId(), modelId);
         return project;
+    }
+
+    @Override
+    public LaunchedProject launchGeneratedProject(String projectId) {
+        GeneratedProject project = generatedProjects.get(projectId);
+        if (project == null) {
+            throw new NoSuchElementException("Generated project not found: " + projectId
+                    + " - it may not exist, or the app may have restarted since it was generated");
+        }
+        return springBootProjectLauncher.launch(project);
+    }
+
+    @Override
+    public List<LaunchedProject> listRunningProjects() {
+        return springBootProjectLauncher.listRunning();
     }
 
     // One launch, one twin, and the twin always gets a definition of its own that its token can

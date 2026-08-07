@@ -101,6 +101,8 @@ class WireTransferWalkthroughTest {
     private com.metaml.workbench.codegen.DelegateClassGenerator delegateClassGenerator;
     @Autowired
     private com.metaml.workbench.generation.SpringBootProjectGenerator springBootProjectGenerator;
+    @Autowired
+    private com.metaml.workbench.generation.SpringBootProjectLauncher springBootProjectLauncher;
 
     @BeforeEach
     void stubTheCatalogAndOpenTheQuota() {
@@ -437,7 +439,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl freshService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, stateStore,
-                modelFileStore, delegateClassGenerator, springBootProjectGenerator);
+                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher);
         Field twinProcessesField = WorkbenchServiceImpl.class.getDeclaredField("twinProcesses");
         twinProcessesField.setAccessible(true);
         @SuppressWarnings("unchecked")

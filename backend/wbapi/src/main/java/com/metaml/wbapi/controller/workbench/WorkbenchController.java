@@ -17,6 +17,7 @@ import java.util.NoSuchElementException;
 import com.metaml.workbench.client.NodeManagerUnavailableException;
 import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.generation.GeneratedProject;
+import com.metaml.workbench.generation.LaunchedProject;
 import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinProcess;
@@ -26,6 +27,7 @@ import com.metaml.wbapi.payload.request.EvolveActivityRequest;
 import com.metaml.wbapi.payload.request.GenerateDelegatesRequest;
 import com.metaml.wbapi.payload.request.GenerateProjectRequest;
 import com.metaml.wbapi.payload.request.LaunchProcessRequest;
+import com.metaml.wbapi.payload.request.LaunchProjectRequest;
 import com.metaml.wbapi.payload.request.SaveProcessModelRequest;
 import com.metaml.wbapi.payload.response.ApiResponse;
 import com.metaml.wbapi.payload.response.GeneratedProjectResponse;
@@ -114,6 +116,38 @@ public class WorkbenchController {
             return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
         } catch (IllegalStateException e) {
             return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    // Last step of Model -> Generate -> Launch: starts a previously generated project as its own
+    // background process on an auto-assigned port. Not to be confused with launchProcess below,
+    // which starts a twin PROCESS INSTANCE on the already-running engine - this starts a whole
+    // separate Spring Boot app.
+    @PostMapping(WorkbenchUrlMapping.TRANSMUTE_LAUNCH_PROJECT)
+    public ResponseEntity<ApiResponse> launchGeneratedProject(@RequestBody LaunchProjectRequest request) {
+        try {
+            LaunchedProject launched = workbenchService.launchGeneratedProject(request.getProjectId());
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, launched));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    // The Evolve workflow's own future "connect to an existing deployed application" step reads
+    // from this - what's actually running right now, not what was ever generated.
+    @GetMapping(WorkbenchUrlMapping.TRANSMUTE_RUNNING_PROJECTS)
+    public ResponseEntity<ApiResponse> listRunningProjects() {
+        try {
+            List<LaunchedProject> running = workbenchService.listRunningProjects();
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, running));
         } catch (Exception e) {
             return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
         }
