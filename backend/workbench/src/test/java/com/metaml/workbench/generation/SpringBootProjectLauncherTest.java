@@ -112,8 +112,8 @@ class SpringBootProjectLauncherTest {
     }
 
     // the real launch() path, not a reimplementation of its polling loop - a 2-second launcher
-    // (rather than the production 120s one) makes it affordable to actually let this run to its
-    // real failure instead of only inspecting the source for a throw statement
+    // (rather than the production 5-minute one) makes it affordable to actually let this run to
+    // its real failure instead of only inspecting the source for a throw statement
     @Test
     void aProjectWhoseAppNeverStartsListeningFailsLoudlyInsteadOfHangingForever() throws IOException {
         Files.writeString(projectDir.resolve("mvnw.cmd"), "@echo off\r\nping -n 300 127.0.0.1 >nul\r\n",

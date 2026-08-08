@@ -38,19 +38,24 @@ public class SpringBootProjectLauncher {
 
     // Camunda's own engine bootstrap plus a cold Maven dependency resolution on a machine that
     // hasn't run this exact generated project before can genuinely take the better part of a
-    // minute - proven empirically against the real template, not guessed at.
-    private static final Duration DEFAULT_READY_TIMEOUT = Duration.ofSeconds(120);
+    // minute - proven empirically against the real template, not guessed at. 120s was the
+    // original figure from that measurement on a small demo process; a large real-world model
+    // (Citi Bank's wire transfer review, dozens of activities) has more to deploy and can
+    // genuinely need longer on a cold cache, so this is 5 minutes now rather than assume every
+    // generated project is as small as the one this was first measured against.
+    private static final Duration DEFAULT_READY_TIMEOUT = Duration.ofMinutes(5);
 
     private final Map<String, Running> running = new ConcurrentHashMap<>();
 
     // One lock object per projectId, deliberately NOT ConcurrentHashMap.compute() on `running`
     // itself. compute() would give the same atomicity in fewer lines, but it holds the map's own
     // bin lock for the whole duration of the mapping function - and here that function spawns a
-    // child JVM and then waits up to the full 120s readiness timeout on it. CHM bins are shared by
-    // hash, and a resize needs every bin, so an unrelated projectId that happens to hash into the
-    // same bin (or any writer arriving during a resize) would block behind a two-minute Maven
-    // startup it has nothing to do with. Serialising unrelated launches is a worse bug than the
-    // race being fixed, so the lock is keyed on the projectId that actually needs it.
+    // child JVM and then waits up to the full readiness timeout on it, now several minutes. CHM
+    // bins are shared by hash, and a resize needs every bin, so an unrelated projectId that
+    // happens to hash into the same bin (or any writer arriving during a resize) would block
+    // behind a Maven startup that has nothing to do with it. Serialising unrelated launches is a
+    // worse bug than the race being fixed, so the lock is keyed on the projectId that actually
+    // needs it.
     //
     // These entries are never removed: a stop()ped project can be relaunched under the same id, so
     // dropping the lock would reopen the race for exactly that case. Bounded by the number of
@@ -63,7 +68,7 @@ public class SpringBootProjectLauncher {
     }
 
     // package-private, not @Value-configurable - this exists so a test can prove the real timeout
-    // path without waiting out the real 120s, not so an operator tunes it
+    // path without waiting out the real 5 minutes, not so an operator tunes it
     SpringBootProjectLauncher(Duration readyTimeout) {
         this.readyTimeout = readyTimeout;
     }
@@ -216,8 +221,8 @@ public class SpringBootProjectLauncher {
     // Takes the Process because "not listening yet" and "already dead" are not the same thing, and
     // this used to treat them identically: a generated project that failed to COMPILE - the single
     // most likely failure in a live demo, since the delegates are generated from whatever the user
-    // modelled - exited within seconds, and the caller then sat here for the full two minutes
-    // before reporting a timeout that said nothing about why. Checking isAlive() each round turns
+    // modelled - exited within seconds, and the caller then sat here for the full readiness
+    // timeout before reporting anything that said why. Checking isAlive() each round turns
     // that into an immediate failure carrying the exit code and the log to go read.
     private static void awaitReady(Process process, Path projectDir, int port, Duration timeout) {
         Instant deadline = Instant.now().plus(timeout);
