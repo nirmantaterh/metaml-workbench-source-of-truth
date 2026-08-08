@@ -24,6 +24,8 @@ class DelegateClassGeneratorTest {
         assertThat(delegate.beanName()).isEqualTo("calculateInterestService");
         assertThat(delegate.className()).isEqualTo("CalculateInterestService");
         assertThat(delegate.taskName()).isEqualTo("Calculate Interest");
+        // Phase 3B: the BPMN element id that produced this delegate, preserved through generation
+        assertThat(delegate.bpmnElementId()).isEqualTo("ServiceTask_1");
     }
 
     @Test
@@ -58,6 +60,9 @@ class DelegateClassGeneratorTest {
 
         assertThat(generated).hasSize(1);
         assertThat(generated.get(0).beanName()).isEqualTo("sharedService");
+        // Phase 3B: Task_A and Task_B both point at this bean - neither one is honestly "the"
+        // source, so bpmnElementId stays null rather than picking one of them
+        assertThat(generated.get(0).bpmnElementId()).isNull();
     }
 
     @Test
@@ -127,6 +132,10 @@ class DelegateClassGeneratorTest {
         assertThat(delegate.beanName()).isEqualTo("agentExecutionDelegate");
         assertThat(delegate.className()).isEqualTo("AgentExecutionDelegate");
         assertThat(delegate.kind()).isEqualTo(DelegateKind.TASK_LISTENER);
+        // Phase 3B: the userTask's own id, same chain as the serviceTask case above - a
+        // taskListener's element id is the userTask that carries it, not the listener itself
+        // (a <camunda:taskListener> has no id of its own in the BPMN)
+        assertThat(delegate.bpmnElementId()).isEqualTo("Task_A");
         assertThat(delegate.sourceCode())
                 .contains("implements TaskListener")
                 .contains("public void notify(DelegateTask delegateTask)")

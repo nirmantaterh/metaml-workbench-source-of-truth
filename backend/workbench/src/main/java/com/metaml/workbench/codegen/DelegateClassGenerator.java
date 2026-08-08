@@ -63,10 +63,15 @@ public class DelegateClassGenerator {
         BpmnModelInstance model = Bpmn.readModelFromStream(
                 new ByteArrayInputStream(bpmnXml.getBytes(StandardCharsets.UTF_8)));
 
-        Map<String, GeneratedDelegate> byClassName = new LinkedHashMap<>();
+        // Phase 3B: collect every BPMN element that resolves to each className first, rather than
+        // building the GeneratedDelegate directly - a className can legitimately be reached by more
+        // than one BPMN element (see the shared-delegate test below), and this is what lets the loop
+        // afterward tell "reached by exactly one element, safe to record" apart from "shared, would
+        // have to guess which one" without changing any of the dedup-by-className behavior itself
+        Map<String, List<Source>> sourcesByClassName = new LinkedHashMap<>();
 
         for (ServiceTask task : model.getModelElementsByType(ServiceTask.class)) {
-            addIfPresent(byClassName, packageName, task.getCamundaDelegateExpression(), task.getName(),
+            addSource(sourcesByClassName, task.getId(), task.getCamundaDelegateExpression(), task.getName(),
                     DelegateKind.SERVICE_TASK);
         }
 
@@ -81,25 +86,45 @@ public class DelegateClassGenerator {
             }
             for (CamundaTaskListener listener : extensionElements.getElementsQuery()
                     .filterByType(CamundaTaskListener.class).list()) {
-                addIfPresent(byClassName, packageName, listener.getCamundaDelegateExpression(), task.getName(),
+                addSource(sourcesByClassName, task.getId(), listener.getCamundaDelegateExpression(), task.getName(),
                         DelegateKind.TASK_LISTENER);
             }
         }
 
-        return new ArrayList<>(byClassName.values());
+        List<GeneratedDelegate> delegates = new ArrayList<>();
+        for (Map.Entry<String, List<Source>> entry : sourcesByClassName.entrySet()) {
+            String className = entry.getKey();
+            List<Source> sources = entry.getValue();
+            // the first BPMN element encountered still names/comments the generated class, exactly
+            // as before this change (see renderSource below) - only bpmnElementId is new
+            Source first = sources.get(0);
+            // more than one BPMN element sharing this bean is a real, legitimate case (two
+            // activities pointing at the same service) - "go to error" pointing at an arbitrary one
+            // of them would be worse than not pointing anywhere, so this is left null rather than
+            // fabricated
+            String bpmnElementId = sources.size() == 1 ? first.elementId() : null;
+            String source = renderSource(packageName, className, first.beanName(), first.taskName(), first.kind());
+            delegates.add(new GeneratedDelegate(first.beanName(), className, first.taskName(), first.kind(), source,
+                    bpmnElementId));
+        }
+        return delegates;
     }
 
-    private static void addIfPresent(Map<String, GeneratedDelegate> byClassName, String packageName,
+    // the BPMN element that pointed at this delegateExpression, kept alongside the same
+    // beanName/taskName/kind DelegateClassGenerator always needed - elementId is new (Phase 3B),
+    // everything else here already existed as addIfPresent's own local variables
+    private record Source(String elementId, String beanName, String taskName, DelegateKind kind) {
+    }
+
+    private static void addSource(Map<String, List<Source>> sourcesByClassName, String elementId,
             String rawExpression, String taskName, DelegateKind kind) {
         String beanName = unwrap(rawExpression);
         if (beanName.isBlank()) {
             return;
         }
         String className = toClassName(beanName);
-        byClassName.computeIfAbsent(className, cn -> {
-            String source = renderSource(packageName, cn, beanName, taskName, kind);
-            return new GeneratedDelegate(beanName, cn, taskName, kind, source);
-        });
+        sourcesByClassName.computeIfAbsent(className, cn -> new ArrayList<>())
+                .add(new Source(elementId, beanName, taskName, kind));
     }
 
     // delegateExpression is stored (and read back) as the literal attribute text, "${beanName}" -
