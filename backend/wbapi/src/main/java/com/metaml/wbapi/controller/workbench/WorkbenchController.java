@@ -70,6 +70,18 @@ public class WorkbenchController {
         }
     }
 
+    // New scope item 1 (Navigation & UI): backs "Edit Existing Project" - a picker needs something
+    // to list, not just a lookup by an id the user already has to know
+    @GetMapping(WorkbenchUrlMapping.TRANSMUTE_MODELE)
+    public ResponseEntity<ApiResponse> listModels() {
+        try {
+            List<ProcessModel> models = workbenchService.listProcessModels();
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, models));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
     @GetMapping(WorkbenchUrlMapping.TRANSMUTE_MODELE + "/{id}")
     public ResponseEntity<ApiResponse> getModel(@PathVariable String id) {
         try {

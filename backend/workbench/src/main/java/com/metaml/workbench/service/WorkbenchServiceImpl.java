@@ -46,6 +46,7 @@ import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -238,6 +239,13 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             throw new NoSuchElementException("Process model not found: " + id);
         }
         return model;
+    }
+
+    @Override
+    public List<ProcessModel> listProcessModels() {
+        return processModels.values().stream()
+                .sorted(Comparator.comparing(ProcessModel::getCreatedAt).reversed())
+                .toList();
     }
 
     @Override

@@ -1,0 +1,31 @@
+.workflow-progress {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+}
+
+.workflow-progress-step {
+    padding: 2px 10px;
+    border-radius: 12px;
+    color: #6c757d;
+    background: #f1f3f5;
+    border: 1px solid #dee2e6;
+}
+
+.workflow-progress-step-done {
+    color: #1f5f71;
+    background: #e6f2f5;
+    border-color: #1f5f71;
+}
+
+.workflow-progress-step-current {
+    color: #fff;
+    background: #1f5f71;
+    border-color: #1f5f71;
+    font-weight: 600;
+}
+
+.workflow-progress-arrow {
+    color: #adb5bd;
+}

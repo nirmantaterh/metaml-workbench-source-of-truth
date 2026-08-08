@@ -24,11 +24,19 @@ const Header = () => {
                 <Navbar.Collapse id="basic-navbar-nav">
                     <Nav className="me-auto">
                         <Nav.Link to={"/"}>Catalog</Nav.Link>
+                        {/* New scope item 1: just these two now - Sample and the old bare Model
+                            link are gone from here (Sample's route still works if linked to
+                            directly, it's just not part of this menu anymore) */}
                         <NavDropdown title="Transmute" id="basic-nav-dropdown">
-                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.ModelPage.path}>Model</NavDropdown.Item>
-                            <NavDropdown.Divider />
-                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.SamplePage.path}>Sample</NavDropdown.Item>
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.CreateProject.path}>
+                                Create Project
+                            </NavDropdown.Item>
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.EditProject.path}>
+                                Edit Existing Project
+                            </NavDropdown.Item>
                         </NavDropdown>
+                        {/* Connect/Evolve/Bridge, relocated out of the model editor's own toolbar */}
+                        <Nav.Link as={Link} to={WorkbenchRoutes.EvolvePage.path}>Evolve</Nav.Link>
                         <Nav.Link to={"/"}>Help</Nav.Link>
                     </Nav>
                     {/* <span class="ml-auto navbar-text"></span> */}

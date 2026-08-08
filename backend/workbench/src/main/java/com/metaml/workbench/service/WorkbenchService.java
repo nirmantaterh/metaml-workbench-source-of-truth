@@ -18,6 +18,11 @@ public interface WorkbenchService {
 
     ProcessModel getProcessModel(String id);
 
+    // New scope item 1 (Navigation & UI): "Edit Existing Project" needs something to list, not
+    // just a lookup by an id the user already has to know. Newest first - that's the one someone
+    // just saved and is the most likely thing they're about to come back and edit.
+    List<ProcessModel> listProcessModels();
+
     // New scope item 3 (BPMN Processing): one generated Java Delegate class per unique
     // delegateExpression on the saved model's service tasks. Read-only - this only generates
     // source, it doesn't write anything to disk. Useful on its own for previewing what Generate

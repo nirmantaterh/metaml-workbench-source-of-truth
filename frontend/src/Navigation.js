@@ -10,6 +10,8 @@ import RootLayout from "./components/layout/RootLayout";
 import Home from "./pages/Home";
 import SamplPage from "./pages/workbench/SamplePage";
 import ModelPage from "./pages/workbench/ModelPage";
+import EditProjectListPage from "./pages/workbench/EditProjectListPage";
+import EvolvePage from "./pages/workbench/EvolvePage";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import { CommonRoutes, WorkbenchRoutes } from "./routes";
 
@@ -21,7 +23,12 @@ const router = createBrowserRouter(
 
                 {/* Workbench Routes */}
                 <Route path={WorkbenchRoutes.SamplePage.path} element={<SamplPage/>} />
+                {/* legacy path, still works if bookmarked - starts blank, same as CreateProject */}
                 <Route path={WorkbenchRoutes.ModelPage.path} element={<ModelPage/>} />
+                <Route path={WorkbenchRoutes.CreateProject.path} element={<ModelPage/>} />
+                <Route path={WorkbenchRoutes.ModelEditor.path} element={<ModelPage/>} />
+                <Route path={WorkbenchRoutes.EditProject.path} element={<EditProjectListPage/>} />
+                <Route path={WorkbenchRoutes.EvolvePage.path} element={<EvolvePage/>} />
             </Route>
         </>
     )

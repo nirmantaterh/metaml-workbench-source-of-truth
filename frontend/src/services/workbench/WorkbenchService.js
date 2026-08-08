@@ -20,6 +20,43 @@ export async function getModel(id) {
     return result.data;
 }
 
+// backs "Edit Existing Project" - newest first, from the backend's own ordering
+export async function listModels() {
+    const result = await api.get(`/wb/transmute/model`);
+    return result.data;
+}
+
+// payload: { modelId }. Preview only - nothing written to disk yet, see generateProject below
+export async function generateDelegates(payload) {
+    const result = await api.post(`/wb/transmute/generate`, payload);
+    return result.data;
+}
+
+// payload: { modelId }. Assembles the real Spring Boot project on the server; doesn't launch it
+export async function generateProject(payload) {
+    const result = await api.post(`/wb/transmute/generate-project`, payload);
+    return result.data;
+}
+
+// payload: { projectId }. Starts the generated project as its own app on an auto-assigned port
+export async function launchProject(payload) {
+    const result = await api.post(`/wb/transmute/launch-project`, payload);
+    return result.data;
+}
+
+// payload: { projectId }
+export async function stopProject(payload) {
+    const result = await api.post(`/wb/transmute/stop-project`, payload);
+    return result.data;
+}
+
+// what's currently launched, across every generated project - the Evolve step's own future
+// "connect to an existing deployed application" reads from this same list
+export async function listRunningProjects() {
+    const result = await api.get(`/wb/transmute/running-projects`);
+    return result.data;
+}
+
 // comes back with the twin's whole eventLog, in order
 export async function getTwin(id) {
     const result = await api.get(`/wb/transmute/twin/${id}`);

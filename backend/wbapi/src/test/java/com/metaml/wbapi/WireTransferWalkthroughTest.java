@@ -162,6 +162,21 @@ class WireTransferWalkthroughTest {
         }
     }
 
+    // New scope item 1 (Navigation & UI): "Edit Existing Project" needs a real list to pick from.
+    @Test
+    void listProcessModelsReturnsEveryModelNewestFirst() throws IOException {
+        ProcessModel first = workbenchService.saveProcessModel(null, "first saved", citibankBpmn());
+        ProcessModel second = workbenchService.saveProcessModel(null, "second saved", loanApprovalBpmn());
+
+        List<ProcessModel> models = workbenchService.listProcessModels();
+
+        assertThat(models).extracting(ProcessModel::getId).contains(first.getId(), second.getId());
+        int firstIndex = models.indexOf(models.stream().filter(m -> m.getId().equals(first.getId())).findFirst().get());
+        int secondIndex = models.indexOf(models.stream().filter(m -> m.getId().equals(second.getId())).findFirst().get());
+        // second was saved after first, so it should come back before it
+        assertThat(secondIndex).isLessThan(firstIndex);
+    }
+
     // New scope item 3 (BPMN Processing), proven through the real saved-model path rather than
     // against DelegateClassGenerator in isolation (that's covered separately in
     // com.metaml.workbench.codegen.DelegateClassGeneratorTest). Neither example model in this repo
