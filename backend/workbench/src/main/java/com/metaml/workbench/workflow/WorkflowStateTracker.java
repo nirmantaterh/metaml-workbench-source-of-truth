@@ -51,8 +51,16 @@ public class WorkflowStateTracker {
     // against a backend bug, not a hostile frontend - nothing outside this package can reach
     // record() at all, the REST layer only exposes reading state, never writing it.
     public void record(String modelId, WorkflowStage stage, StageStatus status, String detail) {
+        record(modelId, stage, status, detail, (StageError) null);
+    }
+
+    // Phase 3A: same live entry point, plus structured error info for a FAILED stage (see
+    // StageError's own comment on when the caller actually has this to hand). Still just the one
+    // event log underneath - error rides along on the same StageEvent as detail, not a second
+    // record of what happened.
+    public void record(String modelId, WorkflowStage stage, StageStatus status, String detail, StageError error) {
         validateTransition(modelId, stage, status);
-        record(modelId, stage, status, detail, Instant.now());
+        append(modelId, new StageEvent(stage, status, Instant.now(), detail, error));
     }
 
     private void validateTransition(String modelId, WorkflowStage stage, StageStatus status) {
@@ -108,8 +116,11 @@ public class WorkflowStateTracker {
     // is already known to have happened in the past (the model demonstrably exists), not a live
     // operation whose ordering this class has any business second-guessing.
     public void record(String modelId, WorkflowStage stage, StageStatus status, String detail, Instant timestamp) {
-        eventsByModelId.computeIfAbsent(modelId, id -> new CopyOnWriteArrayList<>())
-                .add(new StageEvent(stage, status, timestamp, detail));
+        append(modelId, new StageEvent(stage, status, timestamp, detail));
+    }
+
+    private void append(String modelId, StageEvent event) {
+        eventsByModelId.computeIfAbsent(modelId, id -> new CopyOnWriteArrayList<>()).add(event);
         eventStore.save(eventsByModelId);
     }
 
@@ -144,7 +155,7 @@ public class WorkflowStateTracker {
         StageInfo latest = StageInfo.PENDING;
         for (StageEvent event : history) {
             if (event.stage() == stage) {
-                latest = new StageInfo(event.status(), event.timestamp(), event.detail());
+                latest = new StageInfo(event.status(), event.timestamp(), event.detail(), event.error());
             }
         }
         return latest;

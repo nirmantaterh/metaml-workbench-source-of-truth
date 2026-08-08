@@ -26,6 +26,7 @@ import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.client.NodeManagerClient;
 import com.metaml.workbench.client.NodeManagerUnavailableException;
 import com.metaml.workbench.generation.GeneratedProject;
+import com.metaml.workbench.generation.GeneratedProjectLaunchException;
 import com.metaml.workbench.generation.LaunchedProject;
 import com.metaml.workbench.generation.SpringBootProjectGenerator;
 import com.metaml.workbench.generation.SpringBootProjectLauncher;
@@ -39,6 +40,7 @@ import com.metaml.workbench.model.TwinAdvance;
 import com.metaml.workbench.model.TwinProcess;
 import com.metaml.workbench.store.ProcessModelFileStore;
 import com.metaml.workbench.store.WorkbenchStateStore;
+import com.metaml.workbench.workflow.StageError;
 import com.metaml.workbench.workflow.StageStatus;
 import com.metaml.workbench.workflow.WorkflowStage;
 import com.metaml.workbench.workflow.WorkflowState;
@@ -194,7 +196,13 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         try {
             return doSaveProcessModel(modelId, name, bpmnXml);
         } catch (RuntimeException e) {
-            workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.FAILED, e.getMessage());
+            // doSaveProcessModel has several distinct throw sites (bad XML, more than one process,
+            // not executable, id already exists, file-store failure) behind one outer catch - all
+            // of them are genuinely "the save operation failed", so that's the one operation name
+            // that's honest to record here without restructuring doSaveProcessModel into separately
+            // caught sub-steps just to tell them apart
+            workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.FAILED, e.getMessage(),
+                    new StageError(e.getClass().getSimpleName(), "SAVE_MODEL", null, null, null, null, null));
             throw e;
         }
     }
@@ -317,7 +325,12 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             logger.info("Generated Spring Boot project {} for model {}", project.projectId(), modelId);
             return project;
         } catch (RuntimeException e) {
-            workflowStateTracker.record(modelId, WorkflowStage.GENERATE, StageStatus.FAILED, e.getMessage());
+            // same reasoning as saveProcessModel's catch above: delegate generation and project
+            // assembly are two calls behind one catch, and neither one is scoped to a single BPMN
+            // element or delegate - a failure here can't honestly be attributed to one without
+            // guessing, so delegateExpression/bpmnElementId stay null rather than fabricated
+            workflowStateTracker.record(modelId, WorkflowStage.GENERATE, StageStatus.FAILED, e.getMessage(),
+                    new StageError(e.getClass().getSimpleName(), "GENERATE_PROJECT", null, null, null, null, null));
             throw e;
         }
     }
@@ -348,10 +361,23 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                     launched.launchedAt(), modelId);
         } catch (RuntimeException e) {
             if (modelId != null) {
-                workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.FAILED, e.getMessage());
+                workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.FAILED, e.getMessage(),
+                        launchErrorFrom(e, projectId));
             }
             throw e;
         }
+    }
+
+    // projectId is always known here (it's the method's own parameter); port/exitCode are only
+    // known when the launcher itself attached them (see GeneratedProjectLaunchException) - a launch
+    // that fails before a port was even chosen, if that ever happens, just leaves those two null
+    // rather than reporting a port that was never actually attempted
+    private static StageError launchErrorFrom(RuntimeException e, String projectId) {
+        if (e instanceof GeneratedProjectLaunchException launchFailure) {
+            return new StageError(e.getClass().getSimpleName(), "LAUNCH_PROJECT", projectId, launchFailure.port(),
+                    launchFailure.exitCode(), null, null);
+        }
+        return new StageError(e.getClass().getSimpleName(), "LAUNCH_PROJECT", projectId, null, null, null, null);
     }
 
     @Override

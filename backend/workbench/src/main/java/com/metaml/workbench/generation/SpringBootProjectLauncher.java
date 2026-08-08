@@ -90,12 +90,17 @@ public class SpringBootProjectLauncher {
             stop(project.projectId());
 
             int port = findFreePort();
-            Process process = startProcess(project.directory(), port);
+            Process process;
+            try {
+                process = startProcess(project.directory(), port);
+            } catch (RuntimeException e) {
+                throw attachPort(e, port);
+            }
             try {
                 awaitReady(process, project.directory(), port, readyTimeout);
             } catch (RuntimeException e) {
                 destroyTree(process);
-                throw e;
+                throw attachPort(e, port);
             }
 
             // modelId filled in by WorkbenchServiceImpl, not here - this class only ever sees a
@@ -107,6 +112,15 @@ public class SpringBootProjectLauncher {
                     project.projectId(), project.processKey(), port);
             return info;
         }
+    }
+
+    // awaitReady already throws GeneratedProjectLaunchException with the port (and exit code, when
+    // known) attached directly - this only wraps failures from elsewhere in the launch path (right
+    // now, just startProcess itself failing to spawn anything at all) so every way launch() can
+    // fail carries the port it was attempting, not just the two most common ones
+    private static RuntimeException attachPort(RuntimeException e, int port) {
+        return e instanceof GeneratedProjectLaunchException ? e
+                : new GeneratedProjectLaunchException(e.getMessage(), port, null, e);
     }
 
     public Optional<LaunchedProject> find(String projectId) {
@@ -238,21 +252,22 @@ public class SpringBootProjectLauncher {
                 // the success condition, so a process that got the port up and then exited between
                 // two polls should still count as started rather than be failed on liveness
                 if (!process.isAlive()) {
-                    throw new IllegalStateException("Generated project at " + projectDir.toAbsolutePath()
+                    throw new GeneratedProjectLaunchException("Generated project at " + projectDir.toAbsolutePath()
                             + " exited with code " + process.exitValue()
                             + " before it started listening on port " + port
-                            + " - check " + projectDir.resolve("launch.log").toAbsolutePath());
+                            + " - check " + projectDir.resolve("launch.log").toAbsolutePath(),
+                            port, process.exitValue(), null);
                 }
                 try {
                     Thread.sleep(1000);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Interrupted while waiting for the generated project to start",
-                            e);
+                    throw new GeneratedProjectLaunchException("Interrupted while waiting for the generated "
+                            + "project to start", port, null, e);
                 }
             }
         }
-        throw new IllegalStateException("Generated project did not start listening on port " + port
-                + " within " + timeout.getSeconds() + "s - check its launch.log");
+        throw new GeneratedProjectLaunchException("Generated project did not start listening on port " + port
+                + " within " + timeout.getSeconds() + "s - check its launch.log", port, null, null);
     }
 }

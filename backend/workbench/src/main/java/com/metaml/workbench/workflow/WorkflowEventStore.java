@@ -120,6 +120,10 @@ public class WorkflowEventStore {
         public String status;
         public Long timestampEpochMillis;
         public String detail;
+        // absent entirely in any file written before Phase 3A - Jackson just leaves this null when
+        // reading one of those, which toEvent() below already treats as "no structured error", the
+        // same as it would for a same-version event that simply wasn't a failure
+        public StageErrorDto error;
 
         static StageEventDto of(StageEvent event) {
             StageEventDto dto = new StageEventDto();
@@ -127,12 +131,44 @@ public class WorkflowEventStore {
             dto.status = event.status().name();
             dto.timestampEpochMillis = event.timestamp() == null ? null : event.timestamp().toEpochMilli();
             dto.detail = event.detail();
+            dto.error = StageErrorDto.of(event.error());
             return dto;
         }
 
         StageEvent toEvent() {
             return new StageEvent(WorkflowStage.valueOf(stage), StageStatus.valueOf(status),
-                    timestampEpochMillis == null ? null : Instant.ofEpochMilli(timestampEpochMillis), detail);
+                    timestampEpochMillis == null ? null : Instant.ofEpochMilli(timestampEpochMillis), detail,
+                    error == null ? null : error.toStageError());
+        }
+    }
+
+    static final class StageErrorDto {
+        public String errorType;
+        public String operation;
+        public String projectId;
+        public Integer port;
+        public Integer exitCode;
+        public String delegateExpression;
+        public String bpmnElementId;
+
+        static StageErrorDto of(StageError error) {
+            if (error == null) {
+                return null;
+            }
+            StageErrorDto dto = new StageErrorDto();
+            dto.errorType = error.errorType();
+            dto.operation = error.operation();
+            dto.projectId = error.projectId();
+            dto.port = error.port();
+            dto.exitCode = error.exitCode();
+            dto.delegateExpression = error.delegateExpression();
+            dto.bpmnElementId = error.bpmnElementId();
+            return dto;
+        }
+
+        StageError toStageError() {
+            return new StageError(errorType, operation, projectId, port, exitCode, delegateExpression,
+                    bpmnElementId);
         }
     }
 }
