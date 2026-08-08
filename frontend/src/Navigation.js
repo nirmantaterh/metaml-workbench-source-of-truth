@@ -12,6 +12,7 @@ import SamplPage from "./pages/workbench/SamplePage";
 import ModelPage from "./pages/workbench/ModelPage";
 import EditProjectListPage from "./pages/workbench/EditProjectListPage";
 import EvolvePage from "./pages/workbench/EvolvePage";
+import DeployedAppsPage from "./pages/workbench/DeployedAppsPage";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import { CommonRoutes, WorkbenchRoutes } from "./routes";
 
@@ -29,6 +30,7 @@ const router = createBrowserRouter(
                 <Route path={WorkbenchRoutes.ModelEditor.path} element={<ModelPage/>} />
                 <Route path={WorkbenchRoutes.EditProject.path} element={<EditProjectListPage/>} />
                 <Route path={WorkbenchRoutes.EvolvePage.path} element={<EvolvePage/>} />
+                <Route path={WorkbenchRoutes.DeployedAppsPage.path} element={<DeployedAppsPage/>} />
             </Route>
         </>
     )

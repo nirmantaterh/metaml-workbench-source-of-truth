@@ -35,8 +35,19 @@ const Header = () => {
                                 Edit Existing Project
                             </NavDropdown.Item>
                         </NavDropdown>
-                        {/* Connect/Evolve/Bridge, relocated out of the model editor's own toolbar */}
-                        <Nav.Link as={Link} to={WorkbenchRoutes.EvolvePage.path}>Evolve</Nav.Link>
+                        {/* Two genuinely different things share this menu now: the pre-existing
+                            twin workflow (Connect/Evolve/Bridge, relocated out of the model
+                            editor's own toolbar per scope item 1) and New scope item 5's actual
+                            "Evolve Workflow" - connecting to and evolving a real deployed
+                            generated application, not a twin. */}
+                        <NavDropdown title="Evolve" id="evolve-nav-dropdown">
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.EvolvePage.path}>
+                                Twin Workflow
+                            </NavDropdown.Item>
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.DeployedAppsPage.path}>
+                                Deployed Applications
+                            </NavDropdown.Item>
+                        </NavDropdown>
                         <Nav.Link to={"/"}>Help</Nav.Link>
                     </Nav>
                     {/* <span class="ml-auto navbar-text"></span> */}

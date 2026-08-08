@@ -263,6 +263,29 @@ class WireTransferWalkthroughTest {
                 .isEqualTo(com.metaml.workbench.workflow.StageStatus.STOPPED);
     }
 
+    // New scope item 5 (Evolve Workflow): "connect to an existing deployed application" needs to
+    // point back at the model that produced it, which means launchGeneratedProject and
+    // listRunningProjects both have to carry the real modelId, not just projectId/port -
+    // SpringBootProjectLauncher itself has no notion of a model, so this is specifically proving
+    // WorkbenchServiceImpl's own enrichment layer on top of it.
+    @Test
+    void runningProjectsCarryTheRealModelIdTheyWereGeneratedFrom() {
+        ProcessModel model = workbenchService.saveProcessModel(null, "evolve workflow test", loanApprovalBpmn());
+        com.metaml.workbench.generation.GeneratedProject project =
+                workbenchService.generateSpringBootProject(model.getId());
+
+        com.metaml.workbench.generation.LaunchedProject launched =
+                workbenchService.launchGeneratedProject(project.projectId());
+        assertThat(launched.modelId()).isEqualTo(model.getId());
+
+        List<com.metaml.workbench.generation.LaunchedProject> running = workbenchService.listRunningProjects();
+        assertThat(running).filteredOn(p -> p.projectId().equals(project.projectId()))
+                .extracting(com.metaml.workbench.generation.LaunchedProject::modelId)
+                .containsExactly(model.getId());
+
+        workbenchService.stopGeneratedProject(project.projectId());
+    }
+
     // Real bug, found by actually restarting the backend and reopening a pre-existing model
     // through the real UI, not assumed: the workflow event log isn't persisted (it's explicitly
     // in-memory only), but processModels IS, via WorkbenchStateStore - so a model saved before a

@@ -19,4 +19,7 @@ export const WorkbenchRoutes = {
     // Separate top-level menu per scope item 1 - Connect/Evolve/Bridge move here, out of the
     // model editor's own toolbar
     EvolvePage: { path: `/wb/evolve` },
+    // New scope item 5 (Evolve Workflow) - a distinct thing from EvolvePage above, which is the
+    // pre-existing twin workflow. This one is "connect to an existing deployed application".
+    DeployedAppsPage: { path: `/wb/deployed` },
 };

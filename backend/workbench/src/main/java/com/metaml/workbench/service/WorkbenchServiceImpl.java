@@ -324,7 +324,10 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                 workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.COMPLETED,
                         "port " + launched.port());
             }
-            return launched;
+            // the launcher itself never knows a modelId (see LaunchedProject's own comment) -
+            // this is the one place that fills it back in before anything sees the result
+            return new LaunchedProject(launched.projectId(), launched.processKey(), launched.port(),
+                    launched.launchedAt(), modelId);
         } catch (RuntimeException e) {
             if (modelId != null) {
                 workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.FAILED, e.getMessage());
@@ -362,7 +365,15 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
     @Override
     public List<LaunchedProject> listRunningProjects() {
-        return springBootProjectLauncher.listRunning();
+        // same enrichment launchGeneratedProject does for a single launch - the launcher's own
+        // list never carries a modelId, and New scope item 5 (Evolve Workflow) needs one to point
+        // "connect to an existing deployed application" back at the model that produced it. Null
+        // for anything launched before the current backend session, same as everywhere else this
+        // in-memory-only map is used.
+        return springBootProjectLauncher.listRunning().stream()
+                .map(launched -> new LaunchedProject(launched.projectId(), launched.processKey(), launched.port(),
+                        launched.launchedAt(), modelIdByProjectId.get(launched.projectId())))
+                .toList();
     }
 
     // One launch, one twin, and the twin always gets a definition of its own that its token can
