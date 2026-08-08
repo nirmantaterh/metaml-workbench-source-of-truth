@@ -27,8 +27,20 @@ public class WorkflowStateTracker {
     private final Map<String, List<StageEvent>> eventsByModelId = new ConcurrentHashMap<>();
 
     public void record(String modelId, WorkflowStage stage, StageStatus status, String detail) {
+        record(modelId, stage, status, detail, Instant.now());
+    }
+
+    // for backfilling a stage's event with a timestamp other than "now" - specifically, restoring
+    // MODEL/COMPLETED for a model reloaded from WorkbenchStateStore on startup (see
+    // WorkbenchServiceImpl.restoreState). The event log itself isn't persisted across a restart
+    // (see this class's own header comment), but processModels IS, via that separate store - so
+    // without this, every model that existed before the most recent restart would read back with
+    // its MODEL stage stuck PENDING forever, even while GENERATE/LAUNCH show real progress on top
+    // of it. Backfilling with the model's own real createdAt rather than the restart time keeps
+    // the history honest about when the model was actually first saved.
+    public void record(String modelId, WorkflowStage stage, StageStatus status, String detail, Instant timestamp) {
         eventsByModelId.computeIfAbsent(modelId, id -> new CopyOnWriteArrayList<>())
-                .add(new StageEvent(stage, status, Instant.now(), detail));
+                .add(new StageEvent(stage, status, timestamp, detail));
     }
 
     // never throws for an unknown modelId - a model with no recorded events yet (nothing has ever

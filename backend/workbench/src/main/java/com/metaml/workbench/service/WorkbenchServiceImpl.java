@@ -128,6 +128,14 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         WorkbenchStateStore.Snapshot snapshot = stateStore.load();
         for (ProcessModel model : snapshot.models()) {
             processModels.put(model.getId(), model);
+            // the workflow event log isn't itself persisted (see WorkflowStateTracker), so
+            // without this a model saved before the most recent restart reads back with its
+            // MODEL stage stuck PENDING forever - even once GENERATE/LAUNCH show real progress
+            // on top of it, which looks broken rather than merely incomplete. Backfilled with the
+            // model's own real createdAt, not the restart time, since that's when it actually was
+            // first saved.
+            workflowStateTracker.record(model.getId(), WorkflowStage.MODEL, StageStatus.COMPLETED, null,
+                    model.getCreatedAt());
         }
         for (TwinProcess twin : snapshot.twins()) {
             twinProcesses.put(twin.getId(), twin);

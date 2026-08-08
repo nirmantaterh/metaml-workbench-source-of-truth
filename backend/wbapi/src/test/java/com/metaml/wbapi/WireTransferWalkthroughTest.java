@@ -263,6 +263,58 @@ class WireTransferWalkthroughTest {
                 .isEqualTo(com.metaml.workbench.workflow.StageStatus.STOPPED);
     }
 
+    // Real bug, found by actually restarting the backend and reopening a pre-existing model
+    // through the real UI, not assumed: the workflow event log isn't persisted (it's explicitly
+    // in-memory only), but processModels IS, via WorkbenchStateStore - so a model saved before a
+    // restart used to read back with GENERATE/LAUNCH showing real progress while its own MODEL
+    // stage stayed stuck PENDING forever, which looks broken rather than merely lacking history.
+    // Simulates the restart directly: saves a model through the real, already-running service (so
+    // it lands in the real persisted state file), then constructs a SECOND WorkbenchServiceImpl
+    // sharing that same stateStore but a brand new, empty WorkflowStateTracker - exactly what a
+    // real process restart produces - and drives its own @PostConstruct via reflection, the same
+    // way this file already does for the other fresh-instance test above.
+    @Test
+    void aModelSavedBeforeARestartHasItsModelStageBackfilledNotStuckPending(@org.junit.jupiter.api.io.TempDir
+            java.nio.file.Path tempDir) throws Exception {
+        // the shared test context runs with workbench.state.persist=false (an intentional no-op
+        // so tests don't scribble into a real state file), so stateStore.load()/save() would
+        // silently do nothing here - this test needs an actually-persisting store to prove a real
+        // restart round trip, so it builds its own real one against a temp file instead of the
+        // shared no-op bean
+        com.metaml.workbench.store.WorkbenchStateStore realStateStore = new com.metaml.workbench.store.WorkbenchStateStore(
+                tempDir.resolve("workbench-state.json").toString(), true);
+
+        WorkbenchServiceImpl beforeRestart = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
+                runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
+                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                new com.metaml.workbench.workflow.WorkflowStateTracker());
+        ProcessModel model = beforeRestart.saveProcessModel(null, "restart backfill test", loanApprovalBpmn());
+
+        // a fresh WorkflowStateTracker (empty, exactly what a real process restart produces) but
+        // the SAME real state store, which genuinely has the model persisted to the temp file now
+        WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
+                runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
+                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                new com.metaml.workbench.workflow.WorkflowStateTracker());
+        java.lang.reflect.Method restoreState = WorkbenchServiceImpl.class.getDeclaredMethod("restoreState");
+        restoreState.setAccessible(true);
+        restoreState.invoke(restartedService);
+
+        com.metaml.workbench.workflow.WorkflowState state = restartedService.getWorkflowState(model.getId());
+        assertThat(state.stages().get(com.metaml.workbench.workflow.WorkflowStage.MODEL).status())
+                .isEqualTo(com.metaml.workbench.workflow.StageStatus.COMPLETED);
+        // backfilled with the RESTORED model's own real save time (round-tripped through the real
+        // state file, not the pre-restart in-memory object) - JSON persistence truncates Instant
+        // to millisecond precision, so comparing against the original in-memory model's nanosecond
+        // value here would fail for a reason that has nothing to do with the backfill itself
+        ProcessModel restoredModel = restartedService.getProcessModel(model.getId());
+        assertThat(state.stages().get(com.metaml.workbench.workflow.WorkflowStage.MODEL).timestamp())
+                .isEqualTo(restoredModel.getCreatedAt());
+        // proves the fold logic itself is exercised correctly with the backfilled event, not just
+        // that an event exists - GENERATE is genuinely next, not stuck behind a phantom pending MODEL
+        assertThat(state.currentStage()).isEqualTo(com.metaml.workbench.workflow.WorkflowStage.GENERATE);
+    }
+
     // Same reflection-construction pattern bridgeDedupeIsSafeAcrossACompletelyFreshServiceInstance
     // already uses above, here to get a SpringBootProjectGenerator pointed at a template directory
     // that doesn't exist - the one way to make generateSpringBootProject genuinely fail through
