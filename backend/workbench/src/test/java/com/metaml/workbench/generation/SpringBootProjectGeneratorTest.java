@@ -90,7 +90,8 @@ class SpringBootProjectGeneratorTest {
     @Test
     void writesEveryGeneratedDelegateClassIntoTheDelegatesPackage() {
         GeneratedDelegate delegate = new GeneratedDelegate("calculateInterestService", "CalculateInterestService",
-                "Calculate Interest", "package com.example.camundademo.delegates;\npublic class CalculateInterestService {}");
+                "Calculate Interest", com.metaml.workbench.codegen.DelegateKind.SERVICE_TASK,
+                "package com.example.camundademo.delegates;\npublic class CalculateInterestService {}");
 
         GeneratedProject project = generator().generate(loanApprovalBpmn(), List.of(delegate));
 

@@ -112,6 +112,108 @@ class DelegateClassGeneratorTest {
         }
     }
 
+    // This repo's own demo models (citibank wire transfer, grad admission) use exactly this shape
+    // - a userTask with a camunda:taskListener, not a service task's own delegateExpression. Before
+    // this test existed, generating a project from either demo model silently produced zero
+    // delegates and shipped a project that crashed the first time a task completed.
+    @Test
+    void aUserTasksTaskListenerDelegateExpressionGeneratesATaskListenerNotAJavaDelegate() {
+        String bpmn = userTaskListenerBpmn("agentExecutionDelegate", "Review Application");
+
+        List<GeneratedDelegate> generated = generator.generate(bpmn);
+
+        assertThat(generated).hasSize(1);
+        GeneratedDelegate delegate = generated.get(0);
+        assertThat(delegate.beanName()).isEqualTo("agentExecutionDelegate");
+        assertThat(delegate.className()).isEqualTo("AgentExecutionDelegate");
+        assertThat(delegate.kind()).isEqualTo(DelegateKind.TASK_LISTENER);
+        assertThat(delegate.sourceCode())
+                .contains("implements TaskListener")
+                .contains("public void notify(DelegateTask delegateTask)")
+                .doesNotContain("JavaDelegate")
+                .doesNotContain("execute(DelegateExecution");
+    }
+
+    @Test
+    void aServiceTaskAndAUserTaskCanShareTheSameBpmnWithoutTheirDelegatesColliding() {
+        String bpmn = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="p" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:serviceTask id="Task_A" name="Calculate Interest"
+                        camunda:delegateExpression="${calculateInterestService}" />
+                    <bpmn2:userTask id="Task_B" name="Review Application">
+                      <bpmn2:extensionElements>
+                        <camunda:taskListener event="complete" delegateExpression="${agentExecutionDelegate}" />
+                      </bpmn2:extensionElements>
+                    </bpmn2:userTask>
+                    <bpmn2:endEvent id="End" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+
+        List<GeneratedDelegate> generated = generator.generate(bpmn);
+
+        assertThat(generated).extracting(GeneratedDelegate::beanName)
+                .containsExactlyInAnyOrder("calculateInterestService", "agentExecutionDelegate");
+        assertThat(generated).extracting(GeneratedDelegate::kind)
+                .containsExactlyInAnyOrder(DelegateKind.SERVICE_TASK, DelegateKind.TASK_LISTENER);
+    }
+
+    // real bug this closes: dedup used to be keyed on the raw bean name, so two DIFFERENT bean
+    // names that sanitize down to the same Java identifier (toClassName maps every illegal
+    // character to '_') both survived as separate GeneratedDelegates - which then fought over the
+    // same file the moment SpringBootProjectGenerator wrote them to disk, with whichever one got
+    // written second silently winning and the other bean simply never existing at runtime.
+    @Test
+    void twoDifferentBeanNamesThatSanitizeToTheSameClassNameDoNotBothSurvive() {
+        String bpmn = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="p" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:serviceTask id="Task_A" name="First"
+                        camunda:delegateExpression="${bad-name}" />
+                    <bpmn2:serviceTask id="Task_B" name="Second"
+                        camunda:delegateExpression="${bad_name}" />
+                    <bpmn2:endEvent id="End" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+
+        List<GeneratedDelegate> generated = generator.generate(bpmn);
+
+        // both "bad-name" and "bad_name" sanitize to "Bad_name" - only one file can exist at that
+        // path, so only one GeneratedDelegate should come back, not two that would clobber each
+        // other on disk
+        assertThat(generated).hasSize(1);
+        assertThat(generated.get(0).className()).isEqualTo("Bad_name");
+    }
+
+    private static String userTaskListenerBpmn(String expression, String taskName) {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="p" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:userTask id="Task_A" name="%s">
+                      <bpmn2:extensionElements>
+                        <camunda:taskListener event="complete" delegateExpression="${%s}" />
+                      </bpmn2:extensionElements>
+                    </bpmn2:userTask>
+                    <bpmn2:endEvent id="End" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """.formatted(taskName, expression);
+    }
+
     private static String delegateExpressionBpmnWithMultilineName(String expression, String taskName) {
         return """
                 <?xml version="1.0" encoding="UTF-8"?>

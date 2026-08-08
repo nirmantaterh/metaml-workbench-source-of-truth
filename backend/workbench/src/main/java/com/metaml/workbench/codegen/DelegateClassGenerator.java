@@ -2,7 +2,10 @@ package com.metaml.workbench.codegen;
 
 import org.camunda.bpm.model.bpmn.Bpmn;
 import org.camunda.bpm.model.bpmn.BpmnModelInstance;
+import org.camunda.bpm.model.bpmn.instance.ExtensionElements;
 import org.camunda.bpm.model.bpmn.instance.ServiceTask;
+import org.camunda.bpm.model.bpmn.instance.UserTask;
+import org.camunda.bpm.model.bpmn.instance.camunda.CamundaTaskListener;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayInputStream;
@@ -12,15 +15,21 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// New scope item 3 (BPMN Processing): parse a saved model's service tasks and generate a real
-// Java Delegate class per delegateExpression, replacing what used to be a person hand-writing
-// these. The class name comes from the delegateExpression itself (e.g.
-// delegateExpression="${calculateInterestService}" -> class CalculateInterestService), not from
-// the task's display name - the expression is what Camunda actually looks up at runtime to find
-// the bean, so deriving from it is the only choice that's guaranteed to produce a class the
-// generated app can actually run. Deriving from the display name instead risks exactly the
-// mismatch the example that kicked this off already showed ("Calculate Interest" next to
-// delegateExpression "calculateInterestService" - different casing, different wording).
+// New scope item 3 (BPMN Processing): parse a saved model and generate a real Java class per
+// delegateExpression, replacing what used to be a person hand-writing these. The class name comes
+// from the delegateExpression itself (e.g. delegateExpression="${calculateInterestService}" ->
+// class CalculateInterestService), not from the task's display name - the expression is what
+// Camunda actually looks up at runtime to find the bean, so deriving from it is the only choice
+// that's guaranteed to produce a class the generated app can actually run. Deriving from the
+// display name instead risks exactly the mismatch the example that kicked this off already showed
+// ("Calculate Interest" next to delegateExpression "calculateInterestService" - different casing,
+// different wording).
+//
+// Two BPMN shapes carry a delegateExpression, and they're not interchangeable - see DelegateKind's
+// own comment. Originally this only scanned service tasks (Joanna's own example is one), which
+// meant generating a project from this repo's own demo models - which use a userTask taskListener
+// instead - silently produced zero delegates and shipped a project that crashed the moment a task
+// completed. Found by actually trying it, not assumed.
 @Component
 public class DelegateClassGenerator {
 
@@ -37,6 +46,13 @@ public class DelegateClassGenerator {
     // delegateExpression share the one Spring bean already, generating it twice would just be two
     // classes fighting over the same @Component name.
     //
+    // Deduped by className rather than beanName: two different bean names can sanitize down to the
+    // same Java identifier (toClassName maps every illegal character to '_', so "bad-name" and
+    // "bad_name" both become "Bad_name"), and deduping on the raw bean name let both through as
+    // separate GeneratedDelegates that would then fight over the same file when written to disk -
+    // whichever one SpringBootProjectGenerator happened to write second would silently win, and the
+    // bean the other one needed would simply never exist at runtime.
+    //
     // packageName has to match wherever the caller is actually going to place the .java file -
     // javac happily compiles a file whose package statement disagrees with its directory, but
     // Spring Boot's default @ComponentScan only looks under the application class's own package,
@@ -47,20 +63,43 @@ public class DelegateClassGenerator {
         BpmnModelInstance model = Bpmn.readModelFromStream(
                 new ByteArrayInputStream(bpmnXml.getBytes(StandardCharsets.UTF_8)));
 
-        Map<String, GeneratedDelegate> byBeanName = new LinkedHashMap<>();
+        Map<String, GeneratedDelegate> byClassName = new LinkedHashMap<>();
+
         for (ServiceTask task : model.getModelElementsByType(ServiceTask.class)) {
-            String raw = task.getCamundaDelegateExpression();
-            String beanName = unwrap(raw);
-            if (beanName.isBlank()) {
+            addIfPresent(byClassName, packageName, task.getCamundaDelegateExpression(), task.getName(),
+                    DelegateKind.SERVICE_TASK);
+        }
+
+        // task listeners live in a user task's <extensionElements>, not as an attribute on the task
+        // itself - camunda-bpm-model only exposes them through a typed query on that element, there
+        // is no getCamundaTaskListeners() shortcut on UserTask the way there is for a service task's
+        // own delegateExpression
+        for (UserTask task : model.getModelElementsByType(UserTask.class)) {
+            ExtensionElements extensionElements = task.getExtensionElements();
+            if (extensionElements == null) {
                 continue;
             }
-            byBeanName.computeIfAbsent(beanName, bn -> {
-                String className = toClassName(bn);
-                String source = renderSource(packageName, className, bn, task.getName());
-                return new GeneratedDelegate(bn, className, task.getName(), source);
-            });
+            for (CamundaTaskListener listener : extensionElements.getElementsQuery()
+                    .filterByType(CamundaTaskListener.class).list()) {
+                addIfPresent(byClassName, packageName, listener.getCamundaDelegateExpression(), task.getName(),
+                        DelegateKind.TASK_LISTENER);
+            }
         }
-        return new ArrayList<>(byBeanName.values());
+
+        return new ArrayList<>(byClassName.values());
+    }
+
+    private static void addIfPresent(Map<String, GeneratedDelegate> byClassName, String packageName,
+            String rawExpression, String taskName, DelegateKind kind) {
+        String beanName = unwrap(rawExpression);
+        if (beanName.isBlank()) {
+            return;
+        }
+        String className = toClassName(beanName);
+        byClassName.computeIfAbsent(className, cn -> {
+            String source = renderSource(packageName, cn, beanName, taskName, kind);
+            return new GeneratedDelegate(beanName, cn, taskName, kind, source);
+        });
     }
 
     // delegateExpression is stored (and read back) as the literal attribute text, "${beanName}" -
@@ -104,8 +143,16 @@ public class DelegateClassGenerator {
         return label.replaceAll("\\s+", " ").trim();
     }
 
-    private static String renderSource(String packageName, String className, String beanName, String taskName) {
+    private static String renderSource(String packageName, String className, String beanName, String taskName,
+            DelegateKind kind) {
         String label = (taskName == null || taskName.isBlank()) ? "(unnamed activity)" : sanitizeForComment(taskName);
+        return kind == DelegateKind.SERVICE_TASK
+                ? renderServiceTaskSource(packageName, className, beanName, label)
+                : renderTaskListenerSource(packageName, className, beanName, label);
+    }
+
+    private static String renderServiceTaskSource(String packageName, String className, String beanName,
+            String label) {
         return """
                 package %s;
 
@@ -121,6 +168,35 @@ public class DelegateClassGenerator {
 
                     @Override
                     public void execute(DelegateExecution execution) {
+                        // TODO: implement %s
+                    }
+                }
+                """.formatted(packageName, label, beanName, beanName, className, label);
+    }
+
+    // A taskListener's delegateExpression points at a TaskListener, not a JavaDelegate - it fires
+    // on the user task's lifecycle event (create/assign/complete/...), it doesn't run instead of
+    // the human task the way a service task's own delegateExpression does. Generating a JavaDelegate
+    // stub for one of these would compile and even deploy, since Camunda only checks the interface
+    // when it actually tries to invoke the listener - so the failure would show up as a
+    // ClassCastException the first time someone touched that task, not at generation time.
+    private static String renderTaskListenerSource(String packageName, String className, String beanName,
+            String label) {
+        return """
+                package %s;
+
+                import org.camunda.bpm.engine.delegate.DelegateTask;
+                import org.camunda.bpm.engine.delegate.TaskListener;
+                import org.springframework.stereotype.Component;
+
+                // Generated from the BPMN user task "%s" (camunda:taskListener delegateExpression="${%s}").
+                // Fill in the actual logic below - this stub only exists so the process can deploy
+                // and run end to end without a NoClassDefFoundError on this bean.
+                @Component("%s")
+                public class %s implements TaskListener {
+
+                    @Override
+                    public void notify(DelegateTask delegateTask) {
                         // TODO: implement %s
                     }
                 }
