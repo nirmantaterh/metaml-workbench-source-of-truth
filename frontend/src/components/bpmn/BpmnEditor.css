@@ -7,12 +7,46 @@
 
 .bpmn-toolbar {
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
+    flex-direction: column;
+    gap: 0.25rem;
     padding: 0.5rem 0.75rem;
     border-bottom: 1px solid #e3e6ea;
     background: #f7f9fa;
+}
+
+.bpmn-toolbar-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     flex-wrap: wrap;
+}
+
+/* row 2 (system status) reads as secondary to row 1 (user actions) - smaller, quieter, and not
+   given its own background/border so it doesn't compete with the canvas below it */
+.bpmn-toolbar-status {
+    min-height: 1.25rem;
+}
+
+/* wraps the button so the details panel (position: absolute, see WorkflowDetailsPanel.css) has
+   something to anchor to without disturbing the toolbar's own layout */
+.workflow-view-details-anchor {
+    position: relative;
+    display: flex;
+}
+
+.workflow-view-details {
+    border: none;
+    background: none;
+    color: #9aa5ad;
+    font-size: 0.78rem;
+    padding: 0 2px;
+    cursor: pointer;
+}
+.workflow-view-details:hover:not(:disabled) {
+    color: #1f5f71;
+}
+.workflow-view-details:disabled {
+    cursor: not-allowed;
 }
 
 .bpmn-toolbar .bpmn-model-name {

@@ -1,0 +1,149 @@
+/* a compact popover anchored under "View details", not a modal - the canvas underneath stays
+   fully visible and interactive. Positioned by its parent (.bpmn-toolbar-status), see BpmnEditor.css */
+.workflow-details-panel {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    width: 320px;
+    max-height: 420px;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #e3e6ea;
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(15, 30, 40, 0.12);
+    z-index: 20;
+    font-size: 0.8rem;
+}
+
+.workflow-details-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+    font-weight: 600;
+    color: #1f5f71;
+    border-bottom: 1px solid #eef1f3;
+    position: sticky;
+    top: 0;
+    background: #fff;
+}
+
+.workflow-details-close {
+    border: none;
+    background: none;
+    color: #9aa5ad;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+}
+.workflow-details-close:hover {
+    color: #57636b;
+}
+
+.workflow-details-body {
+    padding: 0.65rem 0.75rem;
+}
+
+.workflow-details-stage {
+    padding: 0.4rem 0;
+    border-bottom: 1px solid #f2f4f5;
+}
+.workflow-details-stage:last-of-type {
+    border-bottom: none;
+}
+
+.workflow-details-stage-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    color: #57636b;
+}
+
+.workflow-details-stage-icon {
+    font-size: 0.75rem;
+}
+
+.workflow-details-stage-status {
+    margin-left: auto;
+    font-weight: 400;
+    color: #9aa5ad;
+    font-size: 0.75rem;
+}
+
+.workflow-details-stage-line {
+    color: #9aa5ad;
+    font-size: 0.75rem;
+    margin-left: 18px;
+}
+
+.workflow-details-stage-completed .workflow-details-stage-title,
+.workflow-details-stage-stopped .workflow-details-stage-title {
+    color: #2f7d5c;
+}
+
+.workflow-details-stage-in_progress .workflow-details-stage-title {
+    color: #a06a00;
+}
+
+.workflow-details-stage-failed .workflow-details-stage-title {
+    color: #c0392b;
+}
+
+.workflow-details-error {
+    margin: 0.35rem 0 0.1rem 18px;
+    padding: 0.4rem 0.5rem;
+    background: #fdf1ef;
+    border: 1px solid #f3d7d2;
+    border-radius: 4px;
+    color: #8a3226;
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.workflow-details-eyebrow {
+    display: block;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: #9aa5ad;
+    margin-bottom: 2px;
+}
+
+.workflow-details-history-heading {
+    margin-top: 0.6rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid #eef1f3;
+}
+
+.workflow-details-history {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 0.72rem;
+}
+
+.workflow-details-history-row {
+    display: flex;
+    gap: 8px;
+    color: #57636b;
+}
+
+.workflow-details-history-time {
+    color: #9aa5ad;
+    min-width: 70px;
+}
+
+.workflow-details-history-stage {
+    min-width: 60px;
+    font-weight: 600;
+}
+
+.workflow-details-empty {
+    color: #9aa5ad;
+    font-size: 0.75rem;
+}

@@ -6,6 +6,7 @@ import DataPanel from "../../components/bpmn/DataPanel";
 import useBpmnModeler from "../../components/bpmn/useBpmnModeler";
 import "../../components/bpmn/BpmnEditor.css";
 import WorkflowProgress from "../../components/workbench/WorkflowProgress";
+import WorkflowDetailsPanel from "../../components/workbench/WorkflowDetailsPanel";
 
 import {
     saveModel,
@@ -40,6 +41,9 @@ const ModelPage = () => {
 
     const [status, setStatus] = useState(null); // { type: 'ok'|'err'|'info', text }
     const [busy, setBusy] = useState(false);
+    // Phase 2C: purely a "is the panel open" toggle - the panel itself renders straight off
+    // workflowState below, same as WorkflowProgress does, so there's nothing else to track here
+    const [detailsOpen, setDetailsOpen] = useState(false);
 
     const refreshWorkflowState = async (modelId) => {
         if (!modelId) return;
@@ -213,37 +217,61 @@ const ModelPage = () => {
     return (
         <div className="bpmn-editor">
             <div className="bpmn-toolbar">
-                <Form.Control
-                    size="sm"
-                    className="bpmn-model-name"
-                    value={modelName}
-                    onChange={(e) => setModelName(e.target.value)}
-                    placeholder="Model name"
-                />
-                <WorkflowProgress currentStage={workflowState?.currentStage} stages={workflowState?.stages} />
-                <div className="spacer" />
-                {status && <span className={`bpmn-status ${statusClass}`}>{status.text}</span>}
-                <Button size="sm" variant="outline-primary" onClick={handleSave} disabled={busy}>
-                    Save
-                </Button>
-                <Button
-                    size="sm"
-                    variant="outline-primary"
-                    onClick={handleGenerate}
-                    disabled={busy || !savedModelId}
-                    title={!savedModelId ? "Save the model first" : undefined}
-                >
-                    Generate
-                </Button>
-                <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={handleLaunch}
-                    disabled={busy || !projectId}
-                    title={!projectId ? "Generate a project first" : undefined}
-                >
-                    Launch
-                </Button>
+                {/* row 1: user actions - naming/saving/generating/launching the model */}
+                <div className="bpmn-toolbar-row bpmn-toolbar-actions">
+                    <Form.Control
+                        size="sm"
+                        className="bpmn-model-name"
+                        value={modelName}
+                        onChange={(e) => setModelName(e.target.value)}
+                        placeholder="Model name"
+                    />
+                    <div className="spacer" />
+                    {status && <span className={`bpmn-status ${statusClass}`}>{status.text}</span>}
+                    <Button size="sm" variant="outline-primary" onClick={handleSave} disabled={busy}>
+                        Save
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="outline-primary"
+                        onClick={handleGenerate}
+                        disabled={busy || !savedModelId}
+                        title={!savedModelId ? "Save the model first" : undefined}
+                    >
+                        Generate
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={handleLaunch}
+                        disabled={busy || !projectId}
+                        title={!projectId ? "Generate a project first" : undefined}
+                    >
+                        Launch
+                    </Button>
+                </div>
+
+                {/* row 2: system status - a read-only projection of the backend's own workflow
+                    state, never a set of buttons in its own right (see WorkflowProgress) */}
+                <div className="bpmn-toolbar-row bpmn-toolbar-status">
+                    <WorkflowProgress currentStage={workflowState?.currentStage} stages={workflowState?.stages} />
+                    <div className="spacer" />
+                    <div className="workflow-view-details-anchor">
+                        <button
+                            type="button"
+                            className="workflow-view-details"
+                            onClick={() => setDetailsOpen((open) => !open)}
+                            aria-expanded={detailsOpen}
+                            disabled={!workflowState}
+                            title={!workflowState ? "Save the model first" : undefined}
+                        >
+                            View details {detailsOpen ? "▴" : "▾"}
+                        </button>
+                        {detailsOpen && workflowState && (
+                            <WorkflowDetailsPanel workflowState={workflowState} onClose={() => setDetailsOpen(false)} />
+                        )}
+                    </div>
+                </div>
             </div>
 
             <div className="bpmn-main">
