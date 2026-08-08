@@ -1,5 +1,9 @@
 package com.metaml.workbench.workflow;
 
+import jakarta.annotation.PostConstruct;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -15,32 +19,108 @@ import java.util.concurrent.CopyOnWriteArrayList;
 // stage's status" are both just a fold over it, computed fresh on every read, not separate fields
 // that could drift out of sync with what was actually recorded. Callers (WorkbenchServiceImpl)
 // record an event at the start and the end of each stage; nothing here decides on its own when a
-// stage happens, it only remembers what it was told.
+// stage happens, it only remembers what it was told - and now checks that what it was told is a
+// legal transition (see recordValidated below) before remembering it.
 //
-// Not persisted across a restart, same as everything else in this class's neighborhood
-// (processModels, generatedProjects, the launcher's own running map) - a restart already forgets
-// the generated project directories and any launched process, so a workflow history describing
-// stages that no longer have anything real behind them would be actively misleading to keep.
+// Persisted via WorkflowEventStore (see its own header comment for why that's a separate class
+// rather than folded into WorkbenchStateStore). Loaded once at startup, rewritten after every
+// record() - the same "always fully durable, fine at demo scale" choice WorkbenchStateStore
+// already makes for process models and twins.
 @Component
 public class WorkflowStateTracker {
 
-    private final Map<String, List<StageEvent>> eventsByModelId = new ConcurrentHashMap<>();
+    private static final Logger logger = LoggerFactory.getLogger(WorkflowStateTracker.class);
 
+    private final Map<String, List<StageEvent>> eventsByModelId = new ConcurrentHashMap<>();
+    private final WorkflowEventStore eventStore;
+
+    public WorkflowStateTracker(WorkflowEventStore eventStore) {
+        this.eventStore = eventStore;
+    }
+
+    @PostConstruct
+    void restore() {
+        for (Map.Entry<String, List<StageEvent>> entry : eventStore.load().entrySet()) {
+            eventsByModelId.put(entry.getKey(), new CopyOnWriteArrayList<>(entry.getValue()));
+        }
+    }
+
+    // The only entry point real callers (WorkbenchServiceImpl) use for a LIVE operation - validates
+    // the transition is actually legal given what this stage (and its prerequisite) currently show,
+    // rather than trusting that whoever's calling got the ordering right. This only ever protects
+    // against a backend bug, not a hostile frontend - nothing outside this package can reach
+    // record() at all, the REST layer only exposes reading state, never writing it.
     public void record(String modelId, WorkflowStage stage, StageStatus status, String detail) {
+        validateTransition(modelId, stage, status);
         record(modelId, stage, status, detail, Instant.now());
     }
 
+    private void validateTransition(String modelId, WorkflowStage stage, StageStatus status) {
+        Map<WorkflowStage, StageInfo> current = stateFor(modelId).stages();
+        StageStatus currentStatus = current.get(stage).status();
+
+        switch (status) {
+            case PENDING -> throw new IllegalStateException(
+                    "Refusing to record " + stage + "/PENDING for model " + modelId
+                            + " - PENDING is the implicit default for a stage with no events, it should never be "
+                            + "written explicitly");
+            case IN_PROGRESS -> {
+                WorkflowStage prerequisite = prerequisiteOf(stage);
+                if (prerequisite != null && current.get(prerequisite).status() != StageStatus.COMPLETED) {
+                    throw new IllegalStateException(stage + " cannot start for model " + modelId + " - "
+                            + prerequisite + " has not completed (currently "
+                            + current.get(prerequisite).status() + ")");
+                }
+            }
+            case COMPLETED, FAILED -> {
+                if (currentStatus != StageStatus.IN_PROGRESS) {
+                    throw new IllegalStateException(
+                            "Cannot record " + stage + "/" + status + " for model " + modelId
+                                    + " - " + stage + " is not IN_PROGRESS (currently " + currentStatus + ")");
+                }
+            }
+            case STOPPED -> {
+                if (stage != WorkflowStage.LAUNCH) {
+                    throw new IllegalStateException(
+                            "STOPPED only applies to LAUNCH, not " + stage + " (model " + modelId + ")");
+                }
+                if (currentStatus != StageStatus.COMPLETED) {
+                    throw new IllegalStateException("Cannot stop LAUNCH for model " + modelId
+                            + " - it is not COMPLETED (currently " + currentStatus + ")");
+                }
+            }
+        }
+    }
+
+    private static WorkflowStage prerequisiteOf(WorkflowStage stage) {
+        WorkflowStage[] order = WorkflowStage.values();
+        int index = stage.ordinal();
+        return index == 0 ? null : order[index - 1];
+    }
+
     // for backfilling a stage's event with a timestamp other than "now" - specifically, restoring
-    // MODEL/COMPLETED for a model reloaded from WorkbenchStateStore on startup (see
-    // WorkbenchServiceImpl.restoreState). The event log itself isn't persisted across a restart
-    // (see this class's own header comment), but processModels IS, via that separate store - so
-    // without this, every model that existed before the most recent restart would read back with
-    // its MODEL stage stuck PENDING forever, even while GENERATE/LAUNCH show real progress on top
-    // of it. Backfilling with the model's own real createdAt rather than the restart time keeps
-    // the history honest about when the model was actually first saved.
+    // MODEL/COMPLETED for a model whose workflow history predates this class having real
+    // persistence at all (see WorkbenchServiceImpl.restoreState's own comment on when it still
+    // reaches for this). Backfilling with the model's own real createdAt rather than the restart
+    // time keeps the history honest about when the model was actually first saved.
+    //
+    // Deliberately bypasses transition validation - a backfilled event describes something that
+    // is already known to have happened in the past (the model demonstrably exists), not a live
+    // operation whose ordering this class has any business second-guessing.
     public void record(String modelId, WorkflowStage stage, StageStatus status, String detail, Instant timestamp) {
         eventsByModelId.computeIfAbsent(modelId, id -> new CopyOnWriteArrayList<>())
                 .add(new StageEvent(stage, status, timestamp, detail));
+        eventStore.save(eventsByModelId);
+    }
+
+    // true only for a model with zero persisted events of ANY kind - the signal
+    // WorkbenchServiceImpl.restoreState() uses to decide whether a model predates real
+    // persistence (needs the MODEL backfill) or already has its own genuine history restored from
+    // WorkflowEventStore (backfilling on top of that would just be a redundant, slightly-wrong-
+    // timestamped duplicate of an event that's already there)
+    public boolean hasNoHistory(String modelId) {
+        List<StageEvent> history = eventsByModelId.get(modelId);
+        return history == null || history.isEmpty();
     }
 
     // never throws for an unknown modelId - a model with no recorded events yet (nothing has ever

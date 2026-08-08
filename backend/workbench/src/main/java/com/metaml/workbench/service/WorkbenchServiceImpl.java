@@ -128,14 +128,18 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         WorkbenchStateStore.Snapshot snapshot = stateStore.load();
         for (ProcessModel model : snapshot.models()) {
             processModels.put(model.getId(), model);
-            // the workflow event log isn't itself persisted (see WorkflowStateTracker), so
-            // without this a model saved before the most recent restart reads back with its
-            // MODEL stage stuck PENDING forever - even once GENERATE/LAUNCH show real progress
-            // on top of it, which looks broken rather than merely incomplete. Backfilled with the
-            // model's own real createdAt, not the restart time, since that's when it actually was
-            // first saved.
-            workflowStateTracker.record(model.getId(), WorkflowStage.MODEL, StageStatus.COMPLETED, null,
-                    model.getCreatedAt());
+            // WorkflowStateTracker now genuinely persists (WorkflowEventStore) and has already
+            // loaded its own history by this point - Spring fully constructs a dependency bean,
+            // @PostConstruct included, before injecting it into a dependent one, so this reads the
+            // real post-restore state, not a stale empty tracker. Only backfill for a model that
+            // has NO persisted workflow history at all - one saved by a build before this class
+            // had real persistence. Backfilling a model that already has real history would wipe
+            // its genuine GENERATE/LAUNCH progress by overwriting MODEL with a fresh single event
+            // and leaving the rest of the fold looking at an otherwise-empty list.
+            if (workflowStateTracker.hasNoHistory(model.getId())) {
+                workflowStateTracker.record(model.getId(), WorkflowStage.MODEL, StageStatus.COMPLETED, null,
+                        model.getCreatedAt());
+            }
         }
         for (TwinProcess twin : snapshot.twins()) {
             twinProcesses.put(twin.getId(), twin);
@@ -181,6 +185,21 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             modelId = UUID.randomUUID().toString();
         }
 
+        // IN_PROGRESS before the first thing that can actually fail, and every exit below either
+        // reaches the COMPLETED record at the end or goes through the catch that records FAILED -
+        // WorkflowStateTracker's own transition validation rejects a COMPLETED/FAILED that wasn't
+        // preceded by IN_PROGRESS, so an exit path that skipped both would be a bug caught at the
+        // next write to this model, not silently left as a stage stuck IN_PROGRESS forever.
+        workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.IN_PROGRESS, null);
+        try {
+            return doSaveProcessModel(modelId, name, bpmnXml);
+        } catch (RuntimeException e) {
+            workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.FAILED, e.getMessage());
+            throw e;
+        }
+    }
+
+    private ProcessModel doSaveProcessModel(String modelId, String name, String bpmnXml) {
         Deployment deployment;
         try {
             deployment = repositoryService.createDeployment()
@@ -231,7 +250,6 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             // fail against later
             processModels.remove(modelId, model);
             discardDeployment(deployment.getId());
-            workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.FAILED, e.getMessage());
             throw e;
         }
         persistState();
@@ -345,11 +363,18 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         if (projectId == null || projectId.isBlank()) {
             throw new IllegalArgumentException("projectId must not be blank");
         }
+        // read before stop(), not after - the launcher's registry no longer has an entry for
+        // projectId once it's actually stopped, and "which port was this running on" is exactly
+        // the kind of detail worth keeping on the STOPPED event rather than losing it the moment
+        // the fold's latest-event-wins rule overwrites the earlier COMPLETED event's own detail
+        String portDetail = springBootProjectLauncher.find(projectId)
+                .map(launched -> "port " + launched.port())
+                .orElse(null);
         boolean wasRunning = springBootProjectLauncher.stop(projectId);
         if (wasRunning) {
             String modelId = modelIdByProjectId.get(projectId);
             if (modelId != null) {
-                workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.STOPPED, null);
+                workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.STOPPED, portDetail);
             }
         }
         return wasRunning;
