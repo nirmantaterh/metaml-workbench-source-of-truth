@@ -18,6 +18,9 @@ public class WorkbenchUrlMapping {
     public static final String TRANSMUTE_LAUNCH_PROJECT = WB_TRANSMUTE + "/launch-project";
     public static final String TRANSMUTE_STOP_PROJECT = WB_TRANSMUTE + "/stop-project";
     public static final String TRANSMUTE_RUNNING_PROJECTS = WB_TRANSMUTE + "/running-projects";
+    // path-variable form deliberately, not a query param - this reads a specific model's state,
+    // same shape as TRANSMUTE_MODELE + "/{id}" just above it
+    public static final String TRANSMUTE_WORKFLOW = TRANSMUTE_MODELE + "/{id}/workflow";
     public static final String TRANSMUTE_LAUNCH = WB_TRANSMUTE + "/launch";
     public static final String TRANSMUTE_EVOLVE = WB_TRANSMUTE + "/evolve";
     public static final String TRANSMUTE_TWIN = WB_TRANSMUTE + "/twin";

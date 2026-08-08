@@ -19,6 +19,7 @@ import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.generation.GeneratedProject;
 import com.metaml.workbench.generation.LaunchedProject;
 import com.metaml.workbench.model.AgentDecision;
+import com.metaml.workbench.workflow.WorkflowState;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinProcess;
 import com.metaml.workbench.service.WorkbenchService;
@@ -77,6 +78,21 @@ public class WorkbenchController {
         try {
             List<ProcessModel> models = workbenchService.listProcessModels();
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, models));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    // Single source of truth for the Model -> Generate -> Launch breadcrumb - never 404s for a
+    // model with no history recorded (a model id that's never been through the pipeline just
+    // reads back as everything PENDING, which is the honest answer, not an error).
+    @GetMapping(WorkbenchUrlMapping.TRANSMUTE_WORKFLOW)
+    public ResponseEntity<ApiResponse> getWorkflowState(@PathVariable String id) {
+        try {
+            WorkflowState state = workbenchService.getWorkflowState(id);
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, state));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
         } catch (Exception e) {
             return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
         }

@@ -57,6 +57,14 @@ export async function listRunningProjects() {
     return result.data;
 }
 
+// Single source of truth for the Model -> Generate -> Launch breadcrumb - the backend's real
+// record of what's happened to this model's pipeline, not something the frontend infers from its
+// own local state. Never 404s - a model with no history yet just reads back as everything pending.
+export async function getWorkflowState(modelId) {
+    const result = await api.get(`/wb/transmute/model/${modelId}/workflow`);
+    return result.data;
+}
+
 // comes back with the twin's whole eventLog, in order
 export async function getTwin(id) {
     const result = await api.get(`/wb/transmute/twin/${id}`);

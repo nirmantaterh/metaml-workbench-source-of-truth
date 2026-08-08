@@ -103,6 +103,8 @@ class WireTransferWalkthroughTest {
     private com.metaml.workbench.generation.SpringBootProjectGenerator springBootProjectGenerator;
     @Autowired
     private com.metaml.workbench.generation.SpringBootProjectLauncher springBootProjectLauncher;
+    @Autowired
+    private com.metaml.workbench.workflow.WorkflowStateTracker workflowStateTracker;
 
     @BeforeEach
     void stubTheCatalogAndOpenTheQuota() {
@@ -216,6 +218,77 @@ class WireTransferWalkthroughTest {
         assertThat(java.nio.file.Files.readString(delegateFile))
                 .contains("package com.example.camundademo.delegates;");
         assertThat(project.directory().resolve("src/main/resources/processes/loanApproval.bpmn")).exists();
+    }
+
+    // Proves the breadcrumb is real, not a UI-side guess - every stage recorded through the actual
+    // service methods, not against WorkflowStateTracker in isolation (that's covered separately in
+    // com.metaml.workbench.workflow.WorkflowStateTrackerTest). Each stage's real detail (the actual
+    // generated project id, the actual launched port) has to show up, not just a bare COMPLETED,
+    // since a caller reading this back needs those to do anything useful with it.
+    @Test
+    void theWorkflowBreadcrumbReflectsWhatActuallyHappenedAtEveryRealStage() {
+        ProcessModel model = workbenchService.saveProcessModel(null, "breadcrumb test", loanApprovalBpmn());
+
+        com.metaml.workbench.workflow.WorkflowState afterSave = workbenchService.getWorkflowState(model.getId());
+        assertThat(afterSave.currentStage()).isEqualTo(com.metaml.workbench.workflow.WorkflowStage.GENERATE);
+        assertThat(afterSave.stages().get(com.metaml.workbench.workflow.WorkflowStage.MODEL).status())
+                .isEqualTo(com.metaml.workbench.workflow.StageStatus.COMPLETED);
+
+        com.metaml.workbench.generation.GeneratedProject project =
+                workbenchService.generateSpringBootProject(model.getId());
+
+        com.metaml.workbench.workflow.WorkflowState afterGenerate = workbenchService.getWorkflowState(model.getId());
+        assertThat(afterGenerate.currentStage()).isEqualTo(com.metaml.workbench.workflow.WorkflowStage.LAUNCH);
+        assertThat(afterGenerate.stages().get(com.metaml.workbench.workflow.WorkflowStage.GENERATE).detail())
+                .isEqualTo(project.projectId());
+
+        com.metaml.workbench.generation.LaunchedProject launched =
+                workbenchService.launchGeneratedProject(project.projectId());
+
+        com.metaml.workbench.workflow.WorkflowState afterLaunch = workbenchService.getWorkflowState(model.getId());
+        assertThat(afterLaunch.currentStage()).isEqualTo(com.metaml.workbench.workflow.WorkflowStage.LAUNCH);
+        assertThat(afterLaunch.stages().get(com.metaml.workbench.workflow.WorkflowStage.LAUNCH).status())
+                .isEqualTo(com.metaml.workbench.workflow.StageStatus.COMPLETED);
+        assertThat(afterLaunch.stages().get(com.metaml.workbench.workflow.WorkflowStage.LAUNCH).detail())
+                .contains(String.valueOf(launched.port()));
+        // the full history is the actual point of an event log over a snapshot - every real
+        // transition should still be there, not just the latest one per stage: MODEL/COMPLETED,
+        // GENERATE/IN_PROGRESS, GENERATE/COMPLETED, LAUNCH/IN_PROGRESS, LAUNCH/COMPLETED
+        assertThat(afterLaunch.history()).hasSize(5);
+
+        workbenchService.stopGeneratedProject(project.projectId());
+
+        com.metaml.workbench.workflow.WorkflowState afterStop = workbenchService.getWorkflowState(model.getId());
+        assertThat(afterStop.stages().get(com.metaml.workbench.workflow.WorkflowStage.LAUNCH).status())
+                .isEqualTo(com.metaml.workbench.workflow.StageStatus.STOPPED);
+    }
+
+    // Same reflection-construction pattern bridgeDedupeIsSafeAcrossACompletelyFreshServiceInstance
+    // already uses above, here to get a SpringBootProjectGenerator pointed at a template directory
+    // that doesn't exist - the one way to make generateSpringBootProject genuinely fail through
+    // the real service rather than short-circuit before recording anything (a bad modelId, for
+    // instance, throws before the pipeline even starts, so it never touches the breadcrumb at all).
+    @Test
+    void aRealGenerateFailureIsRecordedAsFailedWithTheRealErrorNotSilentlySwallowed() throws Exception {
+        var brokenGenerator = new com.metaml.workbench.generation.SpringBootProjectGenerator(
+                "./no-such-template-directory-anywhere", "target/test-data/generated-projects");
+        WorkbenchServiceImpl serviceWithBrokenTemplate = new WorkbenchServiceImpl(nodeManagerClient,
+                governanceService, runtimeService, repositoryService, historyService, taskService,
+                twinModelGenerator, stateStore, modelFileStore, delegateClassGenerator, brokenGenerator,
+                springBootProjectLauncher, workflowStateTracker);
+
+        ProcessModel model = serviceWithBrokenTemplate.saveProcessModel(null, "failure test", loanApprovalBpmn());
+
+        assertThatThrownBy(() -> serviceWithBrokenTemplate.generateSpringBootProject(model.getId()))
+                .isInstanceOf(IllegalStateException.class);
+
+        com.metaml.workbench.workflow.WorkflowState state =
+                serviceWithBrokenTemplate.getWorkflowState(model.getId());
+        assertThat(state.currentStage()).isEqualTo(com.metaml.workbench.workflow.WorkflowStage.GENERATE);
+        assertThat(state.stages().get(com.metaml.workbench.workflow.WorkflowStage.GENERATE).status())
+                .isEqualTo(com.metaml.workbench.workflow.StageStatus.FAILED);
+        assertThat(state.stages().get(com.metaml.workbench.workflow.WorkflowStage.GENERATE).detail())
+                .contains("no-such-template-directory-anywhere");
     }
 
     private static String loanApprovalBpmn() {
@@ -483,7 +556,8 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl freshService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, stateStore,
-                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher);
+                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                workflowStateTracker);
         Field twinProcessesField = WorkbenchServiceImpl.class.getDeclaredField("twinProcesses");
         twinProcessesField.setAccessible(true);
         @SuppressWarnings("unchecked")

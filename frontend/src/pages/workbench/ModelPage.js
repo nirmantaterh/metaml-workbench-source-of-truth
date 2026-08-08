@@ -13,6 +13,7 @@ import {
     generateDelegates,
     generateProject,
     launchProject,
+    getWorkflowState,
 } from "../../services/workbench/WorkbenchService";
 
 const ModelPage = () => {
@@ -26,11 +27,37 @@ const ModelPage = () => {
     // each save is its own version - the backend won't overwrite an existing model, so this only
     // ever gets set FROM a successful save or an existing model load, never sent back as a request
     const [savedModelId, setSavedModelId] = useState(null);
+    // populated either by a fresh Generate call, or restored from the real backend workflow state
+    // on load - so reopening a model that was already generated makes Launch usable again without
+    // re-running Generate, instead of the page pretending nothing happened just because its own
+    // local variables reset on reload
     const [projectId, setProjectId] = useState(null);
-    const [launchedPort, setLaunchedPort] = useState(null);
+
+    // the actual source of truth for the breadcrumb - never computed from savedModelId/projectId
+    // locally, always the backend's own record of what happened to this model's pipeline (see
+    // WorkbenchService.getWorkflowState / the backend's WorkflowStateTracker)
+    const [workflowState, setWorkflowState] = useState(null);
 
     const [status, setStatus] = useState(null); // { type: 'ok'|'err'|'info', text }
     const [busy, setBusy] = useState(false);
+
+    const refreshWorkflowState = async (modelId) => {
+        if (!modelId) return;
+        try {
+            const res = await getWorkflowState(modelId);
+            const state = res.data || res;
+            setWorkflowState(state);
+            // restore projectId from the real record, not just from this session's own clicks -
+            // this is what makes Launch resumable after a reload or after opening a model that was
+            // generated in an earlier session
+            const generateStage = state.stages?.GENERATE;
+            if (generateStage?.status === "COMPLETED" && generateStage.detail) {
+                setProjectId(generateStage.detail);
+            }
+        } catch (err) {
+            // breadcrumb failing to load shouldn't block anything else on the page
+        }
+    };
 
     // Edit Existing Project lands here with a real id already in the URL - load it straight away
     // instead of making the user paste it into a box, which is the whole point of the picker page
@@ -50,6 +77,7 @@ const ModelPage = () => {
                 setModelName(model.name || "Untitled");
                 setSavedModelId(model.id || routeModelId);
                 setStatus({ type: "ok", text: `Loaded "${model.name || routeModelId}".` });
+                await refreshWorkflowState(model.id || routeModelId);
             } catch (err) {
                 if (!cancelled) {
                     setStatus({ type: "err", text: "Load failed: " + (err.response?.data?.message || err.message) });
@@ -64,14 +92,6 @@ const ModelPage = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [routeModelId]);
 
-    // any edit after a save/generate/launch means the saved version on the server is no longer
-    // what's on the canvas - re-saving makes a NEW model id (see handleSave), so Generate/Launch
-    // against the stale one would be editing a project that no longer matches what's shown here
-    const resetDownstreamPhases = () => {
-        setProjectId(null);
-        setLaunchedPort(null);
-    };
-
     const handleSave = async () => {
         setBusy(true);
         try {
@@ -79,8 +99,12 @@ const ModelPage = () => {
             const res = await saveModel({ name: modelName, bpmnXml });
             const saved = res.data || res;
             setSavedModelId(saved.id || null);
-            resetDownstreamPhases();
+            // a fresh save is a NEW model id (the backend never overwrites), so any earlier
+            // project/launch belonged to the OLD id - nothing to carry over here, the next
+            // refreshWorkflowState call reads the new id's history, which starts empty
+            setProjectId(null);
             setStatus({ type: "ok", text: `Saved model "${saved.name || modelName}" (id ${saved.id ?? "?"}).` });
+            await refreshWorkflowState(saved.id);
         } catch (err) {
             setStatus({ type: "err", text: "Save failed: " + (err.response?.data?.message || err.message) });
         } finally {
@@ -103,7 +127,6 @@ const ModelPage = () => {
             const res = await generateProject({ modelId: savedModelId });
             const project = res.data || res;
             setProjectId(project.projectId || null);
-            setLaunchedPort(null);
             setStatus({
                 type: "ok",
                 text: `Generated Spring Boot project for process "${project.processKey || "?"}" (id ${project.projectId ?? "?"}).`,
@@ -111,6 +134,7 @@ const ModelPage = () => {
         } catch (err) {
             setStatus({ type: "err", text: "Generate failed: " + (err.response?.data?.message || err.message) });
         } finally {
+            await refreshWorkflowState(savedModelId);
             setBusy(false);
         }
     };
@@ -124,7 +148,6 @@ const ModelPage = () => {
         try {
             const res = await launchProject({ projectId });
             const launched = res.data || res;
-            setLaunchedPort(launched.port ?? null);
             setStatus({
                 type: "ok",
                 text: `Launched on port ${launched.port ?? "?"} (process "${launched.processKey || "?"}").`,
@@ -132,12 +155,10 @@ const ModelPage = () => {
         } catch (err) {
             setStatus({ type: "err", text: "Launch failed: " + (err.response?.data?.message || err.message) });
         } finally {
+            await refreshWorkflowState(savedModelId);
             setBusy(false);
         }
     };
-
-    // -1 = nothing saved yet, 0 = model saved, 1 = project generated, 2 = launched
-    const currentPhase = launchedPort != null ? 2 : projectId != null ? 1 : savedModelId != null ? 0 : -1;
 
     const statusClass =
         status?.type === "err" ? "text-danger" : status?.type === "ok" ? "text-success" : "text-muted";
@@ -152,7 +173,7 @@ const ModelPage = () => {
                     onChange={(e) => setModelName(e.target.value)}
                     placeholder="Model name"
                 />
-                <WorkflowProgress currentPhase={currentPhase} />
+                <WorkflowProgress currentStage={workflowState?.currentStage} stages={workflowState?.stages} />
                 <div className="spacer" />
                 {status && <span className={`bpmn-status ${statusClass}`}>{status.text}</span>}
                 <Button size="sm" variant="outline-primary" onClick={handleSave} disabled={busy}>

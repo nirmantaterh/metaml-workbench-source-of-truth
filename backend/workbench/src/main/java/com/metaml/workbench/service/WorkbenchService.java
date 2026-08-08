@@ -4,6 +4,7 @@ import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.generation.GeneratedProject;
 import com.metaml.workbench.generation.LaunchedProject;
 import com.metaml.workbench.model.AgentDecision;
+import com.metaml.workbench.workflow.WorkflowState;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinAdvance;
 import com.metaml.workbench.model.TwinProcess;
@@ -53,6 +54,12 @@ public interface WorkbenchService {
     // What's currently running, for the Evolve workflow's "connect to an existing deployed
     // application" step to read from.
     List<LaunchedProject> listRunningProjects();
+
+    // Single source of truth for the Model -> Generate -> Launch breadcrumb - never throws for a
+    // model with no recorded history, reads back as everything PENDING instead. See
+    // WorkflowStateTracker's own header comment for why this is computed from an event log rather
+    // than stored as separate mutable fields.
+    WorkflowState getWorkflowState(String modelId);
 
     // Starts both instances. The twin runs a definition of its own, generated from the original
     // with the human taken out of every activity, so its token can actually be moved along with

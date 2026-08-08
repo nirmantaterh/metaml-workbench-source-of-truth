@@ -29,3 +29,17 @@
 .workflow-progress-arrow {
     color: #adb5bd;
 }
+
+.workflow-progress-step-failed {
+    color: #fff;
+    background: #dc3545;
+    border-color: #dc3545;
+    font-weight: 600;
+}
+
+.workflow-progress-step-inprogress {
+    color: #fff;
+    background: #f0ad4e;
+    border-color: #f0ad4e;
+    font-weight: 600;
+}

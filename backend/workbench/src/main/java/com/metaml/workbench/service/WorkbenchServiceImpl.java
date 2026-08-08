@@ -39,6 +39,10 @@ import com.metaml.workbench.model.TwinAdvance;
 import com.metaml.workbench.model.TwinProcess;
 import com.metaml.workbench.store.ProcessModelFileStore;
 import com.metaml.workbench.store.WorkbenchStateStore;
+import com.metaml.workbench.workflow.StageStatus;
+import com.metaml.workbench.workflow.WorkflowStage;
+import com.metaml.workbench.workflow.WorkflowState;
+import com.metaml.workbench.workflow.WorkflowStateTracker;
 
 import jakarta.annotation.PostConstruct;
 
@@ -77,6 +81,10 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     // launchGeneratedProject needs its path again; restart already forgets every launched process
     // too, since those don't survive an app restart either
     private final Map<String, GeneratedProject> generatedProjects = new ConcurrentHashMap<>();
+    // the only place a generated project's originating model is remembered - GeneratedProject
+    // itself carries no modelId (it's a workbench.generation concern, not a BPMN one), and both
+    // launch and stop need to know which model's breadcrumb a project's LAUNCH stage belongs to
+    private final Map<String, String> modelIdByProjectId = new ConcurrentHashMap<>();
     private final NodeManagerClient nodeManagerClient;
     private final GovernanceService governanceService;
     private final RuntimeService runtimeService;
@@ -89,13 +97,17 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     private final DelegateClassGenerator delegateClassGenerator;
     private final SpringBootProjectGenerator springBootProjectGenerator;
     private final SpringBootProjectLauncher springBootProjectLauncher;
+    // single source of truth for where a model's Model -> Generate -> Launch pipeline actually is
+    // - see the class's own header comment. Every method below that IS one of those three stages
+    // records into it; nothing else should.
+    private final WorkflowStateTracker workflowStateTracker;
 
     public WorkbenchServiceImpl(NodeManagerClient nodeManagerClient, GovernanceService governanceService,
             RuntimeService runtimeService, RepositoryService repositoryService, HistoryService historyService,
             TaskService taskService, TwinModelGenerator twinModelGenerator,
             WorkbenchStateStore stateStore, ProcessModelFileStore modelFileStore,
             DelegateClassGenerator delegateClassGenerator, SpringBootProjectGenerator springBootProjectGenerator,
-            SpringBootProjectLauncher springBootProjectLauncher) {
+            SpringBootProjectLauncher springBootProjectLauncher, WorkflowStateTracker workflowStateTracker) {
         this.nodeManagerClient = nodeManagerClient;
         this.governanceService = governanceService;
         this.runtimeService = runtimeService;
@@ -108,6 +120,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         this.delegateClassGenerator = delegateClassGenerator;
         this.springBootProjectGenerator = springBootProjectGenerator;
         this.springBootProjectLauncher = springBootProjectLauncher;
+        this.workflowStateTracker = workflowStateTracker;
     }
 
     @PostConstruct
@@ -210,9 +223,11 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             // fail against later
             processModels.remove(modelId, model);
             discardDeployment(deployment.getId());
+            workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.FAILED, e.getMessage());
             throw e;
         }
         persistState();
+        workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.COMPLETED, null);
         logger.info("Saved process model {} and deployed process definition {}", modelId, definition.getId());
         return model;
     }
@@ -257,17 +272,28 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     @Override
     public GeneratedProject generateSpringBootProject(String modelId) {
         ProcessModel model = getProcessModel(modelId);
-        // regenerated here rather than reusing generateDelegates' output - that method renders
-        // against DelegateClassGenerator's own default package, which is fine for previewing
-        // source but not where SpringBootProjectGenerator is about to place the file. Has to be
-        // SpringBootProjectGenerator.DELEGATE_PACKAGE specifically, or the class compiles but
-        // Spring's component scan never finds it (see that constant's own comment).
-        List<GeneratedDelegate> delegates = delegateClassGenerator.generate(model.getBpmnXml(),
-                SpringBootProjectGenerator.DELEGATE_PACKAGE);
-        GeneratedProject project = springBootProjectGenerator.generate(model.getBpmnXml(), delegates);
-        generatedProjects.put(project.projectId(), project);
-        logger.info("Generated Spring Boot project {} for model {}", project.projectId(), modelId);
-        return project;
+        workflowStateTracker.record(modelId, WorkflowStage.GENERATE, StageStatus.IN_PROGRESS, null);
+        try {
+            // regenerated here rather than reusing generateDelegates' output - that method renders
+            // against DelegateClassGenerator's own default package, which is fine for previewing
+            // source but not where SpringBootProjectGenerator is about to place the file. Has to be
+            // SpringBootProjectGenerator.DELEGATE_PACKAGE specifically, or the class compiles but
+            // Spring's component scan never finds it (see that constant's own comment).
+            List<GeneratedDelegate> delegates = delegateClassGenerator.generate(model.getBpmnXml(),
+                    SpringBootProjectGenerator.DELEGATE_PACKAGE);
+            GeneratedProject project = springBootProjectGenerator.generate(model.getBpmnXml(), delegates);
+            generatedProjects.put(project.projectId(), project);
+            modelIdByProjectId.put(project.projectId(), modelId);
+            // projectId as the detail, not just a bare COMPLETED - stopGeneratedProject/
+            // launchGeneratedProject both key off project ids, and the breadcrumb needs a way to
+            // hand one to the caller without a second round trip through generatedProjects
+            workflowStateTracker.record(modelId, WorkflowStage.GENERATE, StageStatus.COMPLETED, project.projectId());
+            logger.info("Generated Spring Boot project {} for model {}", project.projectId(), modelId);
+            return project;
+        } catch (RuntimeException e) {
+            workflowStateTracker.record(modelId, WorkflowStage.GENERATE, StageStatus.FAILED, e.getMessage());
+            throw e;
+        }
     }
 
     @Override
@@ -277,7 +303,26 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             throw new NoSuchElementException("Generated project not found: " + projectId
                     + " - it may not exist, or the app may have restarted since it was generated");
         }
-        return springBootProjectLauncher.launch(project);
+        // absent for a project generated before this map existed (a workbench restart, or one
+        // generated by an older build) - the launch still works, it just has no breadcrumb to
+        // update
+        String modelId = modelIdByProjectId.get(projectId);
+        if (modelId != null) {
+            workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.IN_PROGRESS, null);
+        }
+        try {
+            LaunchedProject launched = springBootProjectLauncher.launch(project);
+            if (modelId != null) {
+                workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.COMPLETED,
+                        "port " + launched.port());
+            }
+            return launched;
+        } catch (RuntimeException e) {
+            if (modelId != null) {
+                workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.FAILED, e.getMessage());
+            }
+            throw e;
+        }
     }
 
     @Override
@@ -289,7 +334,22 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         if (projectId == null || projectId.isBlank()) {
             throw new IllegalArgumentException("projectId must not be blank");
         }
-        return springBootProjectLauncher.stop(projectId);
+        boolean wasRunning = springBootProjectLauncher.stop(projectId);
+        if (wasRunning) {
+            String modelId = modelIdByProjectId.get(projectId);
+            if (modelId != null) {
+                workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.STOPPED, null);
+            }
+        }
+        return wasRunning;
+    }
+
+    @Override
+    public WorkflowState getWorkflowState(String modelId) {
+        if (modelId == null || modelId.isBlank()) {
+            throw new IllegalArgumentException("modelId must not be blank");
+        }
+        return workflowStateTracker.stateFor(modelId);
     }
 
     @Override
