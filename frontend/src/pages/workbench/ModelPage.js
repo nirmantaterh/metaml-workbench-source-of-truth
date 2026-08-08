@@ -59,6 +59,50 @@ const ModelPage = () => {
         }
     };
 
+    // Phase 2A: live status while a stage is actually IN_PROGRESS, per the backend's own record -
+    // not inferred from a button click or from a request still being in flight. Derived as a plain
+    // boolean (not the whole workflowState object) specifically so the polling effect below only
+    // restarts its interval when this flips true/false, not on every single poll tick - each poll
+    // response replaces workflowState with a new object reference, and depending on that directly
+    // would tear down and recreate the interval every second instead of running one continuously.
+    const currentStageInProgress =
+        workflowState?.stages?.[workflowState?.currentStage]?.status === "IN_PROGRESS";
+
+    // `busy` is what actually starts polling, not currentStageInProgress alone - found this the
+    // hard way testing against a real slow Launch: gating the poll purely on "we already know a
+    // stage is IN_PROGRESS" is a chicken-and-egg problem, since nothing was ever polling to
+    // DISCOVER that transition in the first place. A single fire-and-forget GET at click time
+    // (an earlier version of this) mostly loses the race against the backend recording
+    // IN_PROGRESS, leaving the breadcrumb stuck showing whatever it last knew (PENDING) for the
+    // entire operation. Polling for real backend truth starts the moment the user clicks Save/
+    // Generate/Launch (busy) and keeps running until both the click's own request has settled AND
+    // the backend no longer reports anything IN_PROGRESS - this is still not "inferring" anything:
+    // every value actually rendered still comes straight from a real GET response, busy only
+    // controls how often to ask.
+    const shouldPoll = (busy || currentStageInProgress) && Boolean(savedModelId);
+
+    // No SSE/WebSocket infrastructure exists anywhere in this backend (checked before writing
+    // this), so lightweight polling of the existing GET .../workflow is the correct choice here,
+    // not a shortcut around a real-time mechanism that was already available.
+    useEffect(() => {
+        if (!shouldPoll) return undefined;
+        let cancelled = false;
+        const modelId = savedModelId;
+        // an immediate check the moment polling starts, not just the interval's first tick a full
+        // second later - this is what replaced the earlier single fire-and-forget "kick" call in
+        // each handler, now centralized here instead of duplicated per action
+        refreshWorkflowState(modelId);
+        const interval = setInterval(() => {
+            if (cancelled) return;
+            refreshWorkflowState(modelId);
+        }, 1000);
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [shouldPoll, savedModelId]);
+
     // Edit Existing Project lands here with a real id already in the URL - load it straight away
     // instead of making the user paste it into a box, which is the whole point of the picker page
     useEffect(() => {
@@ -121,6 +165,8 @@ const ModelPage = () => {
             setStatus({ type: "err", text: "Save the model before generating a project." });
             return;
         }
+        // busy flipping true is what starts the polling effect above (see its own comment) - no
+        // separate manual refresh needed here anymore
         setBusy(true);
         try {
             await generateDelegates({ modelId: savedModelId });
@@ -144,6 +190,7 @@ const ModelPage = () => {
             setStatus({ type: "err", text: "Generate a project before launching it." });
             return;
         }
+        // same reasoning as handleGenerate above
         setBusy(true);
         try {
             const res = await launchProject({ projectId });
