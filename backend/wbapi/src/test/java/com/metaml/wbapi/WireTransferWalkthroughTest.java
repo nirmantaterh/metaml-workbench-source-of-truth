@@ -133,6 +133,35 @@ class WireTransferWalkthroughTest {
         assertThat(onDisk).isEqualTo(citibankBpmn());
     }
 
+    // The id on a save request is client-supplied, and it becomes a filename under
+    // workbench.models.directory. Rejected up front, before the deploy, so a traversal attempt
+    // can't even leave a deployment behind on its way out - and asserting the throw on its own
+    // would be a weak test here, since the whole risk is a file appearing somewhere it shouldn't,
+    // so this checks the target directory is genuinely still empty afterwards.
+    @Test
+    void aTraversalShapedModelIdIsRejectedAndWritesNothingOutsideTheModelsDirectory() throws IOException {
+        Path modelsDir = Path.of("./target/test-data/models").toAbsolutePath().normalize();
+        Path escapeTarget = modelsDir.getParent().resolve("escaped.bpmn");
+        Files.createDirectories(modelsDir);
+        Files.deleteIfExists(escapeTarget);
+
+        assertThatThrownBy(() -> workbenchService.saveProcessModel("../escaped", "traversal", citibankBpmn()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("may only contain letters, digits");
+        assertThatThrownBy(() -> workbenchService.saveProcessModel(
+                modelsDir.getParent().resolve("absolute-escaped").toString(), "traversal", citibankBpmn()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("may only contain letters, digits");
+
+        assertThat(escapeTarget).doesNotExist();
+        assertThat(modelsDir.getParent().resolve("absolute-escaped.bpmn")).doesNotExist();
+        // and nothing landed inside the directory under a mangled name either
+        try (var entries = Files.list(modelsDir)) {
+            assertThat(entries.map(p -> p.getFileName().toString()))
+                    .noneMatch(name -> name.contains("escaped"));
+        }
+    }
+
     // New scope item 3 (BPMN Processing), proven through the real saved-model path rather than
     // against DelegateClassGenerator in isolation (that's covered separately in
     // com.metaml.workbench.codegen.DelegateClassGeneratorTest). Neither example model in this repo

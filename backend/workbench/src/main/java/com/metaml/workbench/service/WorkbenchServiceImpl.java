@@ -51,6 +51,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 @Service
 public class WorkbenchServiceImpl implements WorkbenchService {
@@ -59,6 +60,10 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
     // auto-bridge has no caller to ask for a type, so it uses this one
     private static final String DEFAULT_BRIDGE_AGENT_TYPE = "validator";
+
+    // what a client-supplied model id is allowed to look like. Generated ids are UUIDs, which fit
+    // this comfortably; anything with a separator, a dot, or a drive letter in it does not.
+    private static final Pattern SAFE_MODEL_ID = Pattern.compile("[A-Za-z0-9_-]+");
 
     // still the live copy - WorkbenchStateStore just mirrors these to a file after each change
     private final Map<String, ProcessModel> processModels = new ConcurrentHashMap<>();
@@ -135,6 +140,16 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         }
         String modelId;
         if (id != null && !id.isBlank()) {
+            // The id is client-supplied and ends up as a filename under workbench.models.directory
+            // (ProcessModelFileStore.pathFor resolves it straight into that directory), so
+            // "../../etc/whatever" or an absolute path would have written the model's BPMN outside
+            // the models directory entirely. Checked here rather than only in the file store, and
+            // checked before the deploy below, so a rejected id never costs a deploy-then-roll-back
+            // round trip through the engine or leaves a deployment behind on the way out.
+            if (!SAFE_MODEL_ID.matcher(id).matches()) {
+                throw new IllegalArgumentException("Process model id may only contain letters, digits, "
+                        + "'-' and '_': " + id);
+            }
             // no overwriting - twins already launched still point at the old definition
             if (processModels.containsKey(id)) {
                 throw new IllegalArgumentException("Process model already exists: " + id);
@@ -255,6 +270,18 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                     + " - it may not exist, or the app may have restarted since it was generated");
         }
         return springBootProjectLauncher.launch(project);
+    }
+
+    @Override
+    public boolean stopGeneratedProject(String projectId) {
+        // deliberately not gated on generatedProjects containing it: after a workbench restart that
+        // map is empty, and refusing to stop what the launcher is still tracking would leave a
+        // running app nothing could reach. The launcher's own registry is the authority on what's
+        // running.
+        if (projectId == null || projectId.isBlank()) {
+            throw new IllegalArgumentException("projectId must not be blank");
+        }
+        return springBootProjectLauncher.stop(projectId);
     }
 
     @Override

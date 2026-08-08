@@ -37,6 +37,14 @@ public interface WorkbenchService {
     // explicit product decision rather than an assumption.
     LaunchedProject launchGeneratedProject(String projectId);
 
+    // The counterpart to launchGeneratedProject. Without it the only ways to get a generated app's
+    // port back were relaunching the same project or killing the workbench, and nothing at all
+    // could reclaim one that was launched by mistake. Returns whether there was actually something
+    // running to stop - deliberately a boolean rather than an exception, since stopping an already
+    // stopped project is a harmless no-op from the caller's point of view; the REST layer is where
+    // that turns into a 404.
+    boolean stopGeneratedProject(String projectId);
+
     // What's currently running, for the Evolve workflow's "connect to an existing deployed
     // application" step to read from.
     List<LaunchedProject> listRunningProjects();

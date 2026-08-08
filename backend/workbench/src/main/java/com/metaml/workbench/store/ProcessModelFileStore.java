@@ -56,8 +56,24 @@ public class ProcessModelFileStore {
         }
     }
 
+    // WorkbenchServiceImpl already rejects a client-supplied id that isn't [A-Za-z0-9_-]+, but this
+    // class is a plain @Component anything can call, and its whole job is turning a string into a
+    // filesystem path - it shouldn't be the caller's business to have got that right first. A
+    // modelId of "../../evil" or "C:/Windows/evil" resolves cleanly to somewhere outside the
+    // configured models directory, and nothing in save() below would have noticed. Normalising and
+    // re-checking containment is the cheap way to make that structurally impossible rather than
+    // conventionally unlikely.
     public Path pathFor(String modelId) {
-        return directory.resolve(modelId + ".bpmn");
+        if (modelId == null || modelId.isBlank()) {
+            throw new IllegalArgumentException("modelId must not be blank");
+        }
+        Path root = directory.toAbsolutePath().normalize();
+        Path resolved = root.resolve(modelId + ".bpmn").normalize();
+        if (!resolved.startsWith(root)) {
+            throw new IllegalArgumentException(
+                    "modelId must not resolve outside the models directory: " + modelId);
+        }
+        return resolved;
     }
 
     public boolean exists(String modelId) {

@@ -29,6 +29,7 @@ import com.metaml.wbapi.payload.request.GenerateProjectRequest;
 import com.metaml.wbapi.payload.request.LaunchProcessRequest;
 import com.metaml.wbapi.payload.request.LaunchProjectRequest;
 import com.metaml.wbapi.payload.request.SaveProcessModelRequest;
+import com.metaml.wbapi.payload.request.StopProjectRequest;
 import com.metaml.wbapi.payload.response.ApiResponse;
 import com.metaml.wbapi.payload.response.GeneratedProjectResponse;
 import com.metaml.wbapi.utils.WorkbenchUrlMapping;
@@ -136,6 +137,31 @@ public class WorkbenchController {
             return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
         } catch (IllegalStateException e) {
             return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    // The counterpart to launch-project. A generated app is a child JVM that outlives the request
+    // that started it, so without this the only ways to get its port back were relaunching the same
+    // project or killing the workbench.
+    //
+    // 404 rather than a 200 carrying false, to match how every other "you named something that
+    // isn't there" case in this controller answers - the service returns a plain boolean because
+    // stopping an already-stopped project is a harmless no-op internally, and this is the layer
+    // that decides the caller asked about something that doesn't exist. The body still carries the
+    // wasRunning flag either way so a client doesn't have to infer it from the status code alone.
+    @PostMapping(WorkbenchUrlMapping.TRANSMUTE_STOP_PROJECT)
+    public ResponseEntity<ApiResponse> stopGeneratedProject(@RequestBody StopProjectRequest request) {
+        try {
+            boolean wasRunning = workbenchService.stopGeneratedProject(request.getProjectId());
+            if (!wasRunning) {
+                return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(
+                        "No running generated project with id " + request.getProjectId(), false));
+            }
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, true));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
         } catch (Exception e) {
             return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
         }
