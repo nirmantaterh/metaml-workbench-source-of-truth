@@ -1,6 +1,7 @@
 package com.metaml.workbench.generation;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -99,6 +100,28 @@ class SpringBootProjectGeneratorTest {
                 "src/main/java/com/example/camundademo/delegates/CalculateInterestService.java");
         assertThat(written).exists();
         assertThat(readString(written)).isEqualTo(delegate.sourceCode());
+    }
+
+    // Phase 3C: proves DelegateWriteException actually carries which BPMN element a failed
+    // delegate write was for, using a deterministic, OS-permission-free trigger - a directory
+    // already sitting where the delegate's own file needs to go, copied in from the template, so
+    // Files.writeString fails every time with no reliance on filesystem ACLs
+    @Test
+    void aDelegateThatFailsToWriteCarriesWhichBpmnElementItWasFor() throws IOException {
+        write(templateDir.resolve(
+                        "src/main/java/com/example/camundademo/delegates/BrokenDelegate.java/placeholder.txt"),
+                "pre-existing directory where the delegate's own file needs to go");
+        GeneratedDelegate delegate = new GeneratedDelegate("brokenService", "BrokenDelegate", "Broken Task",
+                com.metaml.workbench.codegen.DelegateKind.SERVICE_TASK, "package x; public class BrokenDelegate {}",
+                "ServiceTask_Broken");
+
+        assertThatThrownBy(() -> generator().generate(loanApprovalBpmn(), List.of(delegate)))
+                .isInstanceOf(DelegateWriteException.class)
+                .satisfies(thrown -> {
+                    DelegateWriteException e = (DelegateWriteException) thrown;
+                    assertThat(e.beanName()).isEqualTo("brokenService");
+                    assertThat(e.bpmnElementId()).isEqualTo("ServiceTask_Broken");
+                });
     }
 
     @Test

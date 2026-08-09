@@ -214,6 +214,27 @@ const ModelPage = () => {
     const statusClass =
         status?.type === "err" ? "text-danger" : status?.type === "ok" ? "text-success" : "text-muted";
 
+    // Phase 3C: uses the SAME modeler instance already driving the canvas above (modelerRef, from
+    // useBpmnModeler) - no second modeler, no reload of the BPMN, no navigation. bpmnElementId
+    // only ever refers to this page's own currently-loaded model, since it was computed from this
+    // model's own BPMN at generate time (see GeneratedDelegate/DelegateClassGenerator) - there's
+    // no cross-model case to handle here.
+    const handleGoToError = (bpmnElementId) => {
+        const modeler = modelerRef.current;
+        if (!modeler || !bpmnElementId) return false;
+        try {
+            const element = modeler.get("elementRegistry").get(bpmnElementId);
+            if (!element) return false;
+            modeler.get("selection").select(element);
+            modeler.get("canvas").scrollToElement(element);
+            return true;
+        } catch (err) {
+            // an element that exists but can't be selected/scrolled to for some modeler-internal
+            // reason is the same "couldn't get there" outcome as not finding it at all
+            return false;
+        }
+    };
+
     return (
         <div className="bpmn-editor">
             <div className="bpmn-toolbar">
@@ -268,7 +289,11 @@ const ModelPage = () => {
                             View details {detailsOpen ? "▴" : "▾"}
                         </button>
                         {detailsOpen && workflowState && (
-                            <WorkflowDetailsPanel workflowState={workflowState} onClose={() => setDetailsOpen(false)} />
+                            <WorkflowDetailsPanel
+                                workflowState={workflowState}
+                                onClose={() => setDetailsOpen(false)}
+                                onGoToError={handleGoToError}
+                            />
                         )}
                     </div>
                 </div>

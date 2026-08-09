@@ -129,8 +129,17 @@ public class SpringBootProjectGenerator {
 
     private void writeDelegates(Path projectDir, List<GeneratedDelegate> delegates) {
         for (GeneratedDelegate delegate : delegates) {
-            writeFile(projectDir.resolve(DELEGATE_PACKAGE_PATH).resolve(delegate.className() + ".java"),
-                    delegate.sourceCode());
+            Path target = projectDir.resolve(DELEGATE_PACKAGE_PATH).resolve(delegate.className() + ".java");
+            // not the shared writeFile() helper below - a failure here is attributable to this one
+            // delegate specifically, which writeFile's own generic UncheckedIOException has no way
+            // to say (see DelegateWriteException's own comment)
+            try {
+                Files.createDirectories(target.getParent());
+                Files.writeString(target, delegate.sourceCode(), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                throw new DelegateWriteException("Could not write " + target.toAbsolutePath(), e,
+                        delegate.beanName(), delegate.bpmnElementId());
+            }
         }
     }
 

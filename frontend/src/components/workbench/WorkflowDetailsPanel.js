@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import "./WorkflowDetailsPanel.css";
 
 const PHASES = ["MODEL", "GENERATE", "LAUNCH"];
@@ -37,7 +37,14 @@ const startOf = (history, stage) => {
     return null;
 };
 
-const WorkflowDetailsPanel = ({ workflowState, onClose }) => {
+// Phase 3C: onGoToError is a synchronous (bpmnElementId) => boolean the caller supplies - true if
+// the existing modeler actually found and selected the element, false otherwise. This component
+// has no idea what a bpmn-js modeler even is; it just renders whatever structured error the
+// backend already sent (see StageError) and reports back whether the click actually landed
+// anywhere, so it can show the one required message if it didn't.
+const WorkflowDetailsPanel = ({ workflowState, onClose, onGoToError }) => {
+    const [notFoundElementId, setNotFoundElementId] = useState(null);
+
     useEffect(() => {
         const onKeyDown = (e) => {
             if (e.key === "Escape") onClose();
@@ -48,6 +55,11 @@ const WorkflowDetailsPanel = ({ workflowState, onClose }) => {
 
     const stages = workflowState?.stages || {};
     const history = workflowState?.history || [];
+
+    const handleGoToError = (bpmnElementId) => {
+        const found = Boolean(onGoToError && onGoToError(bpmnElementId));
+        setNotFoundElementId(found ? null : bpmnElementId);
+    };
 
     return (
         <div className="workflow-details-panel" role="dialog" aria-label="Workflow details">
@@ -88,10 +100,58 @@ const WorkflowDetailsPanel = ({ workflowState, onClose }) => {
                             {durationMs !== null && (
                                 <div className="workflow-details-stage-line">Duration: {formatDuration(durationMs)}</div>
                             )}
-                            {info.status === "FAILED" && info.detail && (
+                            {info.status === "FAILED" && (info.detail || info.error) && (
                                 <div className="workflow-details-error">
-                                    <span className="workflow-details-eyebrow">Error</span>
-                                    {info.detail}
+                                    {info.error?.errorType && (
+                                        <div className="workflow-details-error-field">
+                                            <span className="workflow-details-eyebrow">Error type</span>
+                                            {info.error.errorType}
+                                        </div>
+                                    )}
+                                    {info.detail && (
+                                        <div className="workflow-details-error-field">
+                                            <span className="workflow-details-eyebrow">Message</span>
+                                            {info.detail}
+                                        </div>
+                                    )}
+                                    {info.error?.operation && (
+                                        <div className="workflow-details-error-field">
+                                            <span className="workflow-details-eyebrow">Operation</span>
+                                            {info.error.operation}
+                                        </div>
+                                    )}
+                                    {info.error?.delegateExpression && (
+                                        <div className="workflow-details-error-field">
+                                            <span className="workflow-details-eyebrow">Delegate</span>
+                                            {info.error.delegateExpression}
+                                        </div>
+                                    )}
+                                    {info.error?.delegateExpression && info.error.bpmnElementId && (
+                                        <>
+                                            <div className="workflow-details-error-field">
+                                                <span className="workflow-details-eyebrow">BPMN element</span>
+                                                {info.error.bpmnElementId}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                className="workflow-details-goto-error"
+                                                onClick={() => handleGoToError(info.error.bpmnElementId)}
+                                            >
+                                                Go to error
+                                            </button>
+                                            {notFoundElementId === info.error.bpmnElementId && (
+                                                <div className="workflow-details-notfound">
+                                                    Source BPMN element could not be found.
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                    {info.error?.delegateExpression && !info.error.bpmnElementId && (
+                                        <div className="workflow-details-error-field">
+                                            <span className="workflow-details-eyebrow">Source</span>
+                                            Not uniquely identifiable
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

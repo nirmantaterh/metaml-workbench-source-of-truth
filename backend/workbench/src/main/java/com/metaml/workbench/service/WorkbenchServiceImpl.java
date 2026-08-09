@@ -25,6 +25,7 @@ import com.metaml.workbench.codegen.DelegateClassGenerator;
 import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.client.NodeManagerClient;
 import com.metaml.workbench.client.NodeManagerUnavailableException;
+import com.metaml.workbench.generation.DelegateWriteException;
 import com.metaml.workbench.generation.GeneratedProject;
 import com.metaml.workbench.generation.GeneratedProjectLaunchException;
 import com.metaml.workbench.generation.LaunchedProject;
@@ -325,14 +326,24 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             logger.info("Generated Spring Boot project {} for model {}", project.projectId(), modelId);
             return project;
         } catch (RuntimeException e) {
-            // same reasoning as saveProcessModel's catch above: delegate generation and project
-            // assembly are two calls behind one catch, and neither one is scoped to a single BPMN
-            // element or delegate - a failure here can't honestly be attributed to one without
-            // guessing, so delegateExpression/bpmnElementId stay null rather than fabricated
             workflowStateTracker.record(modelId, WorkflowStage.GENERATE, StageStatus.FAILED, e.getMessage(),
-                    new StageError(e.getClass().getSimpleName(), "GENERATE_PROJECT", null, null, null, null, null));
+                    generateErrorFrom(e));
             throw e;
         }
+    }
+
+    // Phase 3C: delegateExpression/bpmnElementId are only ever known when the failure is a
+    // DelegateWriteException - one specific generated delegate's file failing to write is the one
+    // point in the whole generate pipeline actually scoped to a single BPMN element. Everything
+    // else (a missing template directory, BPMN with no process element, ...) is a failure of the
+    // operation as a whole, not attributable to one delegate without guessing, so it stays null -
+    // same reasoning saveProcessModel's catch already uses for MODEL failures.
+    private static StageError generateErrorFrom(RuntimeException e) {
+        if (e instanceof DelegateWriteException dwe) {
+            return new StageError(e.getClass().getSimpleName(), "GENERATE_PROJECT", null, null, null,
+                    "${" + dwe.beanName() + "}", dwe.bpmnElementId());
+        }
+        return new StageError(e.getClass().getSimpleName(), "GENERATE_PROJECT", null, null, null, null, null);
     }
 
     @Override

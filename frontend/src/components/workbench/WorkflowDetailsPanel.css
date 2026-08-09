@@ -113,6 +113,33 @@
     margin-bottom: 2px;
 }
 
+.workflow-details-error-field + .workflow-details-error-field {
+    margin-top: 0.4rem;
+}
+
+/* muted, text-only - matches the existing "View details" affordance rather than introducing a
+   new button style into an otherwise restrained panel */
+.workflow-details-goto-error {
+    margin-top: 0.5rem;
+    border: 1px solid #e3b6ae;
+    background: #fff;
+    color: #8a3226;
+    font-size: 0.72rem;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+.workflow-details-goto-error:hover {
+    background: #fdf1ef;
+}
+
+.workflow-details-notfound {
+    margin-top: 0.35rem;
+    color: #8a3226;
+    font-size: 0.72rem;
+    font-style: italic;
+}
+
 .workflow-details-history-heading {
     margin-top: 0.6rem;
     padding-top: 0.5rem;
