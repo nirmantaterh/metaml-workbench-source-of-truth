@@ -14,12 +14,73 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinProcess;
 
 class WorkbenchStateStoreTest {
 
     @TempDir
     Path tempDir;
+
+    // Phase 1 (tenant identity): a snapshot written before ProcessModel/TwinProcess had a
+    // tenantId field must still restore cleanly - null tenantId, not a read failure.
+    @Test
+    void olderSnapshotsWithoutTenantIdStillRestoreAsUnownedNotAsAnError() throws Exception {
+        Path stateFile = tempDir.resolve("workbench-state.json");
+        Files.writeString(stateFile, """
+                {
+                  "models": [
+                    {
+                      "id": "model-1",
+                      "name": "pre-tenancy model",
+                      "bpmnXml": "<bpmn/>",
+                      "processDefinitionId": "def-1"
+                    }
+                  ],
+                  "twins": [
+                    {
+                      "id": "twin-1",
+                      "modelId": "model-1",
+                      "processDefinitionId": "original-def",
+                      "originalProcessId": "original-instance",
+                      "twinProcessId": "twin-instance",
+                      "status": "RUNNING",
+                      "eventLog": [],
+                      "activityLinks": []
+                    }
+                  ]
+                }
+                """, StandardCharsets.UTF_8);
+
+        WorkbenchStateStore store = new WorkbenchStateStore(stateFile.toString(), true);
+
+        WorkbenchStateStore.Snapshot snapshot = store.load();
+
+        assertThat(snapshot.models()).hasSize(1);
+        assertThat(snapshot.models().get(0).getTenantId()).isNull();
+        assertThat(snapshot.twins()).hasSize(1);
+        assertThat(snapshot.twins().get(0).getTenantId()).isNull();
+    }
+
+    // the same field round-trips for a model/twin that DOES have a tenant, not just null
+    @Test
+    void tenantIdRoundTripsForModelsAndTwinsThatHaveOne() {
+        Path stateFile = tempDir.resolve("workbench-state.json");
+        WorkbenchStateStore store = new WorkbenchStateStore(stateFile.toString(), true);
+
+        ProcessModel model = new ProcessModel("model-1", "tenant's model", "<bpmn/>",
+                java.time.Instant.now(), "def-1", "tenant-abc");
+        TwinProcess twin = new TwinProcess();
+        twin.setId("twin-1");
+        twin.setModelId("model-1");
+        twin.setTenantId("tenant-abc");
+
+        store.save(List.of(model), List.of(twin));
+        WorkbenchStateStore.Snapshot snapshot = store.load();
+
+        assertThat(snapshot.models().get(0).getTenantId()).isEqualTo("tenant-abc");
+        assertThat(snapshot.twins().get(0).getTenantId()).isEqualTo("tenant-abc");
+    }
 
     @Test
     void olderSnapshotsWithoutTwinProcessDefinitionIdStillRestoreTheOriginalDefinition() throws Exception {

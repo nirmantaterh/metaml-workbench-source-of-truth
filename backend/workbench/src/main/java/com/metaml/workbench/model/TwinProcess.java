@@ -27,6 +27,13 @@ public class TwinProcess {
     // feature - it's here so the next project attaching to the workbench has somewhere to put its
     // own name.
     private String projectId = "default";
+    // Phase 1 (tenant identity, see the Phase 0 governance audit): which tenant owns this
+    // twin. Deliberately a new, separate field rather than repurposing projectId above -
+    // projectId already means something else (which ProjectAutomationService bean runs this
+    // twin's activities), and conflating the two would make a twin's automation choice and
+    // its tenant ownership the same knob when they are not. Null for twins launched before
+    // tenancy existed, or for any twin nobody has assigned to a tenant yet.
+    private String tenantId;
     private String status;
     private List<ActivityLink> activityLinks = new CopyOnWriteArrayList<>();
     private Instant launchedAt;

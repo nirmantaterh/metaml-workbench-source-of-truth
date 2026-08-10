@@ -140,6 +140,9 @@ public class WorkbenchStateStore {
         public String bpmnXml;
         public Long createdAtEpochMillis;
         public String processDefinitionId;
+        // absent entirely in any file written before Phase 1 - Jackson leaves this null when
+        // reading one of those, which toModel() below already treats as "unowned/legacy"
+        public String tenantId;
 
         static ProcessModelDto of(ProcessModel model) {
             ProcessModelDto dto = new ProcessModelDto();
@@ -150,13 +153,14 @@ public class WorkbenchStateStore {
                     ? null
                     : model.getCreatedAt().toEpochMilli();
             dto.processDefinitionId = model.getProcessDefinitionId();
+            dto.tenantId = model.getTenantId();
             return dto;
         }
 
         ProcessModel toModel() {
             return new ProcessModel(id, name, bpmnXml,
                     createdAtEpochMillis == null ? null : Instant.ofEpochMilli(createdAtEpochMillis),
-                    processDefinitionId);
+                    processDefinitionId, tenantId);
         }
     }
 
@@ -173,6 +177,9 @@ public class WorkbenchStateStore {
         public String originalProcessId;
         public String twinProcessId;
         public String projectId;
+        // Phase 1 (tenant identity) - absent in any snapshot written before this phase,
+        // which toTwin() below already treats as "unowned/legacy", same as ProcessModelDto
+        public String tenantId;
         public String status;
         public Long launchedAtEpochMillis;
         public List<String> eventLog;
@@ -187,6 +194,7 @@ public class WorkbenchStateStore {
             dto.originalProcessId = twin.getOriginalProcessId();
             dto.twinProcessId = twin.getTwinProcessId();
             dto.projectId = twin.getProjectId();
+            dto.tenantId = twin.getTenantId();
             dto.status = twin.getStatus();
             dto.launchedAtEpochMillis = twin.getLaunchedAt() == null
                     ? null
@@ -219,6 +227,7 @@ public class WorkbenchStateStore {
             if (projectId != null && !projectId.isBlank()) {
                 twin.setProjectId(projectId);
             }
+            twin.setTenantId(tenantId);
             twin.setStatus(status);
             twin.setLaunchedAt(launchedAtEpochMillis == null
                     ? null

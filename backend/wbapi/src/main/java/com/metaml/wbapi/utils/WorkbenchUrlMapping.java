@@ -34,5 +34,17 @@ public class WorkbenchUrlMapping {
     public static final String GOVERNANCE = API + "/governance";
     public static final String GOVERNANCE_POLICY = "/policy";
     public static final String GOVERNANCE_USAGE = "/usage";
+
+    // Phase 1 (tenant identity + persistent tenant-scoped policies) - a separate controller
+    // from the pre-existing deny-list/quota GovernanceController above, mounted under the same
+    // GOVERNANCE base since neither's sub-paths collide with the other's
+    public static final String GOVERNANCE_TENANTS = "/tenants";
+    public static final String GOVERNANCE_PLATFORM_POLICIES = "/platform-policies";
+    public static final String GOVERNANCE_POLICIES = "/policies";
+    public static final String GOVERNANCE_POLICY_VERSIONS = "/policy-versions";
+
+    // Phase 2 (policy decision engine) - decides only, executes nothing. Same GOVERNANCE base
+    // as everything above.
+    public static final String GOVERNANCE_EVALUATE = "/evaluate";
     /* ======== End Governance API ======== */
 }
