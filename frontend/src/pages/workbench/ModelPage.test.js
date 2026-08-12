@@ -121,7 +121,8 @@ describe("ModelPage - save / generate / launch", () => {
 
             await saveTheModel();
 
-            expect(saveModel).toHaveBeenCalledWith({ name: "New Process", bpmnXml: mockModelXml });
+            // tenantId is always sent, "" normalized to null - see handleSave's own comment on why
+            expect(saveModel).toHaveBeenCalledWith({ name: "New Process", bpmnXml: mockModelXml, tenantId: null });
             expect(await screen.findByText(/Saved model "New Process" \(id m-1\)/)).toBeInTheDocument();
         });
 
@@ -180,7 +181,13 @@ describe("ModelPage - save / generate / launch", () => {
             expect(button("Generate")).not.toHaveAttribute("title");
         });
 
-        test("generates delegates and then the project, for the saved model id", async () => {
+        // generateDelegates used to run before generateProject here, but it records no workflow
+        // state - a failure raised there aborted the click before the FAILED stage carrying
+        // bpmnElementId was ever written, which is exactly what kept "Go to error" from appearing
+        // on an element-specific generation failure. generateProject regenerates the delegates
+        // itself anyway (against the right package - see doGenerateSpringBootProject), so the
+        // preview call was only ever duplicating work outside the recorded path. Removed.
+        test("generates the project for the saved model id", async () => {
             renderPage();
             backendWorkflowState = SAVED;
             await saveTheModel();
@@ -189,7 +196,7 @@ describe("ModelPage - save / generate / launch", () => {
             userEvent.click(button("Generate"));
 
             await waitFor(() => expect(generateProject).toHaveBeenCalledWith({ modelId: "m-1" }));
-            expect(generateDelegates).toHaveBeenCalledWith({ modelId: "m-1" });
+            expect(generateDelegates).not.toHaveBeenCalled();
             expect(await screen.findByText(/Generated Spring Boot project/)).toBeInTheDocument();
         });
     });
