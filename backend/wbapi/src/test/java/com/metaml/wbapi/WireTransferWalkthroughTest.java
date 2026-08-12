@@ -10,12 +10,21 @@ import org.camunda.bpm.engine.task.Task;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.metaml.workbench.bpmn.TwinModelGenerator;
 import com.metaml.workbench.client.AgentAvailabilityResult;
 import com.metaml.workbench.client.NodeManagerClient;
+import com.metaml.workbench.governance.Approval;
+import com.metaml.workbench.governance.ApprovalService;
+import com.metaml.workbench.governance.ApprovalStatus;
+import com.metaml.workbench.governance.Policy;
+import com.metaml.workbench.governance.PolicyDecisionEngine;
+import com.metaml.workbench.governance.PolicyEffect;
+import com.metaml.workbench.governance.PolicyVersion;
+import com.metaml.workbench.governance.Tenant;
+import com.metaml.workbench.governance.TenantPolicyService;
 import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinProcess;
@@ -50,12 +59,9 @@ import static org.mockito.BDDMockito.given;
 
 // full walkthrough against a real embedded engine - only the node manager is stubbed
 // mem db, not the file one the app uses - same url as WbapiApplicationTests so they share a context
-@SpringBootTest(properties = {
-        "spring.datasource.url=jdbc:h2:mem:metaml-test;DB_CLOSE_DELAY=-1",
-        "workbench.state.persist=false",
-        "workbench.models.directory=./target/test-data/models",
-        "workbench.generation.template-directory=../../templates/camundademo",
-        "workbench.generation.output-directory=./target/test-data/generated-projects"
+@IsolatedWorkbenchTest
+@TestPropertySource(properties = {
+        "spring.datasource.url=jdbc:h2:mem:metaml-test;DB_CLOSE_DELAY=-1"
 })
 class WireTransferWalkthroughTest {
 
@@ -83,6 +89,12 @@ class WireTransferWalkthroughTest {
     private WorkbenchService workbenchService;
     @Autowired
     private GovernanceService governanceService;
+    @Autowired
+    private PolicyDecisionEngine policyDecisionEngine;
+    @Autowired
+    private TenantPolicyService tenantPolicyService;
+    @Autowired
+    private ApprovalService approvalService;
     @Autowired
     private RuntimeService runtimeService;
     @Autowired
@@ -303,7 +315,7 @@ class WireTransferWalkthroughTest {
                 new com.metaml.workbench.workflow.WorkflowEventStore(
                         tempDir.resolve("workflow-events.json").toString(), true);
 
-        WorkbenchServiceImpl beforeRestart = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
+        WorkbenchServiceImpl beforeRestart = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
                 modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
@@ -325,7 +337,7 @@ class WireTransferWalkthroughTest {
                 new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore);
         invokePostConstructOn(restartedTracker, "restore");
 
-        WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
+        WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
                 modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 restartedTracker);
@@ -346,6 +358,129 @@ class WireTransferWalkthroughTest {
         // MODEL/COMPLETED, GENERATE/IN_PROGRESS, GENERATE/COMPLETED, LAUNCH/IN_PROGRESS,
         // LAUNCH/COMPLETED, LAUNCH/STOPPED
         assertThat(state.history()).hasSize(7);
+    }
+
+    // Generated-project persistence: proves the actual capability, not just that a map got
+    // repopulated. generateSpringBootProject + launchGeneratedProject through ONE service
+    // instance, then a second instance built the same way the restart test above builds one
+    // (fresh in-memory maps, real WorkbenchStateStore/WorkflowEventStore backed by the same temp
+    // files) - but reusing the real, Spring-injected springBootProjectGenerator/
+    // springBootProjectLauncher beans, since those two already point at the real, shared
+    // output/template directories a genuine restart would leave untouched (they hold no
+    // in-memory generated-project state of their own - see SpringBootProjectGenerator.scanExisting()).
+    // The actual proof is launchGeneratedProject succeeding for real against the SAME projectId
+    // through the restarted instance, not merely that generatedProjects.containsKey() would say yes.
+    @Test
+    void aGeneratedProjectSurvivesARealBackendRestartAndCanActuallyBeLaunchedAgain(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) throws Exception {
+        com.metaml.workbench.store.WorkbenchStateStore realStateStore = new com.metaml.workbench.store.WorkbenchStateStore(
+                tempDir.resolve("workbench-state.json").toString(), true);
+        com.metaml.workbench.workflow.WorkflowEventStore realEventStore =
+                new com.metaml.workbench.workflow.WorkflowEventStore(
+                        tempDir.resolve("workflow-events.json").toString(), true);
+
+        WorkbenchServiceImpl beforeRestart = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
+                runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
+                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
+        ProcessModel model = beforeRestart.saveProcessModel(null, "generated project restart test", loanApprovalBpmn());
+        com.metaml.workbench.generation.GeneratedProject project =
+                beforeRestart.generateSpringBootProject(model.getId());
+
+        // the physical artifact restoreGeneratedProjects() is supposed to find again
+        assertThat(project.directory().resolve("src/main/resources/processes/loanApproval.bpmn")).exists();
+
+        com.metaml.workbench.workflow.WorkflowStateTracker restartedTracker =
+                new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore);
+        invokePostConstructOn(restartedTracker, "restore");
+
+        WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
+                runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
+                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                restartedTracker);
+        invokePostConstruct(restartedService, "restoreState");
+
+        // Test 1: the registry itself resolves the same id to the same physical project, through
+        // an instance that never called generateSpringBootProject
+        assertThat(restartedService.getWorkflowState(model.getId())
+                .stages().get(com.metaml.workbench.workflow.WorkflowStage.GENERATE).detail())
+                .isEqualTo(project.projectId());
+
+        // Test 2: the actual capability - launchGeneratedProject against the SAME projectId,
+        // through the RESTARTED instance, genuinely starts the SAME generated application
+        try {
+            com.metaml.workbench.generation.LaunchedProject launched =
+                    restartedService.launchGeneratedProject(project.projectId());
+
+            assertThat(launched.projectId()).isEqualTo(project.projectId());
+            assertThat(launched.processKey()).isEqualTo(project.processKey());
+            assertThat(launched.port()).isPositive();
+            // modelIdByProjectId reconstruction, not just generatedProjects - the breadcrumb this
+            // launch records has to land on the SAME model the original generate() came from
+            assertThat(launched.modelId()).isEqualTo(model.getId());
+
+            com.metaml.workbench.workflow.WorkflowState state = restartedService.getWorkflowState(model.getId());
+            assertThat(state.stages().get(com.metaml.workbench.workflow.WorkflowStage.LAUNCH).status())
+                    .isEqualTo(com.metaml.workbench.workflow.StageStatus.COMPLETED);
+        } finally {
+            restartedService.stopGeneratedProject(project.projectId());
+        }
+    }
+
+    // Missing artifact (Test 4): a project directory the registry would otherwise have resolved
+    // is gone entirely - proves the restarted registry does not silently fall back to some other
+    // project for the same id, it just doesn't have it, the same clear failure as an id that was
+    // never real.
+    @Test
+    void aGeneratedProjectWhoseDirectoryIsGoneIsNotRecoveredAfterRestart(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) throws Exception {
+        com.metaml.workbench.store.WorkbenchStateStore realStateStore = new com.metaml.workbench.store.WorkbenchStateStore(
+                tempDir.resolve("workbench-state.json").toString(), true);
+        com.metaml.workbench.workflow.WorkflowEventStore realEventStore =
+                new com.metaml.workbench.workflow.WorkflowEventStore(
+                        tempDir.resolve("workflow-events.json").toString(), true);
+
+        WorkbenchServiceImpl beforeRestart = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
+                runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
+                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
+        ProcessModel model = beforeRestart.saveProcessModel(null, "missing artifact test", loanApprovalBpmn());
+        com.metaml.workbench.generation.GeneratedProject project =
+                beforeRestart.generateSpringBootProject(model.getId());
+
+        // simulates the directory having been cleaned up (disk cleanup, manual deletion, ...)
+        // between the original generate and the restart - not simulated by mocking, the actual
+        // directory recursively removed
+        deleteRecursively(project.directory());
+
+        com.metaml.workbench.workflow.WorkflowStateTracker restartedTracker =
+                new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore);
+        invokePostConstructOn(restartedTracker, "restore");
+
+        WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
+                runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
+                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                restartedTracker);
+        invokePostConstruct(restartedService, "restoreState");
+
+        assertThatThrownBy(() -> restartedService.launchGeneratedProject(project.projectId()))
+                .isInstanceOf(java.util.NoSuchElementException.class)
+                .hasMessageContaining(project.projectId());
+    }
+
+    private static void deleteRecursively(java.nio.file.Path root) throws IOException {
+        if (!Files.exists(root)) {
+            return;
+        }
+        try (java.util.stream.Stream<java.nio.file.Path> walk = Files.walk(root)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.delete(p);
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
+        }
     }
 
     // The backfill mechanism's real remaining job now that real persistence exists: a model whose
@@ -373,7 +508,7 @@ class WireTransferWalkthroughTest {
                 new com.metaml.workbench.workflow.WorkflowStateTracker(emptyEventStore);
         invokePostConstructOn(restartedTracker, "restore");
 
-        WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
+        WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
                 modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 restartedTracker);
@@ -412,9 +547,9 @@ class WireTransferWalkthroughTest {
         var brokenGenerator = new com.metaml.workbench.generation.SpringBootProjectGenerator(
                 "./no-such-template-directory-anywhere", "target/test-data/generated-projects");
         WorkbenchServiceImpl serviceWithBrokenTemplate = new WorkbenchServiceImpl(nodeManagerClient,
-                governanceService, runtimeService, repositoryService, historyService, taskService,
-                twinModelGenerator, stateStore, modelFileStore, delegateClassGenerator, brokenGenerator,
-                springBootProjectLauncher, workflowStateTracker);
+                governanceService, policyDecisionEngine, approvalService, runtimeService, repositoryService,
+                historyService, taskService, twinModelGenerator, stateStore, modelFileStore, delegateClassGenerator,
+                brokenGenerator, springBootProjectLauncher, workflowStateTracker);
 
         ProcessModel model = serviceWithBrokenTemplate.saveProcessModel(null, "failure test", loanApprovalBpmn());
 
@@ -529,6 +664,457 @@ class WireTransferWalkthroughTest {
         assertThat(governanceService.getUsage(twin.getId()).getEvolutionCount()).isEqualTo(7);
 
         assertThat(workbenchService.completeCurrentTasks(twin.getId())).isEmpty();
+    }
+
+    // Tenant ownership (Phase 0 governance audit, tenant-ownership phase): a model saved with a
+    // tenantId is the owned resource. A twin launched from it never picks its own tenant, it just
+    // inherits the model's - proven here through the real save -> launch path, not by setting the
+    // field directly.
+    @Test
+    void savingAModelWithATenantIdCarriesItThroughToTheLaunchedTwin() throws IOException {
+        ProcessModel model = workbenchService.saveProcessModel(null, "citi wire transfer owned",
+                citibankBpmn(), "tenant-citibank");
+        assertThat(model.getTenantId()).isEqualTo("tenant-citibank");
+
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+
+        assertThat(twin.getTenantId()).isEqualTo("tenant-citibank");
+        // this is the same twin object runEvolution() itself receives - proves the tenant is
+        // actually obtainable at the real Evolve entry point, not just on the model
+        assertThat(workbenchService.getTwinProcess(twin.getId()).getTenantId()).isEqualTo("tenant-citibank");
+    }
+
+    // the existing 3-arg saveProcessModel (every pre-tenancy caller, including every other test in
+    // this file) must keep producing exactly what it always did - an unowned twin, not an invented
+    // "default" tenant standing in for a real one
+    @Test
+    void legacyModelsWithNoTenantIdProduceUnownedTwinsNotAnInventedDefault() throws IOException {
+        ProcessModel model = workbenchService.saveProcessModel(null, "citi wire transfer legacy",
+                citibankBpmn());
+        assertThat(model.getTenantId()).isNull();
+
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+
+        assertThat(twin.getTenantId()).isNull();
+    }
+
+    // same real-restart convention as workflowHistorySurvivesARealBackendRestartForEveryStageNotJustModel
+    // just below - a fresh WorkbenchServiceImpl, same files on disk, restore() driven by hand the
+    // way Spring would drive it on a real process restart
+    @Test
+    void tenantOwnershipSurvivesARealBackendRestart(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir)
+            throws Exception {
+        com.metaml.workbench.store.WorkbenchStateStore realStateStore = new com.metaml.workbench.store.WorkbenchStateStore(
+                tempDir.resolve("workbench-state.json").toString(), true);
+        com.metaml.workbench.workflow.WorkflowEventStore realEventStore =
+                new com.metaml.workbench.workflow.WorkflowEventStore(
+                        tempDir.resolve("workflow-events.json").toString(), true);
+
+        WorkbenchServiceImpl beforeRestart = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
+                runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
+                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
+        ProcessModel model = beforeRestart.saveProcessModel(null, "tenant restart test", citibankBpmn(),
+                "tenant-redcollar");
+        TwinProcess twin = beforeRestart.launchProcess(model.getId());
+        assertThat(twin.getTenantId()).isEqualTo("tenant-redcollar");
+
+        com.metaml.workbench.workflow.WorkflowStateTracker restartedTracker =
+                new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore);
+        invokePostConstructOn(restartedTracker, "restore");
+
+        WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
+                runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
+                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                restartedTracker);
+        invokePostConstruct(restartedService, "restoreState");
+
+        assertThat(restartedService.getProcessModel(model.getId()).getTenantId()).isEqualTo("tenant-redcollar");
+        assertThat(restartedService.getTwinProcess(twin.getId()).getTenantId()).isEqualTo("tenant-redcollar");
+    }
+
+    // Phase 4 Step 11 Case A: a PENDING approval has to survive the same real restart everything
+    // else here does. Tenant/policy state comes from the shared autowired beans (that continuity
+    // is Phase 1's own concern, already proven) - only WorkbenchStateStore and ApprovalStore are
+    // freshly file-backed and genuinely restarted, because those are what this test is actually
+    // about.
+    @Test
+    void pendingApprovalSurvivesARealBackendRestart(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir)
+            throws Exception {
+        Tenant tenant = tenantWithEvolveTwinRule("Restart Approval Tenant", PolicyEffect.REQUIRE_APPROVAL);
+
+        com.metaml.workbench.store.WorkbenchStateStore realStateStore = new com.metaml.workbench.store.WorkbenchStateStore(
+                tempDir.resolve("workbench-state.json").toString(), true);
+        com.metaml.workbench.workflow.WorkflowEventStore realEventStore =
+                new com.metaml.workbench.workflow.WorkflowEventStore(
+                        tempDir.resolve("workflow-events.json").toString(), true);
+        com.metaml.workbench.governance.ApprovalStore realApprovalStore =
+                new com.metaml.workbench.governance.ApprovalStore(tempDir.resolve("approvals.json").toString(), true);
+        ApprovalService realApprovalService = new ApprovalService(realApprovalStore);
+
+        WorkbenchServiceImpl beforeRestart = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
+                policyDecisionEngine, realApprovalService, runtimeService, repositoryService, historyService,
+                taskService, twinModelGenerator, realStateStore, modelFileStore, delegateClassGenerator,
+                springBootProjectGenerator, springBootProjectLauncher,
+                new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
+        ProcessModel model = beforeRestart.saveProcessModel(null, "restart approval test", citibankBpmn(),
+                tenant.id());
+        TwinProcess twin = beforeRestart.launchProcess(model.getId());
+        beforeRestart.connectActivity(twin.getId(), KYC, KYC);
+        beforeRestart.evolveActivity(twin.getId(), KYC, "validator");
+        String approvalId = beforeRestart.listApprovals(tenant.id()).get(0).id();
+
+        com.metaml.workbench.workflow.WorkflowStateTracker restartedTracker =
+                new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore);
+        invokePostConstructOn(restartedTracker, "restore");
+        ApprovalService restartedApprovalService = new ApprovalService(realApprovalStore);
+        invokePostConstructOn(restartedApprovalService, "restore");
+
+        WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
+                policyDecisionEngine, restartedApprovalService, runtimeService, repositoryService, historyService,
+                taskService, twinModelGenerator, realStateStore, modelFileStore, delegateClassGenerator,
+                springBootProjectGenerator, springBootProjectLauncher, restartedTracker);
+        invokePostConstruct(restartedService, "restoreState");
+
+        List<Approval> restored = restartedService.listApprovals(tenant.id());
+        assertThat(restored).hasSize(1);
+        assertThat(restored.get(0).id()).isEqualTo(approvalId);
+        assertThat(restored.get(0).status()).isEqualTo(ApprovalStatus.PENDING);
+        assertThat(restored.get(0).twinId()).isEqualTo(twin.getId());
+    }
+
+    // Phase 5, Case A: JVM died between markApproved and executeAfterGovernance ever running -
+    // the operation genuinely never happened. Reconciliation on restart must run it for real, not
+    // pretend it already occurred.
+    @Test
+    void anApprovalThatNeverExecutedIsSafelyRunOnRestartReconciliation(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) throws Exception {
+        Tenant tenant = tenantWithEvolveTwinRule("Reconcile Not-Run Tenant", PolicyEffect.REQUIRE_APPROVAL);
+
+        com.metaml.workbench.store.WorkbenchStateStore realStateStore = new com.metaml.workbench.store.WorkbenchStateStore(
+                tempDir.resolve("workbench-state.json").toString(), true);
+        com.metaml.workbench.workflow.WorkflowEventStore realEventStore =
+                new com.metaml.workbench.workflow.WorkflowEventStore(
+                        tempDir.resolve("workflow-events.json").toString(), true);
+        com.metaml.workbench.governance.ApprovalStore realApprovalStore =
+                new com.metaml.workbench.governance.ApprovalStore(tempDir.resolve("approvals.json").toString(), true);
+        ApprovalService realApprovalService = new ApprovalService(realApprovalStore);
+
+        WorkbenchServiceImpl beforeCrash = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
+                policyDecisionEngine, realApprovalService, runtimeService, repositoryService, historyService,
+                taskService, twinModelGenerator, realStateStore, modelFileStore, delegateClassGenerator,
+                springBootProjectGenerator, springBootProjectLauncher,
+                new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
+        ProcessModel model = beforeCrash.saveProcessModel(null, "reconcile not-run test", citibankBpmn(),
+                tenant.id());
+        TwinProcess twin = beforeCrash.launchProcess(model.getId());
+        beforeCrash.connectActivity(twin.getId(), KYC, KYC);
+        beforeCrash.evolveActivity(twin.getId(), KYC, "validator");
+        String approvalId = beforeCrash.listApprovals(tenant.id()).get(0).id();
+
+        // simulates the exact crash window: approve() reached "mark APPROVED" and nothing past
+        // it - executeAfterGovernance never ran, no node manager call, no variable ever set.
+        // Calling ApprovalService directly (not WorkbenchServiceImpl.approveEvolution) is what
+        // makes that true.
+        realApprovalService.markApproved(approvalId, tenant.id());
+        assertThat(evolvedAgent(twin, KYC)).isNull();
+
+        com.metaml.workbench.workflow.WorkflowStateTracker restartedTracker =
+                new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore);
+        invokePostConstructOn(restartedTracker, "restore");
+        ApprovalService restartedApprovalService = new ApprovalService(realApprovalStore);
+        invokePostConstructOn(restartedApprovalService, "restore");
+        WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
+                policyDecisionEngine, restartedApprovalService, runtimeService, repositoryService, historyService,
+                taskService, twinModelGenerator, realStateStore, modelFileStore, delegateClassGenerator,
+                springBootProjectGenerator, springBootProjectLauncher, restartedTracker);
+        invokePostConstruct(restartedService, "restoreState");
+
+        Approval reconciled = restartedApprovalService.get(approvalId, tenant.id());
+        assertThat(reconciled.status()).isEqualTo(ApprovalStatus.COMPLETED);
+        assertThat(evolvedAgent(twin, KYC)).isEqualTo("validator-agent-01");
+        org.mockito.Mockito.verify(nodeManagerClient, org.mockito.Mockito.times(1)).checkAgentAvailability("validator");
+    }
+
+    // Phase 5, Case B: JVM died AFTER the real side effect landed but BEFORE COMPLETED was
+    // persisted. Reconciliation must recognize it already happened - via Camunda's own committed
+    // variable history, not the approval's own (crashed, stale) status - and must NOT run it
+    // again. Node-manager call count is the proof: exactly one call total, from the original real
+    // approve(), none from reconciliation.
+    @Test
+    void anApprovalThatAlreadyExecutedIsRecognizedNotReRunOnRestartReconciliation(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) throws Exception {
+        Tenant tenant = tenantWithEvolveTwinRule("Reconcile Already-Run Tenant", PolicyEffect.REQUIRE_APPROVAL);
+
+        com.metaml.workbench.store.WorkbenchStateStore realStateStore = new com.metaml.workbench.store.WorkbenchStateStore(
+                tempDir.resolve("workbench-state.json").toString(), true);
+        com.metaml.workbench.workflow.WorkflowEventStore realEventStore =
+                new com.metaml.workbench.workflow.WorkflowEventStore(
+                        tempDir.resolve("workflow-events.json").toString(), true);
+        com.metaml.workbench.governance.ApprovalStore realApprovalStore =
+                new com.metaml.workbench.governance.ApprovalStore(tempDir.resolve("approvals.json").toString(), true);
+        ApprovalService realApprovalService = new ApprovalService(realApprovalStore);
+
+        WorkbenchServiceImpl beforeCrash = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
+                policyDecisionEngine, realApprovalService, runtimeService, repositoryService, historyService,
+                taskService, twinModelGenerator, realStateStore, modelFileStore, delegateClassGenerator,
+                springBootProjectGenerator, springBootProjectLauncher,
+                new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
+        ProcessModel model = beforeCrash.saveProcessModel(null, "reconcile already-run test", citibankBpmn(),
+                tenant.id());
+        TwinProcess twin = beforeCrash.launchProcess(model.getId());
+        beforeCrash.connectActivity(twin.getId(), KYC, KYC);
+        beforeCrash.evolveActivity(twin.getId(), KYC, "validator");
+        String approvalId = beforeCrash.listApprovals(tenant.id()).get(0).id();
+
+        // the real operation genuinely runs here - setVariable really happens, exactly like
+        // production. This is not a simulation of execution, only of what gets persisted after.
+        AgentDecision realDecision = beforeCrash.approveEvolution(approvalId, tenant.id());
+        assertThat(realDecision.isApproved()).isTrue();
+        assertThat(evolvedAgent(twin, KYC)).isEqualTo("validator-agent-01");
+
+        // NOW simulate the crash: force the persisted record back to APPROVED, as if the
+        // markCompleted() write never landed - the one write that COULD plausibly not survive a
+        // crash occurring in that exact instant, since the real side effect (setVariable) already
+        // committed to Camunda's own store by this point, independently of this file.
+        Approval completed = realApprovalService.get(approvalId, tenant.id());
+        Approval revertedToApproved = completed.withStatus(ApprovalStatus.APPROVED, completed.resolvedAt(), null);
+        realApprovalStore.save(List.of(revertedToApproved));
+
+        com.metaml.workbench.workflow.WorkflowStateTracker restartedTracker =
+                new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore);
+        invokePostConstructOn(restartedTracker, "restore");
+        ApprovalService restartedApprovalService = new ApprovalService(realApprovalStore);
+        invokePostConstructOn(restartedApprovalService, "restore");
+        assertThat(restartedApprovalService.get(approvalId, tenant.id()).status())
+                .isEqualTo(ApprovalStatus.APPROVED); // confirms the simulated crash state really took
+
+        WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
+                policyDecisionEngine, restartedApprovalService, runtimeService, repositoryService, historyService,
+                taskService, twinModelGenerator, realStateStore, modelFileStore, delegateClassGenerator,
+                springBootProjectGenerator, springBootProjectLauncher, restartedTracker);
+        invokePostConstruct(restartedService, "restoreState");
+
+        Approval reconciled = restartedApprovalService.get(approvalId, tenant.id());
+        assertThat(reconciled.status()).isEqualTo(ApprovalStatus.COMPLETED);
+        // the real proof: still exactly one call, from the original approveEvolution() above -
+        // reconciliation recognized the variable was already set and did not call it again
+        org.mockito.Mockito.verify(nodeManagerClient, org.mockito.Mockito.times(1)).checkAgentAvailability("validator");
+    }
+
+    // Phase 3B (real governance enforcement): a small helper so the four tests below don't each
+    // repeat tenant/policy/version/rule/activate by hand. Returns the real Tenant, not just its
+    // id, since a couple of callers want the name too.
+    private Tenant tenantWithEvolveTwinRule(String tenantName, PolicyEffect effect) {
+        Tenant tenant = tenantPolicyService.createTenant(tenantName);
+        Policy policy = tenantPolicyService.createTenantPolicy(tenant.id(), "Evolve Policy");
+        PolicyVersion draft = tenantPolicyService.createDraftVersion(policy.id(), tenant.id());
+        tenantPolicyService.addRule(draft.id(), tenant.id(), "action", "==", "EVOLVE_TWIN", effect);
+        tenantPolicyService.activateVersion(draft.id(), tenant.id());
+        return tenant;
+    }
+
+    // Section 5's acceptance criterion: DENY must actually stop the real side effect, not just
+    // come back with a denied-looking response. evolvedAgent_<activityId> is that side effect
+    // (see runEvolution's own comment) - proven absent, not just the JSON checked.
+    @Test
+    void tenantPolicyDenyActuallyBlocksTheRealEvolveSideEffect() throws IOException {
+        Tenant tenant = tenantWithEvolveTwinRule("Deny Tenant", PolicyEffect.DENY);
+        ProcessModel model = workbenchService.saveProcessModel(null, "deny enforcement test", citibankBpmn(),
+                tenant.id());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        workbenchService.connectActivity(twin.getId(), KYC, KYC);
+
+        AgentDecision decision = workbenchService.evolveActivity(twin.getId(), KYC, "validator");
+
+        assertThat(decision.isApproved()).isFalse();
+        assertThat(decision.getGovernanceDecision()).isEqualTo("DENY");
+        // stopped before the node manager, not just before the variable write
+        org.mockito.Mockito.verify(nodeManagerClient, org.mockito.Mockito.never()).checkAgentAvailability(anyString());
+        assertThat(evolvedAgent(twin, KYC)).isNull();
+    }
+
+    // Section 6: ALLOW must not merely say yes, the existing Evolve behavior has to actually run -
+    // same real path, same real side effect, nothing test-only about how it gets there.
+    @Test
+    void tenantPolicyAllowLetsTheRealEvolveSideEffectHappen() throws IOException {
+        Tenant tenant = tenantWithEvolveTwinRule("Allow Tenant", PolicyEffect.ALLOW);
+        ProcessModel model = workbenchService.saveProcessModel(null, "allow enforcement test", citibankBpmn(),
+                tenant.id());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        workbenchService.connectActivity(twin.getId(), KYC, KYC);
+
+        AgentDecision decision = workbenchService.evolveActivity(twin.getId(), KYC, "validator");
+
+        assertThat(decision.isApproved()).isTrue();
+        assertThat(decision.getGovernanceDecision()).isNull();
+        assertThat(evolvedAgent(twin, KYC)).isEqualTo("validator-agent-01");
+    }
+
+    // Section 7: the difference has to come entirely from which tenant owns the twin - no
+    // tenant-name conditional anywhere in the production code, same engine, same rule shape,
+    // opposite persisted effect
+    @Test
+    void tenantADenyDoesNotAffectTenantBAllow() throws IOException {
+        Tenant tenantA = tenantWithEvolveTwinRule("Tenant A", PolicyEffect.DENY);
+        Tenant tenantB = tenantWithEvolveTwinRule("Tenant B", PolicyEffect.ALLOW);
+
+        ProcessModel modelA = workbenchService.saveProcessModel(null, "isolation test A", citibankBpmn(),
+                tenantA.id());
+        TwinProcess twinA = workbenchService.launchProcess(modelA.getId());
+        workbenchService.connectActivity(twinA.getId(), KYC, KYC);
+
+        ProcessModel modelB = workbenchService.saveProcessModel(null, "isolation test B", citibankBpmn(),
+                tenantB.id());
+        TwinProcess twinB = workbenchService.launchProcess(modelB.getId());
+        workbenchService.connectActivity(twinB.getId(), KYC, KYC);
+
+        AgentDecision decisionA = workbenchService.evolveActivity(twinA.getId(), KYC, "validator");
+        AgentDecision decisionB = workbenchService.evolveActivity(twinB.getId(), KYC, "validator");
+
+        assertThat(decisionA.isApproved()).isFalse();
+        assertThat(evolvedAgent(twinA, KYC)).isNull();
+        assertThat(decisionB.isApproved()).isTrue();
+        assertThat(evolvedAgent(twinB, KYC)).isEqualTo("validator-agent-01");
+    }
+
+    // Section 8/Step 3: REQUIRE_APPROVAL is not implemented yet, but it must never quietly become
+    // ALLOW - the action must not execute, and the result must say why in a way DENY doesn't
+    @Test
+    void requireApprovalDoesNotExecuteAndIsNotTheSameAsDeny() throws IOException {
+        Tenant tenant = tenantWithEvolveTwinRule("Approval Tenant", PolicyEffect.REQUIRE_APPROVAL);
+        ProcessModel model = workbenchService.saveProcessModel(null, "approval enforcement test", citibankBpmn(),
+                tenant.id());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        workbenchService.connectActivity(twin.getId(), KYC, KYC);
+
+        AgentDecision decision = workbenchService.evolveActivity(twin.getId(), KYC, "validator");
+
+        assertThat(decision.isApproved()).isFalse();
+        assertThat(decision.getGovernanceDecision()).isEqualTo("REQUIRE_APPROVAL");
+        assertThat(evolvedAgent(twin, KYC)).isNull();
+
+        // Phase 4: a real, persistent PENDING approval, not just a refused response
+        List<Approval> pending = approvalService.listForTenant(tenant.id());
+        assertThat(pending).hasSize(1);
+        assertThat(pending.get(0).status()).isEqualTo(ApprovalStatus.PENDING);
+        assertThat(pending.get(0).twinId()).isEqualTo(twin.getId());
+        assertThat(pending.get(0).activityId()).isEqualTo(KYC);
+    }
+
+    // Phase 4: approving is not "run the evolve request again from scratch" - it resumes the
+    // exact paused operation and the real side effect actually happens, same as an ALLOW would
+    @Test
+    void approvingAnApprovalActuallyExecutesTheOriginalOperation() throws IOException {
+        Tenant tenant = tenantWithEvolveTwinRule("Approve Tenant", PolicyEffect.REQUIRE_APPROVAL);
+        ProcessModel model = workbenchService.saveProcessModel(null, "approve execution test", citibankBpmn(),
+                tenant.id());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        workbenchService.connectActivity(twin.getId(), KYC, KYC);
+        workbenchService.evolveActivity(twin.getId(), KYC, "validator");
+        String approvalId = approvalService.listForTenant(tenant.id()).get(0).id();
+
+        AgentDecision decision = workbenchService.approveEvolution(approvalId, tenant.id());
+
+        assertThat(decision.isApproved()).isTrue();
+        assertThat(evolvedAgent(twin, KYC)).isEqualTo("validator-agent-01");
+        assertThat(approvalService.get(approvalId, tenant.id()).status()).isEqualTo(ApprovalStatus.COMPLETED);
+    }
+
+    // Phase 4/Section 10: rejection is permanent and the action must never run
+    @Test
+    void rejectingAnApprovalPermanentlyStopsIt() throws IOException {
+        Tenant tenant = tenantWithEvolveTwinRule("Reject Tenant", PolicyEffect.REQUIRE_APPROVAL);
+        ProcessModel model = workbenchService.saveProcessModel(null, "reject test", citibankBpmn(), tenant.id());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        workbenchService.connectActivity(twin.getId(), KYC, KYC);
+        workbenchService.evolveActivity(twin.getId(), KYC, "validator");
+        String approvalId = approvalService.listForTenant(tenant.id()).get(0).id();
+
+        AgentDecision decision = workbenchService.rejectApproval(approvalId, tenant.id());
+
+        assertThat(decision.isApproved()).isFalse();
+        assertThat(approvalService.get(approvalId, tenant.id()).status()).isEqualTo(ApprovalStatus.REJECTED);
+        assertThat(evolvedAgent(twin, KYC)).isNull();
+
+        // rejected is terminal - approving it afterward must not be possible
+        assertThatThrownBy(() -> workbenchService.approveEvolution(approvalId, tenant.id()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(evolvedAgent(twin, KYC)).isNull();
+    }
+
+    // Phase 4 Step 6/7's real acceptance criterion: the second approve() call must not be able
+    // to run the operation a second time. Node-manager call count is the actual proof - if
+    // executeAfterGovernance ran twice, it would have been contacted twice.
+    @Test
+    void approvingTheSameApprovalTwiceCannotExecuteTwice() throws IOException {
+        Tenant tenant = tenantWithEvolveTwinRule("Double Approve Tenant", PolicyEffect.REQUIRE_APPROVAL);
+        ProcessModel model = workbenchService.saveProcessModel(null, "double approve test", citibankBpmn(),
+                tenant.id());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        workbenchService.connectActivity(twin.getId(), KYC, KYC);
+        workbenchService.evolveActivity(twin.getId(), KYC, "validator");
+        String approvalId = approvalService.listForTenant(tenant.id()).get(0).id();
+
+        AgentDecision first = workbenchService.approveEvolution(approvalId, tenant.id());
+        assertThat(first.isApproved()).isTrue();
+
+        assertThatThrownBy(() -> workbenchService.approveEvolution(approvalId, tenant.id()))
+                .isInstanceOf(IllegalStateException.class);
+
+        org.mockito.Mockito.verify(nodeManagerClient, org.mockito.Mockito.times(1)).checkAgentAvailability("validator");
+    }
+
+    // Phase 4 Step 12: an approval is tenant-owned exactly like a policy is - same "not found"
+    // message whether it doesn't exist or belongs to someone else
+    @Test
+    void tenantBCannotResolveTenantAsApproval() throws IOException {
+        Tenant tenantA = tenantWithEvolveTwinRule("Isolation Tenant A", PolicyEffect.REQUIRE_APPROVAL);
+        Tenant tenantB = tenantPolicyService.createTenant("Isolation Tenant B");
+        ProcessModel model = workbenchService.saveProcessModel(null, "approval isolation test", citibankBpmn(),
+                tenantA.id());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        workbenchService.connectActivity(twin.getId(), KYC, KYC);
+        workbenchService.evolveActivity(twin.getId(), KYC, "validator");
+        String approvalId = approvalService.listForTenant(tenantA.id()).get(0).id();
+
+        assertThatThrownBy(() -> workbenchService.approveEvolution(approvalId, tenantB.id()))
+                .isInstanceOf(java.util.NoSuchElementException.class);
+        assertThatThrownBy(() -> workbenchService.rejectApproval(approvalId, tenantB.id()))
+                .isInstanceOf(java.util.NoSuchElementException.class);
+        assertThat(approvalService.listForTenant(tenantB.id())).isEmpty();
+        // still genuinely pending - tenant B's failed attempts didn't touch it
+        assertThat(approvalService.get(approvalId, tenantA.id()).status()).isEqualTo(ApprovalStatus.PENDING);
+    }
+
+    // Phase 4 Step 4: activating a new policy version after an approval was created must not
+    // retroactively change what that approval means - it executes under the decision that was
+    // actually pinned when the human was asked, not whatever the tenant's policy says now
+    @Test
+    void approvalExecutesUnderItsOriginalPolicyVersionNotALaterOne() throws IOException {
+        Tenant tenant = tenantPolicyService.createTenant("Version Pin Tenant");
+        Policy policy = tenantPolicyService.createTenantPolicy(tenant.id(), "Evolve Policy");
+        PolicyVersion v1 = tenantPolicyService.createDraftVersion(policy.id(), tenant.id());
+        tenantPolicyService.addRule(v1.id(), tenant.id(), "action", "==", "EVOLVE_TWIN", PolicyEffect.REQUIRE_APPROVAL);
+        tenantPolicyService.activateVersion(v1.id(), tenant.id());
+
+        ProcessModel model = workbenchService.saveProcessModel(null, "version pin test", citibankBpmn(),
+                tenant.id());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        workbenchService.connectActivity(twin.getId(), KYC, KYC);
+        workbenchService.evolveActivity(twin.getId(), KYC, "validator");
+        String approvalId = approvalService.listForTenant(tenant.id()).get(0).id();
+        assertThat(approvalService.get(approvalId, tenant.id()).policyVersionNumber()).isEqualTo(1);
+
+        // now the tenant activates a stricter version - a fresh request would be denied
+        PolicyVersion v2 = tenantPolicyService.createDraftVersion(policy.id(), tenant.id());
+        tenantPolicyService.addRule(v2.id(), tenant.id(), "action", "==", "EVOLVE_TWIN", PolicyEffect.DENY);
+        tenantPolicyService.activateVersion(v2.id(), tenant.id());
+
+        // the OLD approval still executes - it was never asked about v2
+        AgentDecision decision = workbenchService.approveEvolution(approvalId, tenant.id());
+        assertThat(decision.isApproved()).isTrue();
+        assertThat(evolvedAgent(twin, KYC)).isEqualTo("validator-agent-01");
     }
 
     // up to now an evolution was pure bookkeeping - it recorded which agent was picked and the
@@ -693,7 +1279,7 @@ class WireTransferWalkthroughTest {
         AgentDecision firstBridge = workbenchService.bridgeActivityEvent(twin.getId(), KYC);
         assertThat(firstBridge.isApproved()).isTrue();
 
-        WorkbenchServiceImpl freshService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
+        WorkbenchServiceImpl freshService = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, stateStore,
                 modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 workflowStateTracker);

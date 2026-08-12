@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Button, Form } from "react-bootstrap";
 import { useParams } from "react-router-dom";
 
@@ -11,10 +11,10 @@ import WorkflowDetailsPanel from "../../components/workbench/WorkflowDetailsPane
 import {
     saveModel,
     getModel,
-    generateDelegates,
     generateProject,
     launchProject,
     getWorkflowState,
+    listTenants,
 } from "../../services/workbench/WorkbenchService";
 
 const ModelPage = () => {
@@ -24,7 +24,35 @@ const ModelPage = () => {
 
     const { canvasRef, propertiesPanelRef, modelerRef, selected, importXml, currentXml } = useBpmnModeler();
 
+    // hidden file input behind the "Open BPMN file" button - a bare <input type="file"> can't be
+    // styled to match the rest of the toolbar, so the button drives it
+    const bpmnFileInputRef = useRef(null);
+
     const [modelName, setModelName] = useState("New Process");
+    // Tenant ownership (Phase 1, see the governance audit): optional, caller-supplied, not
+    // authentication - same trust level and same "" = unowned convention GovernancePoliciesPage
+    // already uses for its own tenant selector, reused here rather than duplicated. Save always
+    // creates a brand-new ProcessModel (the backend never overwrites - see handleSave's own
+    // comment), so picking a tenant here is never reassigning an existing model's owner, only
+    // choosing the owner of whichever model this Save is about to create.
+    const [tenantId, setTenantId] = useState("");
+    const [tenants, setTenants] = useState([]);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await listTenants();
+                if (!cancelled) setTenants(res.data || res || []);
+            } catch (err) {
+                // an empty selector still leaves models fully creatable as unowned - the same
+                // "not required" behavior as if the list had loaded and nothing was picked
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
     // each save is its own version - the backend won't overwrite an existing model, so this only
     // ever gets set FROM a successful save or an existing model load, never sent back as a request
     const [savedModelId, setSavedModelId] = useState(null);
@@ -124,6 +152,11 @@ const ModelPage = () => {
                 await importXml(model.bpmnXml);
                 setModelName(model.name || "Untitled");
                 setSavedModelId(model.id || routeModelId);
+                // display only - honestly reflects this model's real ownership (blank for a
+                // legacy tenantId=null model, exactly like "" already means "unowned" everywhere
+                // else). Whatever ends up selected here only affects the NEXT model Save creates,
+                // never this loaded one - see the tenantId state's own comment on why that's safe.
+                setTenantId(model.tenantId || "");
                 setStatus({ type: "ok", text: `Loaded "${model.name || routeModelId}".` });
                 await refreshWorkflowState(model.id || routeModelId);
             } catch (err) {
@@ -140,11 +173,57 @@ const ModelPage = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [routeModelId]);
 
+    // Opening a local .bpmn file. Deliberately client-side only: the file is read in the browser
+    // and handed to the modeler this page already owns, so nothing reaches the backend until the
+    // user presses Save exactly as they would for a diagram they drew by hand. There is no upload
+    // endpoint and no server-side temp file, and importing does NOT save, deploy, generate, launch,
+    // create a twin or assign a tenant - Save stays the one persistence boundary.
+    //
+    // A successful import means only "this XML loaded into bpmn-js". It is NOT a statement that
+    // MetaML accepts the model: the real BPMN/Camunda validation still happens in saveProcessModel
+    // (single process element, isExecutable, deployable), and that is left untouched on purpose -
+    // an imported file that Camunda rejects must still fail at Save, the same as any other.
+    const handleOpenBpmnFile = async (event) => {
+        const file = event.target.files && event.target.files[0];
+        // re-selecting the SAME file after a failed import fires no change event unless the input
+        // is cleared, which would strand the user on a file they can see but not retry
+        event.target.value = "";
+        if (!file) {
+            return;
+        }
+        setBusy(true);
+        try {
+            const xml = await file.text();
+            await importXml(xml);
+            // savedModelId/projectId are deliberately left alone: importing a file over a loaded
+            // model does not make the file that model. Save mints a new id anyway (the backend
+            // never overwrites), so the previously loaded model stays exactly as it was on disk.
+            setStatus({
+                type: "ok",
+                text: `Opened "${file.name}". Nothing is saved yet - review it, then press Save.`,
+            });
+        } catch (err) {
+            // covers both a file that could not be read and XML that bpmn-js refused to import.
+            // The canvas keeps whatever it had before, so the user can simply pick another file.
+            setStatus({
+                type: "err",
+                text: `Could not open "${file.name}": ${err.message || err}. The diagram is unchanged.`,
+            });
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const handleSave = async () => {
         setBusy(true);
         try {
             const bpmnXml = await currentXml();
-            const res = await saveModel({ name: modelName, bpmnXml });
+            // "" (nothing selected) must become null, not be sent as a literal empty-string
+            // tenantId - runEvolution only skips tenant governance when tenantId is exactly null
+            // (twin.getTenantId() != null), so an empty string here would enter enforceTenantPolicy,
+            // fail to find a tenant record, and DENY every evolution on the model instead of
+            // leaving it honestly ungoverned.
+            const res = await saveModel({ name: modelName, bpmnXml, tenantId: tenantId || null });
             const saved = res.data || res;
             setSavedModelId(saved.id || null);
             // a fresh save is a NEW model id (the backend never overwrites), so any earlier
@@ -161,9 +240,16 @@ const ModelPage = () => {
     };
 
     // New scope item 3 (BPMN Processing) + item 4 (Spring Boot Generation), reached from the
-    // editor now instead of only existing as a bare API. One click does both steps that only ever
-    // make sense together here - generateDelegates on its own is a preview with nothing to show
-    // for it in this UI, the project is the thing Launch actually needs.
+    // editor now instead of only existing as a bare API. This used to call generateDelegates first
+    // and then generateProject, which looked harmless because generateDelegates' result was thrown
+    // away - the project is the thing Launch actually needs. It wasn't harmless: generateDelegates
+    // records no workflow state, so a generation failure raised there aborted the click before
+    // generateProject ran, and nothing ever wrote the FAILED stage that carries bpmnElementId. The
+    // banner still showed the message, but the breadcrumb sat on "Pending" and "Go to error" never
+    // appeared - the one case where knowing which element broke matters most. generateProject
+    // regenerates the delegates itself anyway (and against the right package, see
+    // doGenerateSpringBootProject), so the preview call was only ever duplicating that work outside
+    // the recorded path.
     const handleGenerate = async () => {
         if (!savedModelId) {
             setStatus({ type: "err", text: "Save the model before generating a project." });
@@ -173,7 +259,6 @@ const ModelPage = () => {
         // separate manual refresh needed here anymore
         setBusy(true);
         try {
-            await generateDelegates({ modelId: savedModelId });
             const res = await generateProject({ modelId: savedModelId });
             const project = res.data || res;
             setProjectId(project.projectId || null);
@@ -240,6 +325,25 @@ const ModelPage = () => {
             <div className="bpmn-toolbar">
                 {/* row 1: user actions - naming/saving/generating/launching the model */}
                 <div className="bpmn-toolbar-row bpmn-toolbar-actions">
+                    {/* Loading a local .bpmn into this same editor. Sits before the name/tenant/Save
+                        cluster because it is a canvas action, not a persistence one - see
+                        handleOpenBpmnFile. */}
+                    <input
+                        ref={bpmnFileInputRef}
+                        type="file"
+                        accept=".bpmn,.xml"
+                        style={{ display: "none" }}
+                        onChange={handleOpenBpmnFile}
+                    />
+                    <Button
+                        size="sm"
+                        variant="outline-secondary"
+                        onClick={() => bpmnFileInputRef.current && bpmnFileInputRef.current.click()}
+                        disabled={busy}
+                        title="Load a local .bpmn file into the editor. Nothing is saved until you press Save."
+                    >
+                        Open BPMN file
+                    </Button>
                     <Form.Control
                         size="sm"
                         className="bpmn-model-name"
@@ -247,6 +351,30 @@ const ModelPage = () => {
                         onChange={(e) => setModelName(e.target.value)}
                         placeholder="Model name"
                     />
+                    {/* Tenant ownership - a plain selector, not authentication (no login exists in
+                        this system yet). Optional: leaving it on "No tenant" saves an unowned
+                        model exactly like every model saved before tenancy existed - governance
+                        does not require an owner, it just has nothing to enforce without one. */}
+                    <span
+                        className="text-muted small bpmn-model-tenant-label"
+                        title="Tenant selection is caller-supplied ownership metadata, not a login"
+                    >
+                        Acting as tenant (not authenticated):
+                    </span>
+                    <Form.Select
+                        size="sm"
+                        className="bpmn-model-tenant"
+                        style={{ maxWidth: 220 }}
+                        value={tenantId}
+                        onChange={(e) => setTenantId(e.target.value)}
+                    >
+                        <option value="">No tenant (unowned)</option>
+                        {tenants.map((t) => (
+                            <option key={t.id} value={t.id}>
+                                {t.name} ({t.id})
+                            </option>
+                        ))}
+                    </Form.Select>
                     <div className="spacer" />
                     {status && <span className={`bpmn-status ${statusClass}`}>{status.text}</span>}
                     <Button size="sm" variant="outline-primary" onClick={handleSave} disabled={busy}>

@@ -48,6 +48,18 @@ const Header = () => {
                                 Deployed Applications
                             </NavDropdown.Item>
                         </NavDropdown>
+                        {/* Phase 6C/this phase: tenant policy lifecycle plus resolving the
+                            approvals that policy produces - unrelated to either Evolve entry
+                            above, this is what a tenant's policy SAYS and what's pending on it,
+                            not any twin's execution */}
+                        <NavDropdown title="Governance" id="governance-nav-dropdown">
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.GovernancePolicies.path}>
+                                Policies
+                            </NavDropdown.Item>
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.GovernanceApprovals.path}>
+                                Approvals
+                            </NavDropdown.Item>
+                        </NavDropdown>
                         <Nav.Link to={"/"}>Help</Nav.Link>
                     </Nav>
                     {/* <span class="ml-auto navbar-text"></span> */}

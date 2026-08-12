@@ -20,6 +20,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -222,6 +223,191 @@ class SpringBootProjectLauncherTest {
 
         assertThat(elapsed).as("should fail on the dead process, not wait out the 30s timeout").isLessThan(5_000);
         assertThat(launcherWithLongTimeout.find("p1")).isEmpty();
+    }
+
+    // Liveness (the real defect this phase fixes): find()/listRunning() used to trust the registry
+    // blindly, so a generated app that died on its own - not through stop() - kept reading as
+    // running forever. Killed the same way a real external death was reproduced live against the
+    // actual system: the tracked Process itself (and its descendants, the same tree destroyTree()
+    // would walk), not through the launcher's own stop() - stop() dying correctly proves nothing
+    // about a process that died WITHOUT going through it.
+    @Test
+    void findExcludesAProcessThatDiedOnItsOwn() throws Exception {
+        launcher.launch(fakeProject("p1"));
+        killExternally(trackedProcess(launcher, "p1"));
+
+        assertThat(launcher.find("p1")).isEmpty();
+    }
+
+    @Test
+    void listRunningExcludesAProcessThatDiedOnItsOwnAndRemovesItFromTheRegistry() throws Exception {
+        launcher.launch(fakeProject("p1"));
+        Path secondDir = Files.createTempDirectory("second-project");
+        Files.writeString(secondDir.resolve("mvnw.cmd"), FAKE_LISTENER_SCRIPT, StandardCharsets.UTF_8);
+        LaunchedProject stillAlive = launcher.launch(new GeneratedProject("p2", secondDir, "fakeProcess2"));
+        killExternally(trackedProcess(launcher, "p1"));
+
+        // the dead one is gone, the live one is unaffected - not "everything cleared", which a
+        // cruder fix (e.g. clearing the whole map on any failure) could have passed by accident
+        assertThat(launcher.listRunning()).extracting(LaunchedProject::projectId).containsExactly("p2");
+        assertThat(isListening(stillAlive.port())).isTrue();
+
+        launcher.stop("p2");
+    }
+
+    // find()/listRunning() self-heal the registry as a side effect of noticing death - this proves
+    // that removal actually happened (not just that a later find() would independently say "empty"
+    // again), by reaching into the same registry the reflection helpers already use
+    @Test
+    void aDeadProcessIsRemovedFromTheRegistryNotJustHiddenFromReads() throws Exception {
+        launcher.launch(fakeProject("p1"));
+        killExternally(trackedProcess(launcher, "p1"));
+
+        assertThat(launcher.find("p1")).isEmpty();
+        assertThat(registrySize(launcher)).isZero();
+    }
+
+    // Cleanup safety (explicit requirement): stop() must not misbehave when called on a project
+    // whose process already died externally - whether or not find()/listRunning() got there first
+    // and already self-healed the entry.
+    @Test
+    void stopIsSafeAfterExternalDeathEvenWhenNothingElseObservedItFirst() throws Exception {
+        launcher.launch(fakeProject("p1"));
+        killExternally(trackedProcess(launcher, "p1"));
+
+        // stop() called directly - no find()/listRunning() call in between to have already
+        // cleaned the entry up first
+        assertThat(launcher.stop("p1")).isTrue();
+        assertThat(launcher.find("p1")).isEmpty();
+    }
+
+    @Test
+    void stopIsSafeAfterExternalDeathOnceFindHasAlreadySelfHealedTheEntry() throws Exception {
+        launcher.launch(fakeProject("p1"));
+        killExternally(trackedProcess(launcher, "p1"));
+
+        assertThat(launcher.find("p1")).isEmpty(); // self-heals: entry is now gone from the registry
+        // honestly reports nothing was left to stop, rather than throwing on an id find() already
+        // forgot
+        assertThat(launcher.stop("p1")).isFalse();
+    }
+
+    // relaunching under the same projectId is the one case forgetIfStillDead's conditional remove
+    // exists for: a find()/listRunning() call racing against a fresh relaunch must never delete the
+    // NEW live entry just because it observed the OLD one's Process object was dead
+    @Test
+    void relaunchingAfterAnExternalDeathIsTrackedAsTheNewLiveProcessNotForgotten() throws Exception {
+        GeneratedProject project = fakeProject("p1");
+        launcher.launch(project);
+        killExternally(trackedProcess(launcher, "p1"));
+        assertThat(launcher.find("p1")).isEmpty(); // dead entry observed and forgotten
+
+        LaunchedProject relaunched = launcher.launch(project);
+
+        assertThat(launcher.find("p1")).contains(relaunched);
+        assertThat(isListening(relaunched.port())).isTrue();
+        launcher.stop("p1");
+    }
+
+    // --- runIfIdle (retention safety gate) ---
+
+    @Test
+    void runIfIdleRunsTheActionForAProjectThatWasNeverLaunched() {
+        AtomicBoolean ran = new AtomicBoolean(false);
+
+        assertThat(launcher.runIfIdle("never-launched", () -> ran.set(true))).isTrue();
+        assertThat(ran).isTrue();
+    }
+
+    @Test
+    void runIfIdleRefusesToRunWhileTheProjectIsRunning() throws IOException {
+        launcher.launch(fakeProject("p1"));
+        AtomicBoolean ran = new AtomicBoolean(false);
+
+        assertThat(launcher.runIfIdle("p1", () -> ran.set(true))).isFalse();
+        assertThat(ran).as("a running project's directory must never be touched").isFalse();
+
+        launcher.stop("p1");
+    }
+
+    @Test
+    void runIfIdleRunsTheActionOnceTheProjectHasBeenStopped() throws IOException {
+        launcher.launch(fakeProject("p1"));
+        assertThat(launcher.runIfIdle("p1", () -> {
+        })).isFalse();
+
+        launcher.stop("p1");
+
+        AtomicBoolean ran = new AtomicBoolean(false);
+        assertThat(launcher.runIfIdle("p1", () -> ran.set(true))).isTrue();
+        assertThat(ran).isTrue();
+    }
+
+    // an externally-killed JVM is idle for exactly the same reason find() already reports it as not
+    // running - the retention gate reuses that mechanism rather than inventing a second one
+    @Test
+    void runIfIdleTreatsAnExternallyDeadProjectAsIdle() throws Exception {
+        launcher.launch(fakeProject("p1"));
+        killExternally(trackedProcess(launcher, "p1"));
+
+        AtomicBoolean ran = new AtomicBoolean(false);
+        assertThat(launcher.runIfIdle("p1", () -> ran.set(true))).isTrue();
+        assertThat(ran).isTrue();
+    }
+
+    // THE case this gate exists for, and the one find() alone cannot answer: launch() does not
+    // publish into `running` until the app is actually listening, so for the whole startup window a
+    // project reads as "not running" while a child JVM is booting out of its directory. A cleanup
+    // that deleted on find() alone would delete a starting project's own source from under it.
+    // Proven with a deliberately slow fake app and a real concurrent launch, not by inspecting the
+    // lock: runIfIdle must refuse for the entire time the launch is in flight, then succeed after.
+    @Test
+    void runIfIdleRefusesWhileALaunchIsStillInFlightBeforeTheAppIsListening() throws Exception {
+        // takes ~6s to start listening, so the assertions below land while launch() is mid-flight
+        Files.writeString(projectDir.resolve("mvnw.cmd"), """
+                @echo off
+                powershell -NoProfile -Command "Start-Sleep -Seconds 6; $l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, [int]$env:SERVER_PORT); $l.Start(); Start-Sleep -Seconds 300; $l.Stop()"
+                """, StandardCharsets.UTF_8);
+        GeneratedProject project = new GeneratedProject("p1", projectDir, "fakeProcess");
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        AtomicBoolean ran = new AtomicBoolean(false);
+        try {
+            Future<LaunchedProject> launching = pool.submit(() -> launcher.launch(project));
+            // wait until the launch has genuinely started (the lock is held) but the app is not yet
+            // listening - find() reports empty here, which is exactly the trap
+            sleep(2000);
+            assertThat(launcher.find("p1")).as("app should not be listening yet").isEmpty();
+
+            assertThat(launcher.runIfIdle("p1", () -> ran.set(true)))
+                    .as("must refuse while a launch is in flight, even though find() says not running")
+                    .isFalse();
+            assertThat(ran).isFalse();
+
+            LaunchedProject launched = launching.get(90, TimeUnit.SECONDS);
+            assertThat(isListening(launched.port())).isTrue();
+        } finally {
+            pool.shutdownNow();
+            launcher.stop("p1");
+        }
+    }
+
+    // same tree-walk destroyTree() itself uses, applied from OUTSIDE the launcher - this is what
+    // makes it an external death and not just another call to the launcher's own stop()
+    private static void killExternally(Process process) {
+        process.descendants().forEach(ProcessHandle::destroyForcibly);
+        process.destroyForcibly();
+        long deadline = System.currentTimeMillis() + 15_000;
+        while (process.isAlive() && System.currentTimeMillis() < deadline) {
+            sleep(200);
+        }
+        assertThat(process.isAlive()).as("process should have died externally within 15s").isFalse();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int registrySize(SpringBootProjectLauncher launcher) throws Exception {
+        Field runningField = SpringBootProjectLauncher.class.getDeclaredField("running");
+        runningField.setAccessible(true);
+        return ((Map<String, ?>) runningField.get(launcher)).size();
     }
 
     private static boolean isListening(int port) {

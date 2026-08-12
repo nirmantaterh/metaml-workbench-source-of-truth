@@ -20,7 +20,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.metaml.workbench.bpmn.AgentOutputDeclarations;
@@ -59,12 +59,9 @@ import static org.mockito.BDDMockito.given;
 //
 // Same properties and the same NodeManagerClient stub as the other two walkthroughs, so all three
 // share one Spring context.
-@SpringBootTest(properties = {
-        "spring.datasource.url=jdbc:h2:mem:metaml-test;DB_CLOSE_DELAY=-1",
-        "workbench.state.persist=false",
-        "workbench.models.directory=./target/test-data/models",
-        "workbench.generation.template-directory=../../templates/camundademo",
-        "workbench.generation.output-directory=./target/test-data/generated-projects"
+@IsolatedWorkbenchTest
+@TestPropertySource(properties = {
+        "spring.datasource.url=jdbc:h2:mem:metaml-test;DB_CLOSE_DELAY=-1"
 })
 class TwinExecutionWalkthroughTest {
 

@@ -23,6 +23,7 @@ import com.metaml.workbench.bpmn.TwinModelGenerator;
 import com.metaml.workbench.client.AgentAvailabilityResult;
 import com.metaml.workbench.codegen.DelegateClassGenerator;
 import com.metaml.workbench.codegen.GeneratedDelegate;
+import com.metaml.workbench.codegen.InvalidDelegateExpressionException;
 import com.metaml.workbench.client.NodeManagerClient;
 import com.metaml.workbench.client.NodeManagerUnavailableException;
 import com.metaml.workbench.generation.DelegateWriteException;
@@ -31,6 +32,14 @@ import com.metaml.workbench.generation.GeneratedProjectLaunchException;
 import com.metaml.workbench.generation.LaunchedProject;
 import com.metaml.workbench.generation.SpringBootProjectGenerator;
 import com.metaml.workbench.generation.SpringBootProjectLauncher;
+import com.metaml.workbench.governance.Approval;
+import com.metaml.workbench.governance.ApprovalService;
+import com.metaml.workbench.governance.ApprovalStatus;
+import com.metaml.workbench.governance.GovernanceRequest;
+import com.metaml.workbench.governance.PolicyDecision;
+import com.metaml.workbench.governance.PolicyDecisionEngine;
+import com.metaml.workbench.governance.PolicyEffect;
+import com.metaml.workbench.governance.PolicyEvaluationException;
 import com.metaml.workbench.model.ActivityLink;
 import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.model.AgentVariables;
@@ -42,6 +51,7 @@ import com.metaml.workbench.model.TwinProcess;
 import com.metaml.workbench.store.ProcessModelFileStore;
 import com.metaml.workbench.store.WorkbenchStateStore;
 import com.metaml.workbench.workflow.StageError;
+import com.metaml.workbench.workflow.StageEvent;
 import com.metaml.workbench.workflow.StageStatus;
 import com.metaml.workbench.workflow.WorkflowStage;
 import com.metaml.workbench.workflow.WorkflowState;
@@ -69,6 +79,11 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     // auto-bridge has no caller to ask for a type, so it uses this one
     private static final String DEFAULT_BRIDGE_AGENT_TYPE = "validator";
 
+    // Tenant governance (Phase 3B): the one action name every EVOLVE_TWIN GovernanceRequest
+    // uses, so a tenant policy has one stable string to match against instead of every call
+    // site inventing its own
+    private static final String EVOLVE_TWIN_ACTION = "EVOLVE_TWIN";
+
     // what a client-supplied model id is allowed to look like. Generated ids are UUIDs, which fit
     // this comfortably; anything with a separator, a dot, or a drive letter in it does not.
     private static final Pattern SAFE_MODEL_ID = Pattern.compile("[A-Za-z0-9_-]+");
@@ -80,16 +95,26 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     // since it isn't set until an evolution actually succeeds. Keyed per visit like everything
     // else, or two visits of a multi-instance activity block each other for nothing.
     private final Map<String, Boolean> evolutionsInFlight = new ConcurrentHashMap<>();
-    // not persisted across a restart - a generated project is just a directory on disk, and
-    // launchGeneratedProject needs its path again; restart already forgets every launched process
-    // too, since those don't survive an app restart either
+    // Not backed by its own file - both maps below are rebuilt on every restart instead (see
+    // restoreGeneratedProjects()) from sources that already persist: the project directory itself
+    // (SpringBootProjectGenerator.scanExisting()) and the GENERATE stage's own detail in
+    // WorkflowStateTracker. A launched process is the one thing that genuinely does not survive a
+    // restart - that part of the picture (listRunningProjects/stopGeneratedProject) still comes
+    // straight from SpringBootProjectLauncher's own live registry, unchanged by this.
     private final Map<String, GeneratedProject> generatedProjects = new ConcurrentHashMap<>();
     // the only place a generated project's originating model is remembered - GeneratedProject
     // itself carries no modelId (it's a workbench.generation concern, not a BPMN one), and both
     // launch and stop need to know which model's breadcrumb a project's LAUNCH stage belongs to
     private final Map<String, String> modelIdByProjectId = new ConcurrentHashMap<>();
+    // One lock object per model id, guarding the two authoring operations that can conflict over a
+    // model's existence: Generate and Delete. Never removed, for the same reason the launcher's own
+    // per-project locks aren't - bounded by the number of distinct model ids seen since startup,
+    // and in memory only. See modelLockFor() for why nothing else needs to take it.
+    private final Map<String, Object> modelLocks = new ConcurrentHashMap<>();
     private final NodeManagerClient nodeManagerClient;
     private final GovernanceService governanceService;
+    private final PolicyDecisionEngine policyDecisionEngine;
+    private final ApprovalService approvalService;
     private final RuntimeService runtimeService;
     private final RepositoryService repositoryService;
     private final HistoryService historyService;
@@ -106,6 +131,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     private final WorkflowStateTracker workflowStateTracker;
 
     public WorkbenchServiceImpl(NodeManagerClient nodeManagerClient, GovernanceService governanceService,
+            PolicyDecisionEngine policyDecisionEngine, ApprovalService approvalService,
             RuntimeService runtimeService, RepositoryService repositoryService, HistoryService historyService,
             TaskService taskService, TwinModelGenerator twinModelGenerator,
             WorkbenchStateStore stateStore, ProcessModelFileStore modelFileStore,
@@ -113,6 +139,8 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             SpringBootProjectLauncher springBootProjectLauncher, WorkflowStateTracker workflowStateTracker) {
         this.nodeManagerClient = nodeManagerClient;
         this.governanceService = governanceService;
+        this.policyDecisionEngine = policyDecisionEngine;
+        this.approvalService = approvalService;
         this.runtimeService = runtimeService;
         this.repositoryService = repositoryService;
         this.historyService = historyService;
@@ -147,6 +175,260 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         for (TwinProcess twin : snapshot.twins()) {
             twinProcesses.put(twin.getId(), twin);
         }
+        restoreGeneratedProjects();
+        reconcileApprovedApprovals();
+    }
+
+    // Generated-project persistence: generatedProjects/modelIdByProjectId are rebuilt here rather
+    // than loaded from their own file, because everything they hold is already derivable from two
+    // sources that already survive a restart:
+    //
+    //   generatedProjects    <- SpringBootProjectGenerator.scanExisting() (the project directory
+    //                           itself is the source of truth for its own id/directory/processKey)
+    //   modelIdByProjectId   <- each model's own GENERATE stage detail, already persisted via
+    //                           WorkflowStateTracker/WorkflowEventStore before this phase
+    //
+    // Order matters: this runs after processModels is populated above (needed to iterate models)
+    // and after workflowStateTracker's own restore() has already happened - guaranteed here, not
+    // just assumed, because Spring fully constructs a dependency bean (including its
+    // @PostConstruct) before injecting it into this one, the same reasoning
+    // reconcileApprovedApprovals() below already relies on for its own dependencies.
+    private void restoreGeneratedProjects() {
+        for (GeneratedProject project : springBootProjectGenerator.scanExisting()) {
+            generatedProjects.put(project.projectId(), project);
+        }
+        if (generatedProjects.isEmpty()) {
+            return;
+        }
+        for (ProcessModel model : processModels.values()) {
+            WorkflowState state = workflowStateTracker.stateFor(model.getId());
+            String projectId = currentProjectIdOf(state);
+            // only wired up when the project this model's own GENERATE stage points at genuinely
+            // still exists on disk (just scanned above) - a stale detail left over from a project
+            // whose directory is gone since must not be allowed to silently claim whatever
+            // unrelated id happens to occupy that slot in generatedProjects
+            if (projectId != null && generatedProjects.containsKey(projectId)) {
+                modelIdByProjectId.put(projectId, model.getId());
+            }
+            // Retention, restart half: a superseded project's JVM does not normally survive a
+            // restart (nothing re-launches one, and the launcher's registry starts empty), so
+            // anything still on disk from an older generation is collectable now. This is also what
+            // collects a project that was superseded WHILE running in the previous session - the
+            // regenerate that superseded it correctly left it alone at the time.
+            //
+            // "Does not normally" is doing real work there: a HARD kill of the previous workbench
+            // (kill -9) skips @PreDestroy, so its generated apps are still running and still hold
+            // their ports, invisible to this instance's empty registry. Each launch recorded its
+            // port in this model's own LAUNCH history, so that is checked before collecting
+            // anything - see somethingIsListeningOn's comment for why this probe is restart-only
+            // and why it fails closed.
+            if (aRecordedLaunchPortIsStillListening(state)) {
+                logger.warn("Skipping generated-project cleanup for model {} on startup - a port it previously "
+                        + "launched on is still listening, so a generated app from before this restart may still "
+                        + "be running. Its projects will be collected once that port is free.", model.getId());
+                continue;
+            }
+            cleanupSupersededProjects(model.getId(), state);
+        }
+    }
+
+    // Every port this model was ever recorded as launching on, newest first, as written by
+    // launchGeneratedProject ("port N") and carried onto the STOPPED event by stopGeneratedProject.
+    // A STOPPED event is not treated as proof the port is free - the probe is what decides that -
+    // but a port that was never recorded cannot be checked at all, which is the known limit of this
+    // guard and why it is a best-effort safety net rather than a liveness mechanism.
+    private boolean aRecordedLaunchPortIsStillListening(WorkflowState state) {
+        for (StageEvent event : state.history()) {
+            if (event.stage() != WorkflowStage.LAUNCH || event.detail() == null
+                    || !event.detail().startsWith("port ")) {
+                continue;
+            }
+            try {
+                int port = Integer.parseInt(event.detail().substring("port ".length()).trim());
+                if (springBootProjectLauncher.somethingIsListeningOn(port)) {
+                    return true;
+                }
+            } catch (NumberFormatException notAPort) {
+                // a LAUNCH detail that isn't "port N" is nothing to probe, not an error
+            }
+        }
+        return false;
+    }
+
+    // Retention (latest generation only, chosen product policy): a model keeps exactly one
+    // generated project - its newest completed generation - and older ones are disposable once
+    // nothing is running out of them.
+    //
+    // "Current" is deliberately the last GENERATE event whose status is COMPLETED, not
+    // stages().get(GENERATE).detail(). Those two disagree in a case that genuinely happens: the
+    // folded stage view is last-event-wins regardless of status, so after a regenerate that FAILS,
+    // its detail is the failure MESSAGE, not a project id at all. Reading the fold there would
+    // both lose track of the still-current project and hand a sentence to code expecting an id.
+    private static String currentProjectIdOf(WorkflowState state) {
+        String current = null;
+        for (StageEvent event : state.history()) {
+            if (event.stage() == WorkflowStage.GENERATE && event.status() == StageStatus.COMPLETED
+                    && event.detail() != null) {
+                current = event.detail();
+            }
+        }
+        return current;
+    }
+
+    // Every completed generation of this model except the current one, oldest first. Derived from
+    // the workflow history rather than from any new bookkeeping, which is what keeps this honest
+    // across a restart: WorkflowEventStore already persists every GENERATE event, and nothing about
+    // retention prunes them (the history stays complete; only the filesystem artifact goes away).
+    private static List<String> supersededProjectIdsOf(WorkflowState state) {
+        List<String> superseded = new ArrayList<>(allGeneratedProjectIdsOf(state));
+        superseded.remove(currentProjectIdOf(state));
+        return superseded;
+    }
+
+    // Every generation this model has ever completed, oldest first. Retention wants this minus the
+    // current one; deletion wants all of it.
+    private static List<String> allGeneratedProjectIdsOf(WorkflowState state) {
+        List<String> projectIds = new ArrayList<>();
+        for (StageEvent event : state.history()) {
+            if (event.stage() != WorkflowStage.GENERATE || event.status() != StageStatus.COMPLETED) {
+                continue;
+            }
+            String projectId = event.detail();
+            if (projectId != null && !projectIds.contains(projectId)) {
+                projectIds.add(projectId);
+            }
+        }
+        return projectIds;
+    }
+
+    private void cleanupSupersededProjects(String modelId) {
+        cleanupSupersededProjects(modelId, workflowStateTracker.stateFor(modelId));
+    }
+
+    // Best-effort by construction: every caller reaches this AFTER the operation it belongs to has
+    // already committed, and nothing in here is allowed to turn a successful regenerate/stop into a
+    // failure. A project that can't be collected right now (still running, mid-launch, mid-anything)
+    // is simply left for the next lifecycle event to pick up - there is no daemon chasing it.
+    private void cleanupSupersededProjects(String modelId, WorkflowState state) {
+        for (String projectId : supersededProjectIdsOf(state)) {
+            try {
+                deleteIfSuperseded(modelId, projectId);
+            } catch (RuntimeException e) {
+                logger.warn("Could not clean up superseded generated project {} for model {}: {}",
+                        projectId, modelId, e.toString());
+            }
+        }
+    }
+
+    private void deleteIfSuperseded(String modelId, String projectId) {
+        // never another model's project. supersededProjectIdsOf() read this id out of THIS model's
+        // own history, so a conflicting owner means two models' histories disagree about who
+        // generated it - unresolvable from here, and deleting on a guess is the one outcome that
+        // can't be undone
+        String owner = modelIdByProjectId.get(projectId);
+        if (owner != null && !owner.equals(modelId)) {
+            logger.warn("Not deleting generated project {} while cleaning up model {} - it is recorded as "
+                    + "belonging to model {}", projectId, modelId, owner);
+            return;
+        }
+        boolean wasIdle = springBootProjectLauncher.runIfIdle(projectId, () -> {
+            // Re-read the history INSIDE the idle lock rather than trusting the list this id came
+            // from. That list was computed before the lock was taken, and a concurrent regenerate
+            // can append a GENERATE event in between - so this is the check that makes "never
+            // delete the current project" true at the moment of deletion rather than a moment
+            // earlier. (A fresh UUID per generate means an id realistically can't come BACK to
+            // being current; this holds regardless of that, instead of depending on it.)
+            if (projectId.equals(currentProjectIdOf(workflowStateTracker.stateFor(modelId)))) {
+                logger.info("Generated project {} became the current generation for model {} before it could be "
+                        + "cleaned up - retaining it", projectId, modelId);
+                return;
+            }
+            if (springBootProjectGenerator.delete(projectId)) {
+                // only after the directory is actually gone - a project still on disk must stay
+                // reachable through launchGeneratedProject, and scanExisting() would put it back
+                // on the next restart anyway
+                generatedProjects.remove(projectId);
+                modelIdByProjectId.remove(projectId, modelId);
+            }
+        });
+        if (!wasIdle) {
+            // the whole point of the policy's "superseded + running -> retain temporarily" arm
+            logger.info("Retaining superseded generated project {} for model {} - it is still running or "
+                    + "being launched; it will be collected when it next stops", projectId, modelId);
+        }
+    }
+
+    // Phase 5 (crash reconciliation): an approval can be left in APPROVED if the JVM died between
+    // approveEvolution() marking it APPROVED and marking it COMPLETED/FAILED. This resolves every
+    // such approval on startup, never by guessing.
+    //
+    // evolvedAgentVariableIsSet is not new - it already exists (see alreadyEvolved's own comment)
+    // to answer the identical question for the manual-evolve/auto-bridge retry path: "did this
+    // exact evolution already land?" It reads Camunda's own committed variable history, which is
+    // durable and transactional with the setVariable call itself - not the workbench's own
+    // in-memory bookkeeping, and not something this phase invents. That is what makes this safe
+    // rather than a blind retry: the variable being absent is proof the operation never ran, and
+    // the variable being present is proof it did, both independent of whatever the Approval's own
+    // status says.
+    private void reconcileApprovedApprovals() {
+        List<Approval> approved = approvalService.listAllApproved();
+        if (approved.isEmpty()) {
+            return;
+        }
+        for (Approval approval : approved) {
+            TwinProcess twin = twinProcesses.get(approval.twinId());
+            if (twin == null) {
+                approvalService.markFailed(approval.id(), "twin no longer exists after restart");
+                logger.warn("Reconciled approval {} as FAILED: twin {} no longer exists", approval.id(),
+                        approval.twinId());
+                continue;
+            }
+            String evolvedAgentVariable = AgentVariables.evolvedAgent(approval.twinActivityId(),
+                    approval.loopCounter());
+            if (evolvedAgentVariableIsSet(twin, evolvedAgentVariable)) {
+                // proven, not assumed: the side effect this approval represents already happened
+                // before the crash. Marking COMPLETED here does not repeat it.
+                approvalService.markCompleted(approval.id(),
+                        "reconciled on restart - '" + evolvedAgentVariable + "' was already set");
+                twin.getEventLog().add("Approval " + approval.id()
+                        + " reconciled as COMPLETED on restart (already executed before crash)");
+                logger.info("Reconciled approval {} as COMPLETED: '{}' already set", approval.id(),
+                        evolvedAgentVariable);
+                continue;
+            }
+            // proven, not assumed: the variable was never set, so the operation genuinely never
+            // ran. Safe to run it now - this is its first real execution, not a retry of one that
+            // may have already happened.
+            GovernanceDecision reservation = governanceService.reserveEvolutionSlot(approval.twinId(),
+                    approval.agentType());
+            if (!reservation.isAllowed()) {
+                approvalService.markFailed(approval.id(), "reconciliation: " + reservation.getReason());
+                logger.warn("Reconciled approval {} as FAILED: {}", approval.id(), reservation.getReason());
+                continue;
+            }
+            boolean succeeded = false;
+            try {
+                twin.getEventLog().add("Approval " + approval.id()
+                        + " reconciled on restart - never executed before the crash, running it now");
+                AgentDecision decision = executeAfterGovernance(twin, approval.twinId(), approval.activityId(),
+                        approval.twinActivityId(), approval.loopCounter(), approval.agentType());
+                succeeded = decision.isApproved();
+                if (succeeded) {
+                    approvalService.markCompleted(approval.id(), decision.getAgentName());
+                } else {
+                    approvalService.markFailed(approval.id(), decision.getReason());
+                }
+                logger.info("Reconciled approval {} as {}", approval.id(), succeeded ? "COMPLETED" : "FAILED");
+            } catch (RuntimeException e) {
+                approvalService.markFailed(approval.id(), "reconciliation failed: " + e.getMessage());
+                logger.warn("Reconciled approval {} as FAILED: {}", approval.id(), e.getMessage());
+            } finally {
+                if (!succeeded) {
+                    governanceService.releaseEvolutionSlot(approval.twinId());
+                }
+            }
+        }
+        persistState();
     }
 
     // event log counts as a change too - losing it on restart is a real loss, not just bookkeeping
@@ -160,7 +442,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     }
 
     @Override
-    public ProcessModel saveProcessModel(String id, String name, String bpmnXml) {
+    public ProcessModel saveProcessModel(String id, String name, String bpmnXml, String tenantId) {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("Process model name must not be blank");
         }
@@ -183,6 +465,17 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             if (processModels.containsKey(id)) {
                 throw new IllegalArgumentException("Process model already exists: " + id);
             }
+            // Identity protection for deletion: model ids are client-supplied, and workflow history
+            // is deliberately retained when a model is deleted - so without this, deleting "foo" and
+            // recreating "foo" would silently adopt the DEAD model's history. That is not cosmetic:
+            // currentProjectIdOf() reads the latest GENERATE/COMPLETED detail out of exactly that
+            // history, so the new model would come up believing a previous incarnation's generated
+            // project was its own current generation, and restoreGeneratedProjects() would wire that
+            // project to it on the next restart. A retired id stays retired.
+            if (isRetiredModelId(id)) {
+                throw new IllegalArgumentException("Process model id '" + id + "' has already been used and "
+                        + "cannot be reused - its workflow history is kept after deletion");
+            }
             modelId = id;
         } else {
             modelId = UUID.randomUUID().toString();
@@ -195,7 +488,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         // next write to this model, not silently left as a stage stuck IN_PROGRESS forever.
         workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.IN_PROGRESS, null);
         try {
-            return doSaveProcessModel(modelId, name, bpmnXml);
+            return doSaveProcessModel(modelId, name, bpmnXml, tenantId);
         } catch (RuntimeException e) {
             // doSaveProcessModel has several distinct throw sites (bad XML, more than one process,
             // not executable, id already exists, file-store failure) behind one outer catch - all
@@ -208,7 +501,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         }
     }
 
-    private ProcessModel doSaveProcessModel(String modelId, String name, String bpmnXml) {
+    private ProcessModel doSaveProcessModel(String modelId, String name, String bpmnXml, String tenantId) {
         Deployment deployment;
         try {
             deployment = repositoryService.createDeployment()
@@ -239,7 +532,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                     "BPMN process must have isExecutable=\"true\" on the bpmn:process element");
         }
 
-        ProcessModel model = new ProcessModel(modelId, name, bpmnXml, Instant.now(), definition.getId());
+        ProcessModel model = new ProcessModel(modelId, name, bpmnXml, Instant.now(), definition.getId(), tenantId);
         // the containsKey above isn't enough on its own - two saves of the same id can both clear
         // it and both deploy, and the loser would silently replace the winner's definition
         ProcessModel existing = processModels.putIfAbsent(modelId, model);
@@ -291,6 +584,85 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         return model;
     }
 
+    // A model id that a real model was once created under, but which no model currently holds.
+    // Keyed on MODEL/COMPLETED specifically, not on "has any history at all": a save that FAILED
+    // validation (bad BPMN, more than one process, not executable) records MODEL/IN_PROGRESS then
+    // MODEL/FAILED and never COMPLETED, and retrying that same id afterwards is normal, expected
+    // use - blocking it would turn every rejected save into a permanently burnt id.
+    private boolean isRetiredModelId(String modelId) {
+        for (StageEvent event : workflowStateTracker.stateFor(modelId).history()) {
+            if (event.stage() == WorkflowStage.MODEL && event.status() == StageStatus.COMPLETED) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Model deletion is an AUTHORING operation, so it only needs to exclude the other authoring
+    // operation that can invent state for the same model - Generate. Everything else is already
+    // covered without a lock: Launch and cleanup both go through the launcher's own per-project
+    // lock (which deletion takes as well, via runIfAllIdle), and Evolve never touches a model at
+    // all - it operates on a twin, which by design outlives its model.
+    //
+    // Ordering discipline, since deletion holds both: model lock first, then project locks. Both
+    // paths that take both do it in that order, so they cannot deadlock against each other.
+    private Object modelLockFor(String modelId) {
+        return modelLocks.computeIfAbsent(modelId, id -> new Object());
+    }
+
+    // Authoring/catalog deletion, per the chosen product semantics: this removes what the model
+    // OWNS and nothing else. Twins, their Camunda process instances, Camunda deployments,
+    // approvals, tenant/policy data and workflow history all deliberately survive - a twin holds
+    // its model id as provenance only (nothing ever resolves it back to a ProcessModel), and
+    // Camunda deployments are shared between a model's twins, so deleting one would cascade-delete
+    // live process instances belonging to twins that are still running perfectly well.
+    //
+    // Refuses outright, rather than stopping anything, if any of this model's generated
+    // applications is running or mid-launch. Deleting a model is not a reason to kill a running
+    // application, and the caller is better placed than this method to decide whether to stop it.
+    @Override
+    public boolean deleteProcessModel(String modelId) {
+        if (modelId == null || modelId.isBlank()) {
+            throw new IllegalArgumentException("Process model id must not be blank");
+        }
+        synchronized (modelLockFor(modelId)) {
+            ProcessModel model = processModels.get(modelId);
+            if (model == null) {
+                throw new NoSuchElementException("Process model not found: " + modelId);
+            }
+            // every generation, not just the superseded ones - once the model is gone, its current
+            // generation has nothing left to belong to either
+            List<String> projectIds = allGeneratedProjectIdsOf(workflowStateTracker.stateFor(modelId));
+            boolean deleted = springBootProjectLauncher.runIfAllIdle(projectIds, () -> {
+                for (String projectId : projectIds) {
+                    // same ownership guard cleanupSupersededProjects uses - never delete a
+                    // directory another model is recorded as owning
+                    String owner = modelIdByProjectId.get(projectId);
+                    if (owner != null && !owner.equals(modelId)) {
+                        logger.warn("Not deleting generated project {} while deleting model {} - it is recorded "
+                                + "as belonging to model {}", projectId, modelId, owner);
+                        continue;
+                    }
+                    springBootProjectGenerator.delete(projectId);
+                    generatedProjects.remove(projectId);
+                    modelIdByProjectId.remove(projectId, modelId);
+                }
+                processModels.remove(modelId, model);
+                modelFileStore.delete(modelId);
+                persistState();
+            });
+            if (!deleted) {
+                throw new IllegalStateException("Cannot delete process model " + modelId
+                        + " - one of its generated applications is running or is being launched. Stop it first, "
+                        + "then delete the model.");
+            }
+            // history is NOT touched: it is what retires this id for good (see isRetiredModelId)
+            logger.info("Deleted process model {} and {} generated project(s); its workflow history, twins, "
+                    + "Camunda state and approvals are retained", modelId, projectIds.size());
+            return true;
+        }
+    }
+
     @Override
     public List<ProcessModel> listProcessModels() {
         return processModels.values().stream()
@@ -306,6 +678,15 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
     @Override
     public GeneratedProject generateSpringBootProject(String modelId) {
+        // model lock held across the whole generate, so a delete can't land between the model
+        // lookup below and the GENERATE record - which would otherwise leave a generated project
+        // and a COMPLETED event belonging to a model that no longer exists
+        synchronized (modelLockFor(modelId)) {
+            return doGenerateSpringBootProject(modelId);
+        }
+    }
+
+    private GeneratedProject doGenerateSpringBootProject(String modelId) {
         ProcessModel model = getProcessModel(modelId);
         workflowStateTracker.record(modelId, WorkflowStage.GENERATE, StageStatus.IN_PROGRESS, null);
         try {
@@ -324,6 +705,12 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             // hand one to the caller without a second round trip through generatedProjects
             workflowStateTracker.record(modelId, WorkflowStage.GENERATE, StageStatus.COMPLETED, project.projectId());
             logger.info("Generated Spring Boot project {} for model {}", project.projectId(), modelId);
+            // Retention, primary trigger: this generation is now the current one, so every earlier
+            // generation of this model just became superseded. Deliberately after the COMPLETED
+            // record above, so "current" is read from committed history rather than from the local
+            // variable - a generate that failed before this point leaves the previous generation
+            // current, and correctly collects nothing.
+            cleanupSupersededProjects(modelId);
             return project;
         } catch (RuntimeException e) {
             workflowStateTracker.record(modelId, WorkflowStage.GENERATE, StageStatus.FAILED, e.getMessage(),
@@ -343,6 +730,13 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             return new StageError(e.getClass().getSimpleName(), "GENERATE_PROJECT", null, null, null,
                     "${" + dwe.beanName() + "}", dwe.bpmnElementId());
         }
+        // the other failure that genuinely knows its BPMN element: one task declaring a
+        // delegateExpression that names no bean (see InvalidDelegateExpressionException). Carrying
+        // both fields is what makes the editor's "Go to error" able to select that exact task.
+        if (e instanceof InvalidDelegateExpressionException bad) {
+            return new StageError(e.getClass().getSimpleName(), "GENERATE_PROJECT", null, null, null,
+                    bad.rawExpression(), bad.bpmnElementId());
+        }
         return new StageError(e.getClass().getSimpleName(), "GENERATE_PROJECT", null, null, null, null, null);
     }
 
@@ -350,12 +744,15 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     public LaunchedProject launchGeneratedProject(String projectId) {
         GeneratedProject project = generatedProjects.get(projectId);
         if (project == null) {
+            // restart no longer loses this on its own (see restoreGeneratedProjects()) - a genuine
+            // miss here means the id was never real, or its project directory is gone/unreadable
             throw new NoSuchElementException("Generated project not found: " + projectId
-                    + " - it may not exist, or the app may have restarted since it was generated");
+                    + " - it may not exist, or its generated-project directory may be missing or unreadable");
         }
-        // absent for a project generated before this map existed (a workbench restart, or one
-        // generated by an older build) - the launch still works, it just has no breadcrumb to
-        // update
+        // absent when this project's own model can no longer be identified - a legacy project
+        // whose workflow history predates persistence entirely, or one whose GENERATE detail
+        // didn't survive for some other reason. The launch still works, it just has no breadcrumb
+        // to update.
         String modelId = modelIdByProjectId.get(projectId);
         if (modelId != null) {
             workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.IN_PROGRESS, null);
@@ -393,10 +790,10 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
     @Override
     public boolean stopGeneratedProject(String projectId) {
-        // deliberately not gated on generatedProjects containing it: after a workbench restart that
-        // map is empty, and refusing to stop what the launcher is still tracking would leave a
-        // running app nothing could reach. The launcher's own registry is the authority on what's
-        // running.
+        // deliberately not gated on generatedProjects containing it: a launched PROCESS still never
+        // survives a restart (unlike the project directory itself, see restoreGeneratedProjects()),
+        // and refusing to stop what the launcher is still tracking would leave a running app
+        // nothing could reach. The launcher's own registry is the authority on what's running.
         if (projectId == null || projectId.isBlank()) {
             throw new IllegalArgumentException("projectId must not be blank");
         }
@@ -408,11 +805,19 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                 .map(launched -> "port " + launched.port())
                 .orElse(null);
         boolean wasRunning = springBootProjectLauncher.stop(projectId);
-        if (wasRunning) {
-            String modelId = modelIdByProjectId.get(projectId);
-            if (modelId != null) {
-                workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.STOPPED, portDetail);
-            }
+        String modelId = modelIdByProjectId.get(projectId);
+        if (wasRunning && modelId != null) {
+            workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.STOPPED, portDetail);
+        }
+        // Retention, deferred trigger: this is the "superseded + running -> retain temporarily"
+        // arm coming due. A project that was superseded while running was left alone by the
+        // regenerate that superseded it; stopping is the existing lifecycle event that makes it
+        // collectable, so it's collected here instead of by anything polling for the moment it
+        // happens. Runs regardless of wasRunning - a project whose JVM already died externally
+        // reports false here (the launcher's own liveness self-heal got there first) and is
+        // exactly as collectable as one that stopped cleanly.
+        if (modelId != null) {
+            cleanupSupersededProjects(modelId);
         }
         return wasRunning;
     }
@@ -430,8 +835,9 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         // same enrichment launchGeneratedProject does for a single launch - the launcher's own
         // list never carries a modelId, and New scope item 5 (Evolve Workflow) needs one to point
         // "connect to an existing deployed application" back at the model that produced it. Null
-        // for anything launched before the current backend session, same as everywhere else this
-        // in-memory-only map is used.
+        // only for a project whose own modelId genuinely can't be identified (see
+        // restoreGeneratedProjects()) - not merely "launched before this backend session" anymore,
+        // since a restart now reconstructs this mapping for anything still resolvable on disk.
         return springBootProjectLauncher.listRunning().stream()
                 .map(launched -> new LaunchedProject(launched.projectId(), launched.processKey(), launched.port(),
                         launched.launchedAt(), modelIdByProjectId.get(launched.projectId())))
@@ -529,6 +935,10 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         TwinProcess twin = new TwinProcess();
         twin.setId(twinId);
         twin.setModelId(model.getId());
+        // Tenant ownership (Phase 0 governance audit): a twin never picks its own tenant, it
+        // inherits whichever the model it was launched from already has - null for a model
+        // saved before tenancy existed, same as the model itself.
+        twin.setTenantId(model.getTenantId());
         twin.setProcessDefinitionId(model.getProcessDefinitionId());
         twin.setTwinProcessDefinitionId(twinDefinitionId);
         twin.setOriginalProcessId(original.getProcessInstanceId());
@@ -1328,7 +1738,6 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     // shared tail of evolve and bridge, both have already checked linked + reached by here
     private AgentDecision runEvolution(TwinProcess twin, String twinProcessId, String activityId,
             String twinActivityId, Object loopCounter, String agentType) {
-        String evolvedAgentVariable = AgentVariables.evolvedAgent(twinActivityId, loopCounter);
         // governance before the node manager on purpose - it can deny a type the catalog is fine with
         GovernanceDecision reservation = governanceService.reserveEvolutionSlot(twinProcessId, agentType);
         if (!reservation.isAllowed()) {
@@ -1340,60 +1749,23 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
         boolean evolutionSucceeded = false;
         try {
-            twin.getEventLog().add("Contacting node manager for agent type " + agentType);
-
-            AgentAvailabilityResult availability;
-            try {
-                availability = nodeManagerClient.checkAgentAvailability(agentType);
-            } catch (NodeManagerUnavailableException e) {
-                twin.getEventLog().add("Node manager unavailable: " + e.getMessage());
-                logger.warn("Node manager unavailable while evolving activity {} on twin {}: {}",
-                        activityId, twinProcessId, e.getMessage());
-                throw e;
+            // Tenant governance (Phase 3B/4): after the existing platform check above has
+            // already allowed this, ask the tenant's own policy before doing anything the node
+            // manager or the twin's own process instance would need rolling back. A twin nobody
+            // has assigned to a tenant yet (tenantId null - every twin launched before tenant
+            // ownership existed) has no policy to ask, so it's ungoverned here exactly like it
+            // was before this phase - not silently given a made-up tenant, not silently denied.
+            if (twin.getTenantId() != null) {
+                AgentDecision tenantDecision = enforceTenantPolicy(twin, activityId, twinProcessId, twinActivityId,
+                        loopCounter, agentType);
+                if (tenantDecision != null) {
+                    return tenantDecision;
+                }
             }
 
-            if (!availability.isAvailable()) {
-                twin.getEventLog().add("Node manager reports agent type " + agentType
-                        + " unavailable: " + availability.getReason());
-                logger.info("Evolve blocked for activity {} on twin {} with agent type {}",
-                        activityId, twinProcessId, agentType);
-                return new AgentDecision(agentType, false, null, availability.getReason());
-            }
-
-            // this variable is the only real effect an evolution has. if it doesn't land
-            // (usually the twin already ended) then nothing happened, so don't say approved.
-            boolean variableSet = false;
-            try {
-                runtimeService.setVariable(twin.getTwinProcessId(), evolvedAgentVariable,
-                        availability.getAgentName());
-                twin.getEventLog().add("Set process variable '" + evolvedAgentVariable
-                        + "' = " + availability.getAgentName() + " on twin process instance "
-                        + twin.getTwinProcessId());
-                variableSet = true;
-
-                writeAgentOutputs(twin, twinActivityId, loopCounter, availability.getOutputs());
-            } catch (ProcessEngineException e) {
-                twin.getEventLog().add("Could not set process variable on twin instance "
-                        + twin.getTwinProcessId() + " (it may have already ended): " + e.getMessage());
-                logger.warn("Could not set process variable on twin instance {}: {}",
-                        twin.getTwinProcessId(), e.getMessage());
-            }
-
-            if (!variableSet) {
-                logger.info("Evolve not approved for activity {} on twin {}: twin instance {} could not be updated",
-                        activityId, twinProcessId, twin.getTwinProcessId());
-                return new AgentDecision(agentType, false, null,
-                        "Twin process instance " + twin.getTwinProcessId()
-                                + " could not be updated (it may have already ended), so no agent was assigned");
-            }
-
-            evolutionSucceeded = true;
-            AgentDecision decision = new AgentDecision(agentType, true, availability.getAgentName(),
-                    availability.getReason(), availability.isRiskFlagged());
-            twin.getEventLog().add("Node manager reports agent type " + agentType
-                    + " available; selected agent " + availability.getAgentName());
-            logger.info("Evolve approved for activity {} on twin {} with agent type {}",
-                    activityId, twinProcessId, agentType);
+            AgentDecision decision = executeAfterGovernance(twin, twinProcessId, activityId, twinActivityId,
+                    loopCounter, agentType);
+            evolutionSucceeded = decision.isApproved();
             return decision;
         } finally {
             // fairly sure every early return and throw lands here, but if usage ever reads
@@ -1402,6 +1774,195 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                 governanceService.releaseEvolutionSlot(twinProcessId);
             }
         }
+    }
+
+    // Tenant governance (Phase 3B/4): asks the PolicyDecisionEngine whether this tenant's own
+    // policy allows this evolution. Returns null to mean "proceed exactly as before" (ALLOW, or
+    // evaluation genuinely couldn't run - see the catch below); returns a real AgentDecision to
+    // mean "stop here, this is the actual result." Called from inside runEvolution's own
+    // try/finally, before the evolution slot has been marked succeeded, so a DENY or
+    // REQUIRE_APPROVAL here still releases the slot the platform check already reserved.
+    private AgentDecision enforceTenantPolicy(TwinProcess twin, String activityId, String twinProcessId,
+            String twinActivityId, Object loopCounter, String agentType) {
+        GovernanceRequest request = new GovernanceRequest(twin.getTenantId(), EVOLVE_TWIN_ACTION,
+                Map.of("twinId", twinProcessId, "activityId", activityId, "agentType", agentType));
+
+        PolicyDecision policyDecision;
+        try {
+            policyDecision = policyDecisionEngine.evaluate(request);
+        } catch (NoSuchElementException | PolicyEvaluationException e) {
+            // the tenant record is gone, or a stored rule is malformed - a real evaluation
+            // failure, not "no policy". Fails closed for the same reason the engine itself
+            // never turns a failure into a silent ALLOW: a broken policy must not be able to
+            // let something through that no one actually approved.
+            twin.getEventLog().add("Evolution blocked: tenant policy could not be evaluated: " + e.getMessage());
+            logger.warn("Tenant policy evaluation failed for activity {} on twin {} (tenant {}): {}",
+                    activityId, twinProcessId, twin.getTenantId(), e.getMessage());
+            return new AgentDecision(agentType, false, null,
+                    "Tenant policy could not be evaluated: " + e.getMessage(), false, PolicyEffect.DENY.name());
+        }
+
+        if (policyDecision.decision() == PolicyEffect.DENY) {
+            twin.getEventLog().add("Evolution denied by tenant policy: " + policyDecision.reason());
+            logger.info("Evolve denied by tenant policy for activity {} on twin {} (tenant {}): {}",
+                    activityId, twinProcessId, twin.getTenantId(), policyDecision.reason());
+            return new AgentDecision(agentType, false, null, "Denied by tenant policy: " + policyDecision.reason(),
+                    false, PolicyEffect.DENY.name());
+        }
+        if (policyDecision.decision() == PolicyEffect.REQUIRE_APPROVAL) {
+            // Phase 4: persist exactly what would have run, pinned to THIS policy decision
+            // (policyId/policyVersionId/matchedRuleId/reason) - resolving it later never asks
+            // PolicyDecisionEngine again, so a tenant activating a new version afterward cannot
+            // retroactively change what this approval means. loopCounter is an Integer here
+            // (Camunda's own multi-instance loop counters are ints, never anything else) so it
+            // survives a JSON round trip; Object above is the engine API's own type, not a
+            // persistence concern.
+            Integer loopCounterValue = loopCounter instanceof Integer i ? i : null;
+            Approval approval = approvalService.create(twin.getTenantId(), twinProcessId, activityId,
+                    twinActivityId, loopCounterValue, agentType, EVOLVE_TWIN_ACTION, policyDecision.policyId(),
+                    policyDecision.policyVersionId(), policyDecision.policyVersionNumber(),
+                    policyDecision.matchedRuleId(), policyDecision.reason());
+            twin.getEventLog().add("Evolution requires approval per tenant policy (approval " + approval.id()
+                    + "): " + policyDecision.reason());
+            logger.info("Evolve requires approval for activity {} on twin {} (tenant {}, approval {}): {}",
+                    activityId, twinProcessId, twin.getTenantId(), approval.id(), policyDecision.reason());
+            return new AgentDecision(agentType, false, null,
+                    "Approval required (id " + approval.id() + "): " + policyDecision.reason(), false,
+                    PolicyEffect.REQUIRE_APPROVAL.name());
+        }
+        // ALLOW - fall through, existing behavior continues unchanged
+        return null;
+    }
+
+    // Phase 4: the actual work an evolution does, once governance (platform and tenant) has
+    // already said yes. Extracted out of runEvolution so the approval-resume path below can run
+    // the exact same code without going through enforceTenantPolicy a second time - the whole
+    // point of pinning a policy decision on the Approval is that resolving it does not
+    // re-evaluate PolicyDecisionEngine under whatever the tenant's policy says NOW.
+    private AgentDecision executeAfterGovernance(TwinProcess twin, String twinProcessId, String activityId,
+            String twinActivityId, Object loopCounter, String agentType) {
+        String evolvedAgentVariable = AgentVariables.evolvedAgent(twinActivityId, loopCounter);
+        twin.getEventLog().add("Contacting node manager for agent type " + agentType);
+
+        AgentAvailabilityResult availability;
+        try {
+            availability = nodeManagerClient.checkAgentAvailability(agentType);
+        } catch (NodeManagerUnavailableException e) {
+            twin.getEventLog().add("Node manager unavailable: " + e.getMessage());
+            logger.warn("Node manager unavailable while evolving activity {} on twin {}: {}",
+                    activityId, twinProcessId, e.getMessage());
+            throw e;
+        }
+
+        if (!availability.isAvailable()) {
+            twin.getEventLog().add("Node manager reports agent type " + agentType
+                    + " unavailable: " + availability.getReason());
+            logger.info("Evolve blocked for activity {} on twin {} with agent type {}",
+                    activityId, twinProcessId, agentType);
+            return new AgentDecision(agentType, false, null, availability.getReason());
+        }
+
+        // this variable is the only real effect an evolution has. if it doesn't land
+        // (usually the twin already ended) then nothing happened, so don't say approved.
+        boolean variableSet = false;
+        try {
+            runtimeService.setVariable(twin.getTwinProcessId(), evolvedAgentVariable,
+                    availability.getAgentName());
+            twin.getEventLog().add("Set process variable '" + evolvedAgentVariable
+                    + "' = " + availability.getAgentName() + " on twin process instance "
+                    + twin.getTwinProcessId());
+            variableSet = true;
+
+            writeAgentOutputs(twin, twinActivityId, loopCounter, availability.getOutputs());
+        } catch (ProcessEngineException e) {
+            twin.getEventLog().add("Could not set process variable on twin instance "
+                    + twin.getTwinProcessId() + " (it may have already ended): " + e.getMessage());
+            logger.warn("Could not set process variable on twin instance {}: {}",
+                    twin.getTwinProcessId(), e.getMessage());
+        }
+
+        if (!variableSet) {
+            logger.info("Evolve not approved for activity {} on twin {}: twin instance {} could not be updated",
+                    activityId, twinProcessId, twin.getTwinProcessId());
+            return new AgentDecision(agentType, false, null,
+                    "Twin process instance " + twin.getTwinProcessId()
+                            + " could not be updated (it may have already ended), so no agent was assigned");
+        }
+
+        AgentDecision decision = new AgentDecision(agentType, true, availability.getAgentName(),
+                availability.getReason(), availability.isRiskFlagged(), null);
+        twin.getEventLog().add("Node manager reports agent type " + agentType
+                + " available; selected agent " + availability.getAgentName());
+        logger.info("Evolve approved for activity {} on twin {} with agent type {}",
+                activityId, twinProcessId, agentType);
+        return decision;
+    }
+
+    // Phase 4: PENDING -> REJECTED. The governed action must never run - ApprovalService's own
+    // PENDING-only guard is what actually prevents that, this just records why on the twin too.
+    @Override
+    public AgentDecision rejectApproval(String approvalId, String tenantId) {
+        Approval approval = approvalService.markRejected(approvalId, tenantId);
+        TwinProcess twin = twinProcesses.get(approval.twinId());
+        if (twin != null) {
+            twin.getEventLog().add("Approval " + approvalId + " rejected: " + approval.reason());
+            persistState();
+        }
+        logger.info("Approval {} rejected for tenant {}", approvalId, tenantId);
+        return new AgentDecision(approval.agentType(), false, null, "Rejected: " + approval.reason(), false,
+                ApprovalStatus.REJECTED.name());
+    }
+
+    // Phase 4: PENDING -> APPROVED -> COMPLETED|FAILED. markApproved is the one atomic gate - a
+    // second approve() call on the same id (Step 6/7's double-approval case) finds it already
+    // APPROVED and throws before this method ever touches the twin or the node manager, so the
+    // real side effect can only be attempted once per approval. The platform quota is reserved
+    // again here, freshly, for this actual attempt - the original request's reservation was
+    // already released when REQUIRE_APPROVAL first paused it (see runEvolution's finally).
+    @Override
+    public AgentDecision approveEvolution(String approvalId, String tenantId) {
+        Approval approval = approvalService.markApproved(approvalId, tenantId);
+        TwinProcess twin = twinProcesses.get(approval.twinId());
+        if (twin == null) {
+            approvalService.markFailed(approvalId, "twin " + approval.twinId() + " no longer exists");
+            return new AgentDecision(approval.agentType(), false, null,
+                    "Twin " + approval.twinId() + " no longer exists", false, ApprovalStatus.FAILED.name());
+        }
+
+        GovernanceDecision reservation = governanceService.reserveEvolutionSlot(approval.twinId(),
+                approval.agentType());
+        if (!reservation.isAllowed()) {
+            twin.getEventLog().add("Approval " + approvalId + " could not execute: " + reservation.getReason());
+            approvalService.markFailed(approvalId, reservation.getReason());
+            persistState();
+            return new AgentDecision(approval.agentType(), false, null, reservation.getReason(), false,
+                    ApprovalStatus.FAILED.name());
+        }
+        boolean succeeded = false;
+        try {
+            twin.getEventLog().add("Approval " + approvalId + " approved, resuming the original evolution");
+            AgentDecision decision = executeAfterGovernance(twin, approval.twinId(), approval.activityId(),
+                    approval.twinActivityId(), approval.loopCounter(), approval.agentType());
+            succeeded = decision.isApproved();
+            if (succeeded) {
+                approvalService.markCompleted(approvalId, decision.getAgentName());
+            } else {
+                approvalService.markFailed(approvalId, decision.getReason());
+            }
+            persistState();
+            logger.info("Approval {} resolved for tenant {}: {}", approvalId, tenantId,
+                    succeeded ? "COMPLETED" : "FAILED");
+            return decision;
+        } finally {
+            if (!succeeded) {
+                governanceService.releaseEvolutionSlot(approval.twinId());
+            }
+        }
+    }
+
+    @Override
+    public List<Approval> listApprovals(String tenantId) {
+        return approvalService.listForTenant(tenantId);
     }
 
     // Has to be reconciled both ways, not just written. Re-evolving Task_Credit with an ordinary

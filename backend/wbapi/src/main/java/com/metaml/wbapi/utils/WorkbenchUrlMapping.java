@@ -23,6 +23,9 @@ public class WorkbenchUrlMapping {
     public static final String TRANSMUTE_WORKFLOW = TRANSMUTE_MODELE + "/{id}/workflow";
     public static final String TRANSMUTE_LAUNCH = WB_TRANSMUTE + "/launch";
     public static final String TRANSMUTE_EVOLVE = WB_TRANSMUTE + "/evolve";
+    // Phase 4 (approval workflow) - nested under evolve since an approval only ever exists for
+    // a paused evolution, never anything else
+    public static final String TRANSMUTE_EVOLVE_APPROVALS = TRANSMUTE_EVOLVE + "/approvals";
     public static final String TRANSMUTE_TWIN = WB_TRANSMUTE + "/twin";
     public static final String TRANSMUTE_BRIDGE = WB_TRANSMUTE + "/bridge";
     public static final String TRANSMUTE_COMPLETE_TASK = WB_TRANSMUTE + "/complete-task";

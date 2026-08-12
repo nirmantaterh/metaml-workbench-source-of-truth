@@ -79,4 +79,25 @@ public class ProcessModelFileStore {
     public boolean exists(String modelId) {
         return Files.isRegularFile(pathFor(modelId));
     }
+
+    // Deleting a model's BPMN artifact. Unlike save() above, a failure here is logged rather than
+    // thrown, and that asymmetry is deliberate: save()'s caller genuinely cannot continue without
+    // the file (the generation step reads it), whereas delete()'s caller is removing the model
+    // outright - a .bpmn file left behind is inert, referenced by nothing, and not worth failing a
+    // deletion that has otherwise fully succeeded. pathFor() supplies the same containment check
+    // every other method here relies on, so a hostile id cannot reach outside the models directory.
+    public boolean delete(String modelId) {
+        Path target = pathFor(modelId);
+        try {
+            boolean deleted = Files.deleteIfExists(target);
+            if (deleted) {
+                logger.info("Deleted BPMN file for model {} at {}", modelId, target.toAbsolutePath());
+            }
+            return deleted;
+        } catch (IOException e) {
+            logger.warn("Could not delete BPMN file for model {} at {}: {}", modelId, target.toAbsolutePath(),
+                    e.toString());
+            return false;
+        }
+    }
 }

@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Button, Form } from "react-bootstrap";
+import { Link } from "react-router-dom";
 
+import { WorkbenchRoutes } from "../../routes";
 import useBpmnModeler from "../../components/bpmn/useBpmnModeler";
 import "../../components/bpmn/BpmnEditor.css";
+import "./EvolvePage.css";
 
 import {
     getModel,
@@ -20,6 +23,26 @@ import {
 // comes back shaped like a denial (approved:false + reason) but really means "already done"
 const BRIDGE_ALREADY_FORWARDED_REASON = "Activity event already forwarded to twin";
 
+// Turns an unapproved decision into the right status. The distinction matters and was being lost:
+// a REQUIRE_APPROVAL decision is approved:false like a denial, so it was reported in red as
+// "blocked", which is both the wrong colour and the wrong word. Nothing failed - the evolution is
+// parked on an approval someone still has to resolve, which is the amber/pending state in the same
+// language the Model -> Generate -> Launch breadcrumb already uses (see WorkflowProgress.css).
+//
+// Reads governanceDecision, the PolicyEffect name the backend already puts on AgentDecision for
+// exactly this case; a plain denial or a node-manager refusal leaves it null and stays red.
+const decisionStatus = (verb, decision) => {
+    const reason = decision.reason || "no reason given";
+    if (decision.governanceDecision === "REQUIRE_APPROVAL") {
+        return {
+            type: "warn",
+            text: `${verb} needs approval before it can run: ${reason}`,
+            link: { to: WorkbenchRoutes.GovernanceApprovals.path, label: "Go to Approvals" },
+        };
+    }
+    return { type: "err", text: `${verb} blocked: ${reason}` };
+};
+
 // New scope item 1: Connect and Evolve move out of the model editor into their own top-level
 // page. This is the pre-existing twin (Deploy + Twin / Connect / Evolve / Bridge) workflow,
 // relocated as-is - not the newer Model -> Generate -> Launch Spring Boot pipeline, which stays on
@@ -36,8 +59,24 @@ const EvolvePage = () => {
     const [twinId, setTwinId] = useState("");
     const [agentType, setAgentType] = useState("validator");
     const [twinLog, setTwinLog] = useState([]);
+    // which original activities this twin already has links for. Read straight off the twin
+    // responses this page was already receiving (deploy, refresh, connect) - no extra request -
+    // so the bar can show Connect or Evolve/Bridge for the selected activity rather than all
+    // three at once.
+    const [activityLinks, setActivityLinks] = useState([]);
     const [status, setStatus] = useState(null);
     const [busy, setBusy] = useState(false);
+    // which secondary panel the sidebar is showing, and whether it is showing at all. Closing it
+    // hands the whole width to the canvas.
+    const [sidebarTab, setSidebarTab] = useState("log");
+    const [sidebarOpen, setSidebarOpen] = useState(true);
+
+    // every twin response already carries both of these; this just stops each call site
+    // remembering to pick them apart the same way
+    const absorbTwin = (twin) => {
+        setTwinLog(Array.isArray(twin.eventLog) ? twin.eventLog : []);
+        setActivityLinks(Array.isArray(twin.activityLinks) ? twin.activityLinks : []);
+    };
 
     // --- Governance ---
     const [deniedAgentTypesInput, setDeniedAgentTypesInput] = useState("");
@@ -46,16 +85,30 @@ const EvolvePage = () => {
     const [governanceResult, setGovernanceResult] = useState(null);
     const [governanceError, setGovernanceError] = useState(null);
 
+    // Returns whether the model is still there, so callers can tell "diagram didn't refresh" from
+    // "there is no model to refresh from any more".
+    //
+    // A twin deliberately outlives the model it was launched from (deleting a model preserves its
+    // twins - see WorkbenchService.deleteProcessModel), so twin.modelId can name a model that no
+    // longer exists. That used to land in the silent catch below: the id was still written into the
+    // input box and the canvas kept whatever diagram happened to be showing, so the page implied a
+    // deleted model was still there. A 404 is now reported instead of swallowed.
     const loadModelDiagram = async (modelId) => {
-        if (!modelId) return;
+        if (!modelId) return true;
         try {
             const modelRes = await getModel(modelId);
             const model = modelRes.data || modelRes;
             if (model?.bpmnXml) {
                 await importXml(model.bpmnXml);
             }
+            return true;
         } catch (err) {
-            // diagram refresh failing shouldn't block the log/status update that called this
+            if (err.response?.status === 404) {
+                return false;
+            }
+            // any other failure really is just a diagram refresh problem, and shouldn't block the
+            // log/status update that called this
+            return true;
         }
     };
 
@@ -70,7 +123,7 @@ const EvolvePage = () => {
             const res = await launchModel({ modelId });
             const twin = res.data || res;
             setTwinId(twin.id || "");
-            setTwinLog(Array.isArray(twin.eventLog) ? twin.eventLog : []);
+            absorbTwin(twin);
             await loadModelDiagram(modelId);
             setStatus({
                 type: "ok",
@@ -88,8 +141,7 @@ const EvolvePage = () => {
         if (!t) return;
         try {
             const res = await getTwin(t);
-            const twin = res.data || res;
-            setTwinLog(Array.isArray(twin.eventLog) ? twin.eventLog : []);
+            absorbTwin(res.data || res);
         } catch (err) {
             // keep whatever we had
         }
@@ -104,10 +156,23 @@ const EvolvePage = () => {
         try {
             const res = await getTwin(t);
             const twin = res.data || res;
-            setTwinLog(Array.isArray(twin.eventLog) ? twin.eventLog : []);
+            absorbTwin(twin);
             if (twin.modelId) {
-                setModelIdInput(twin.modelId);
-                await loadModelDiagram(twin.modelId);
+                const modelStillExists = await loadModelDiagram(twin.modelId);
+                if (modelStillExists) {
+                    setModelIdInput(twin.modelId);
+                } else {
+                    // don't put a dead id in the box you'd deploy a new twin from, and say plainly
+                    // that the twin still works - Connect/Evolve/Bridge all run off the twin and
+                    // its Camunda state, never off the model
+                    setModelIdInput("");
+                    setStatus({
+                        type: "info",
+                        text: `Twin ${t} is still running, but the model it was created from `
+                            + `(${twin.modelId}) has been deleted, so its diagram can't be shown. `
+                            + `Evolve and Bridge still work on this twin.`,
+                    });
+                }
             }
         } catch (err) {
             // log/diagram refresh failing shouldn't wipe whatever's already showing
@@ -135,7 +200,7 @@ const EvolvePage = () => {
             });
             const updated = res.data || res;
             const count = Array.isArray(updated.activityLinks) ? updated.activityLinks.length : "?";
-            setTwinLog(Array.isArray(updated.eventLog) ? updated.eventLog : twinLog);
+            absorbTwin(updated);
             setStatus({
                 type: "ok",
                 text: `Connected activity "${selectedActivityId}" to its twin (twin ${twin}, ${count} link(s) total).`,
@@ -179,10 +244,7 @@ const EvolvePage = () => {
                     text: `Evolved "${selectedActivityId}" with ${type}: approved, agent ${decision.agentName || "(unnamed)"}.`,
                 });
             } else {
-                setStatus({
-                    type: "err",
-                    text: `Evolve "${selectedActivityId}" with ${type} blocked: ${decision.reason || "no reason given"}`,
-                });
+                setStatus(decisionStatus("Evolve", decision));
             }
         } catch (err) {
             setStatus({ type: "err", text: "Evolve failed: " + (err.response?.data?.message || err.message) });
@@ -218,10 +280,7 @@ const EvolvePage = () => {
                     text: `Bridge "${selectedActivityId}" already forwarded to the twin earlier, no change (expected on a repeat bridge).`,
                 });
             } else {
-                setStatus({
-                    type: "err",
-                    text: `Bridge "${selectedActivityId}" blocked: ${decision.reason || "no reason given"}`,
-                });
+                setStatus(decisionStatus("Bridge", decision));
             }
         } catch (err) {
             setStatus({ type: "err", text: "Bridge failed: " + (err.response?.data?.message || err.message) });
@@ -324,174 +383,311 @@ const EvolvePage = () => {
         handleViewPolicy();
     }, [handleViewPolicy]);
 
+    // same three-colour language the workflow breadcrumb uses: green done, amber pending, red
+    // failed. "warn" is amber via a local class rather than Bootstrap's text-warning, which is a
+    // pale yellow that fails to read on this bar's light background.
     const statusClass =
-        status?.type === "err" ? "text-danger" : status?.type === "ok" ? "text-success" : "text-muted";
+        status?.type === "err"
+            ? "text-danger"
+            : status?.type === "ok"
+            ? "text-success"
+            : status?.type === "warn"
+            ? "evolve-status-warn"
+            : "text-muted";
+
+    // The one piece of state the bar branches on. A link is per ORIGINAL activity id, which is
+    // exactly what connectActivity keys on, so this asks the same question the backend would.
+    const selectedIsConnected =
+        !!selectedActivityId &&
+        activityLinks.some((link) => link.originalActivityId === selectedActivityId);
+
+    const hasTwin = !!twinId.trim();
+
+    const openPanel = (tab) => {
+        // clicking the panel you are already looking at closes it, which is how the canvas gets
+        // the full width back without needing a separate close control
+        if (sidebarOpen && sidebarTab === tab) {
+            setSidebarOpen(false);
+            return;
+        }
+        setSidebarTab(tab);
+        setSidebarOpen(true);
+    };
 
     return (
         <div className="bpmn-editor">
-            <div className="bpmn-toolbar">
-                <Form.Control
-                    size="sm"
-                    className="bpmn-load-id"
-                    value={modelIdInput}
-                    onChange={(e) => setModelIdInput(e.target.value)}
-                    placeholder="Model id to deploy a twin from"
-                />
-                <Button size="sm" variant="primary" onClick={handleDeployTwin} disabled={busy}>
-                    Deploy + Twin
-                </Button>
-                <div className="spacer" />
-                {status && <span className={`bpmn-status ${statusClass}`}>{status.text}</span>}
-            </div>
+            {/* One contextual bar, grouped Model | Twin | Activity. This was three stacked
+                toolbars, each of which also rendered its controls full-width because
+                .bpmn-toolbar is a column and this page never used .bpmn-toolbar-row. */}
+            <div className="evolve-bar">
+                <div className="evolve-bar-row">
+                    <span className="evolve-label">Model</span>
+                    <Form.Control
+                        size="sm"
+                        className="evolve-model-id"
+                        value={modelIdInput}
+                        onChange={(e) => setModelIdInput(e.target.value)}
+                        placeholder="Model id"
+                    />
+                    <Button size="sm" variant="primary" onClick={handleDeployTwin} disabled={busy}>
+                        Deploy + Twin
+                    </Button>
 
-            <div className="bpmn-toolbar bpmn-twinbar">
-                <span className="bpmn-field-label mb-0">Twin</span>
-                <Form.Control
-                    size="sm"
-                    className="bpmn-twin-id"
-                    value={twinId}
-                    onChange={(e) => setTwinId(e.target.value)}
-                    placeholder="Deploy to get a twin id"
-                />
-                <Button
-                    size="sm"
-                    variant="outline-secondary"
-                    onClick={handleConnect}
-                    disabled={busy || !twinId.trim() || !selectedActivityId}
-                >
-                    Connect selected activity
-                </Button>
-                <Form.Control
-                    size="sm"
-                    className="bpmn-agent-type"
-                    value={agentType}
-                    onChange={(e) => setAgentType(e.target.value)}
-                    placeholder="Agent type"
-                />
-                <Button
-                    size="sm"
-                    variant="outline-primary"
-                    onClick={handleEvolve}
-                    disabled={busy || !twinId.trim() || !selectedActivityId || !agentType.trim()}
-                >
-                    Evolve selected activity
-                </Button>
-                <Button
-                    size="sm"
-                    variant="outline-primary"
-                    onClick={handleBridge}
-                    disabled={busy || !twinId.trim() || !selectedActivityId}
-                >
-                    Bridge selected activity
-                </Button>
-                <Button
-                    size="sm"
-                    variant="outline-success"
-                    onClick={handleCompleteTasks}
-                    disabled={busy || !twinId.trim()}
-                >
-                    Complete current task(s)
-                </Button>
-                <span className="bpmn-status text-muted">
-                    {!twinId.trim()
-                        ? "Deploy + Twin first"
-                        : selectedActivityId
-                        ? `Target activity: "${selectedActivityId}"`
-                        : "Select an activity on the canvas"}
-                </span>
-            </div>
+                    <span className="evolve-divider" />
 
-            {/* second gate on evolve/bridge, nothing to do with the node manager's catalog */}
-            <div className="bpmn-toolbar bpmn-govbar">
-                <span className="bpmn-field-label mb-0">Governance</span>
-                <Form.Control
-                    size="sm"
-                    className="bpmn-denied-types"
-                    value={deniedAgentTypesInput}
-                    onChange={(e) => setDeniedAgentTypesInput(e.target.value)}
-                    placeholder="Denied agent types (comma-separated)"
-                />
-                <Form.Control
-                    size="sm"
-                    type="number"
-                    min="0"
-                    className="bpmn-max-evolutions"
-                    value={maxEvolutionsInput}
-                    onChange={(e) => setMaxEvolutionsInput(e.target.value)}
-                    placeholder="Max evolutions/twin"
-                />
-                <Button size="sm" variant="outline-secondary" onClick={handleViewPolicy} disabled={busy}>
-                    View policy
-                </Button>
-                <Button
-                    size="sm"
-                    variant="outline-primary"
-                    onClick={handleUpdatePolicy}
-                    disabled={busy || !policyLoaded}
-                >
-                    Update policy
-                </Button>
-                <Button
-                    size="sm"
-                    variant="outline-secondary"
-                    onClick={handleViewUsage}
-                    disabled={busy || !twinId.trim()}
-                >
-                    View usage for this twin
-                </Button>
+                    <span className="evolve-label">Twin</span>
+                    <Form.Control
+                        size="sm"
+                        className="evolve-twin-id"
+                        value={twinId}
+                        onChange={(e) => setTwinId(e.target.value)}
+                        placeholder="Deploy to get a twin id"
+                    />
+                    <Button
+                        size="sm"
+                        variant="outline-secondary"
+                        onClick={handleRefreshTwin}
+                        disabled={busy || !hasTwin}
+                        title="Reload this twin's event log and its model's diagram"
+                    >
+                        Refresh
+                    </Button>
+                    {/* acts on the ORIGINAL process instance, not on the selected activity, so it
+                        sits with the twin context rather than beside Evolve/Bridge */}
+                    <Button
+                        size="sm"
+                        variant="outline-success"
+                        onClick={handleCompleteTasks}
+                        disabled={busy || !hasTwin}
+                        title="Complete open user tasks on the original process instance"
+                    >
+                        Complete task(s)
+                    </Button>
+
+                    <span className="evolve-divider" />
+
+                    <span className="evolve-label">Activity</span>
+                    {selectedActivityId ? (
+                        <span className="evolve-chip evolve-chip-activity" title={selectedActivityId}>
+                            {selectedActivityId}
+                        </span>
+                    ) : (
+                        <span className="evolve-chip evolve-chip-muted">Select one on the canvas</span>
+                    )}
+
+                    <span className="evolve-label">Agent</span>
+                    <Form.Control
+                        size="sm"
+                        className="evolve-agent"
+                        value={agentType}
+                        onChange={(e) => setAgentType(e.target.value)}
+                        placeholder="Agent type"
+                    />
+
+                    {/* Contextual: an unconnected activity can only be connected, and a connected
+                        one no longer needs Connect competing with the two actions that matter.
+                        Selecting a different, unconnected activity brings Connect back. */}
+                    {selectedIsConnected ? (
+                        <>
+                            <span className="evolve-chip evolve-chip-connected">
+                                <span className="evolve-dot" />
+                                Connected
+                            </span>
+                            <Button
+                                size="sm"
+                                variant="outline-primary"
+                                onClick={handleEvolve}
+                                disabled={busy || !hasTwin || !selectedActivityId || !agentType.trim()}
+                            >
+                                Evolve
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant="outline-primary"
+                                onClick={handleBridge}
+                                disabled={busy || !hasTwin || !selectedActivityId}
+                            >
+                                Bridge
+                            </Button>
+                        </>
+                    ) : (
+                        <Button
+                            size="sm"
+                            variant="outline-secondary"
+                            onClick={handleConnect}
+                            disabled={busy || !hasTwin || !selectedActivityId}
+                        >
+                            Connect
+                        </Button>
+                    )}
+
+                    <span className="evolve-spacer" />
+
+                    <Button
+                        size="sm"
+                        variant="outline-secondary"
+                        className={`evolve-panel-toggle${sidebarOpen && sidebarTab === "log" ? " active" : ""}`}
+                        onClick={() => openPanel("log")}
+                    >
+                        Event log
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="outline-secondary"
+                        className={`evolve-panel-toggle${sidebarOpen && sidebarTab === "governance" ? " active" : ""}`}
+                        onClick={() => openPanel("governance")}
+                    >
+                        Governance
+                    </Button>
+                </div>
+
+                {/* quiet second line, the same shape the model editor's toolbar already uses -
+                    keeps a long decision reason from stretching the control row */}
+                {(status || !hasTwin || !selectedActivityId) && (
+                    <div className={`evolve-bar-status ${status ? statusClass : "text-muted"}`}>
+                        {status
+                            ? status.text
+                            : !hasTwin
+                            ? "Deploy + Twin first, or paste an existing twin id."
+                            : "Select an activity on the canvas to connect, evolve or bridge it."}
+                        {/* the status says what happened; this is where the user goes to act on
+                            it. Only set for outcomes that are resolved on another page. */}
+                        {status?.link && (
+                            <Link className="evolve-status-link" to={status.link.to}>
+                                {status.link.label}
+                            </Link>
+                        )}
+                    </div>
+                )}
             </div>
 
             <div className="bpmn-main">
                 <div className="bpmn-canvas" ref={canvasRef} />
-                <div className="bpmn-sidebar">
-                    <div className="bpmn-sidebar-header bpmn-log-header">
-                        <span>Twin Event Log</span>
-                        <Button
-                            size="sm"
-                            variant="outline-secondary"
-                            className="py-0"
-                            onClick={handleRefreshTwin}
-                            disabled={busy || !twinId.trim()}
-                        >
-                            Refresh
-                        </Button>
-                    </div>
-                    <div className="bpmn-log-section">
-                        {!twinId.trim() ? (
-                            <p className="text-muted small mb-0">
-                                Deploy a model to start a twin and see its event log here.
-                            </p>
-                        ) : twinLog.length === 0 ? (
-                            <p className="text-muted small mb-0">No events logged for this twin yet.</p>
-                        ) : (
-                            <ol className="bpmn-log-list">
-                                {twinLog.map((entry, idx) => (
-                                    <li key={idx}>{entry}</li>
-                                ))}
-                            </ol>
-                        )}
-                    </div>
+                {sidebarOpen && (
+                    <div className="bpmn-sidebar evolve-sidebar">
+                        <div className="evolve-tabs">
+                            <button
+                                type="button"
+                                className={`evolve-tab${sidebarTab === "log" ? " active" : ""}`}
+                                onClick={() => setSidebarTab("log")}
+                            >
+                                Twin Event Log
+                            </button>
+                            {/* platform governance, deliberately NOT the tenant policy page: this
+                                is GovernanceServiceImpl's runtime-only denylist/quota, a different
+                                layer from Tenant -> Policy -> Version -> Rule */}
+                            <button
+                                type="button"
+                                className={`evolve-tab${sidebarTab === "governance" ? " active" : ""}`}
+                                onClick={() => setSidebarTab("governance")}
+                            >
+                                Governance
+                            </button>
+                        </div>
 
-                    <div className="bpmn-sidebar-header">Governance</div>
-                    <div className="bpmn-log-section">
-                        {governanceError && (
-                            <p className="text-danger small mb-0">{governanceError}</p>
-                        )}
-                        {!governanceError && governanceResult && (
-                            <>
-                                <div className="small text-muted mb-1">{governanceResult.label}</div>
-                                <pre className="bpmn-json mb-0">
-                                    {JSON.stringify(governanceResult.body, null, 2)}
-                                </pre>
-                            </>
-                        )}
-                        {!governanceError && !governanceResult && (
-                            <p className="text-muted small mb-0">
-                                Click "View policy" or "View usage for this twin" above.
-                            </p>
-                        )}
+                        <div className="evolve-tab-body">
+                            {sidebarTab === "log" ? (
+                                <>
+                                    <div className="evolve-panel-head">
+                                        <span className="bpmn-sidebar-eyebrow mb-0">Twin activity</span>
+                                        <Button
+                                            size="sm"
+                                            variant="outline-secondary"
+                                            className="py-0"
+                                            onClick={handleRefreshTwin}
+                                            disabled={busy || !hasTwin}
+                                        >
+                                            Refresh
+                                        </Button>
+                                    </div>
+                                    <div className="bpmn-log-section">
+                                        {!hasTwin ? (
+                                            <p className="text-muted small mb-0">
+                                                Deploy a model to start a twin and see its event log here.
+                                            </p>
+                                        ) : twinLog.length === 0 ? (
+                                            <p className="text-muted small mb-0">
+                                                No events logged for this twin yet.
+                                            </p>
+                                        ) : (
+                                            <ol className="bpmn-log-list">
+                                                {twinLog.map((entry, idx) => (
+                                                    <li key={idx}>{entry}</li>
+                                                ))}
+                                            </ol>
+                                        )}
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div className="evolve-gov-form">
+                                        <span className="bpmn-sidebar-eyebrow mb-0">Platform policy</span>
+                                        <Form.Control
+                                            size="sm"
+                                            value={deniedAgentTypesInput}
+                                            onChange={(e) => setDeniedAgentTypesInput(e.target.value)}
+                                            placeholder="Denied agent types (comma-separated)"
+                                        />
+                                        <Form.Control
+                                            size="sm"
+                                            type="number"
+                                            min="0"
+                                            value={maxEvolutionsInput}
+                                            onChange={(e) => setMaxEvolutionsInput(e.target.value)}
+                                            placeholder="Max evolutions/twin"
+                                        />
+                                        <div className="evolve-gov-actions">
+                                            <Button
+                                                size="sm"
+                                                variant="outline-secondary"
+                                                onClick={handleViewPolicy}
+                                                disabled={busy}
+                                            >
+                                                View policy
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="outline-primary"
+                                                onClick={handleUpdatePolicy}
+                                                disabled={busy || !policyLoaded}
+                                            >
+                                                Update policy
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="outline-secondary"
+                                                onClick={handleViewUsage}
+                                                disabled={busy || !hasTwin}
+                                            >
+                                                Usage for this twin
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    <div className="bpmn-log-section">
+                                        {governanceError && (
+                                            <p className="text-danger small mb-0">{governanceError}</p>
+                                        )}
+                                        {!governanceError && governanceResult && (
+                                            <>
+                                                <div className="small text-muted mb-1">
+                                                    {governanceResult.label}
+                                                </div>
+                                                <pre className="bpmn-json mb-0">
+                                                    {JSON.stringify(governanceResult.body, null, 2)}
+                                                </pre>
+                                            </>
+                                        )}
+                                        {!governanceError && !governanceResult && (
+                                            <p className="text-muted small mb-0">
+                                                Click "View policy" or "Usage for this twin" above.
+                                            </p>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     </div>
-                </div>
+                )}
             </div>
         </div>
     );

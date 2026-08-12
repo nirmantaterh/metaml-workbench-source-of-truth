@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.metaml.workbench.automation.ProjectAutomationService;
@@ -52,12 +52,9 @@ import static org.mockito.BDDMockito.given;
 //
 // Own context on purpose - overriding the "default" automation bean is the only way to make it
 // fail, and the other walkthroughs want the real one.
-@SpringBootTest(properties = {
-        "spring.datasource.url=jdbc:h2:mem:metaml-isolation-test;DB_CLOSE_DELAY=-1",
-        "workbench.state.persist=false",
-        "workbench.models.directory=./target/test-data/models",
-        "workbench.generation.template-directory=../../templates/camundademo",
-        "workbench.generation.output-directory=./target/test-data/generated-projects"
+@IsolatedWorkbenchTest
+@TestPropertySource(properties = {
+        "spring.datasource.url=jdbc:h2:mem:metaml-isolation-test;DB_CLOSE_DELAY=-1"
 })
 class TwinFailureIsolationTest {
 

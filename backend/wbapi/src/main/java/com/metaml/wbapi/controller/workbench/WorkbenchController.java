@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.data.rest.webmvc.ResourceNotFoundException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -62,7 +63,7 @@ public class WorkbenchController {
     public ResponseEntity<ApiResponse> saveModel(@RequestBody SaveProcessModelRequest request) {
         try {
             ProcessModel model = workbenchService.saveProcessModel(request.getId(), request.getName(),
-                    request.getBpmnXml());
+                    request.getBpmnXml(), request.getTenantId());
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, model));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
@@ -107,6 +108,29 @@ public class WorkbenchController {
             return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
         } catch (NoSuchElementException e) {
             return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    // Authoring/catalog deletion - removes the model, its .bpmn artifact and its generated
+    // projects. Twins, Camunda runtime state, approvals and workflow history are all deliberately
+    // retained (see WorkbenchService.deleteProcessModel for why).
+    //
+    // 409 rather than 400 when a generated application is still running: the request is
+    // well-formed and would be valid once the app is stopped, which is exactly what CONFLICT
+    // means - the same mapping the approval endpoints below already use for IllegalStateException.
+    @DeleteMapping(WorkbenchUrlMapping.TRANSMUTE_MODELE + "/{id}")
+    public ResponseEntity<ApiResponse> deleteModel(@PathVariable String id) {
+        try {
+            workbenchService.deleteProcessModel(id);
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, true));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(CONFLICT).body(new ApiResponse(e.getMessage(), null));
         } catch (Exception e) {
             return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
         }
@@ -262,6 +286,50 @@ public class WorkbenchController {
             return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
         } catch (NodeManagerUnavailableException e) {
             return ResponseEntity.status(SERVICE_UNAVAILABLE).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    // Phase 4 (approval workflow). Same tenant-scoped "not found" convention as the rest of
+    // governance - a wrong tenantId gets 404, not 403, so it can't tell an approval that doesn't
+    // exist apart from one that belongs to someone else.
+    @GetMapping(WorkbenchUrlMapping.TRANSMUTE_EVOLVE_APPROVALS)
+    public ResponseEntity<ApiResponse> listApprovals(@org.springframework.web.bind.annotation.RequestParam String tenantId) {
+        try {
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, workbenchService.listApprovals(tenantId)));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    @PostMapping(WorkbenchUrlMapping.TRANSMUTE_EVOLVE_APPROVALS + "/{approvalId}/approve")
+    public ResponseEntity<ApiResponse> approveEvolution(@PathVariable String approvalId,
+            @RequestBody com.metaml.wbapi.payload.request.ResolveApprovalRequest request) {
+        try {
+            AgentDecision decision = workbenchService.approveEvolution(approvalId, request.getTenantId());
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, decision));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(CONFLICT).body(new ApiResponse(e.getMessage(), null));
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
+        } catch (NodeManagerUnavailableException e) {
+            return ResponseEntity.status(SERVICE_UNAVAILABLE).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    @PostMapping(WorkbenchUrlMapping.TRANSMUTE_EVOLVE_APPROVALS + "/{approvalId}/reject")
+    public ResponseEntity<ApiResponse> rejectApproval(@PathVariable String approvalId,
+            @RequestBody com.metaml.wbapi.payload.request.ResolveApprovalRequest request) {
+        try {
+            AgentDecision decision = workbenchService.rejectApproval(approvalId, request.getTenantId());
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, decision));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(CONFLICT).body(new ApiResponse(e.getMessage(), null));
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
         } catch (Exception e) {
             return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
         }

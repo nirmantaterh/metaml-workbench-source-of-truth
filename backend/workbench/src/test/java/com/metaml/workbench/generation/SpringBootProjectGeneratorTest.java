@@ -75,17 +75,174 @@ class SpringBootProjectGeneratorTest {
                 .doesNotExist();
     }
 
+    // the /complete-task assertion this used to carry encoded the pre-scope-item-4 behaviour (one
+    // generic completion endpoint for every activity). Joanna confirmed one endpoint per activity
+    // instead, so that expectation is obsolete and is asserted against below, not preserved.
     @Test
     void writesAGeneratedControllerBuiltAroundTheActualProcessKeyNotHardcodedToLoanApproval() {
         GeneratedProject project = generator().generate(differentProcessKeyBpmn(), List.of());
 
-        Path controller = project.directory().resolve(
-                "src/main/java/com/example/camundademo/controller/GeneratedProcessController.java");
-        assertThat(controller).exists();
-        String source = readString(controller);
+        String source = readString(controllerOf(project));
         assertThat(source).contains("startProcessInstanceByKey(\"gradAdmission\")");
         assertThat(source).contains("@PostMapping(\"/start\")");
-        assertThat(source).contains("@PostMapping(\"/{processInstanceId}/complete-task\")");
+    }
+
+    // TEST F: the generic endpoint is gone, not merely joined by the per-activity ones - keeping
+    // it would leave the exact "every activity through one door" path being replaced
+    @Test
+    void noLongerGeneratesTheGenericCompletionEndpointEveryActivityUsedToShare() {
+        GeneratedProject project = generator().generate(fourActivityBpmn(), List.of());
+
+        String source = readString(controllerOf(project));
+        assertThat(source).doesNotContain("complete-task");
+        assertThat(source).doesNotContain("public ResponseEntity<Map<String, List<String>>> completeTask(");
+    }
+
+    // TEST A + TEST B: N eligible activities produce N activity-specific endpoints
+    @Test
+    void generatesOneCompletionEndpointPerBpmnActivity() {
+        GeneratedProject project = generator().generate(fourActivityBpmn(), List.of());
+
+        String source = readString(controllerOf(project));
+        assertThat(source).contains("@PostMapping(\"/{processInstanceId}/review-application/complete\")");
+        assertThat(source).contains("@PostMapping(\"/{processInstanceId}/credit-check/complete\")");
+        assertThat(source).contains("@PostMapping(\"/{processInstanceId}/fraud-review/complete\")");
+        assertThat(source).contains("@PostMapping(\"/{processInstanceId}/approve-application/complete\")");
+        assertThat(countOccurrences(source, "/complete\")")).isEqualTo(4);
+    }
+
+    // TEST C: each endpoint must dispatch on its own activity's BPMN id. The slug only ever
+    // appears in the URL - the handler passes the literal element id to the task query, so
+    // /credit-check/complete cannot reach the review-application activity.
+    @Test
+    void eachEndpointCompletesItsOwnActivityAndNotAnother() {
+        GeneratedProject project = generator().generate(fourActivityBpmn(), List.of());
+
+        String source = readString(controllerOf(project));
+        assertThat(source).contains("""
+                    @PostMapping("/{processInstanceId}/credit-check/complete")
+                    public ResponseEntity<Map<String, List<String>>> completeCreditCheck(@PathVariable String processInstanceId) {
+                        return completeUserTask(processInstanceId, "Task_CreditCheck");
+                    }
+                """);
+        assertThat(source).contains(".taskDefinitionKey(activityId)");
+    }
+
+    // the generalization: eligibility is decided by how the activity actually executes, not by
+    // its element type. Two serviceTasks, same element type, opposite answers - the external one
+    // is a wait state the engine will never advance, the delegateExpression one runs on arrival.
+    @Test
+    void eligibilityFollowsExecutionSemanticsRatherThanElementType() {
+        GeneratedProject project = generator().generate(externalAndInlineServiceTaskBpmn(), List.of());
+
+        String source = readString(controllerOf(project));
+        assertThat(source).contains("@PostMapping(\"/{processInstanceId}/charge-card/complete\")");
+        assertThat(source).contains("return completeExternalTask(processInstanceId, \"Task_Charge\");");
+        assertThat(source).doesNotContain("calculate-interest");
+        assertThat(countOccurrences(source, "/complete\")")).isEqualTo(1);
+    }
+
+    // a receive task has no Task row behind it, so it cannot go through user-task completion -
+    // the parked execution is what gets signalled
+    @Test
+    void receiveTasksAreTriggeredBySignallingTheParkedExecution() {
+        GeneratedProject project = generator().generate(receiveTaskBpmn(), List.of());
+
+        String source = readString(controllerOf(project));
+        assertThat(source).contains("@PostMapping(\"/{processInstanceId}/await-settlement/complete\")");
+        assertThat(source).contains("return signalReceiveTask(processInstanceId, \"Task_Await\");");
+        assertThat(source).contains("runtimeService.signal(execution.getId())");
+        assertThat(source).doesNotContain("taskDefinitionKey");
+    }
+
+    // ExternalTaskService is injected only when something needs it - an app with no external task
+    // should not take a bean it never uses into its constructor
+    @Test
+    void externalTaskServiceIsInjectedOnlyWhenAnExternalTaskExists() {
+        String withExternal = readString(controllerOf(
+                generator().generate(externalAndInlineServiceTaskBpmn(), List.of())));
+        String withoutExternal = readString(controllerOf(generator().generate(fourActivityBpmn(), List.of())));
+
+        assertThat(withExternal).contains("ExternalTaskService externalTaskService");
+        assertThat(withoutExternal).doesNotContain("ExternalTaskService");
+    }
+
+    // one model exercising all three mechanisms at once - the endpoint layer stays uniform while
+    // each activity keeps its own execution
+    @Test
+    void oneModelCanMixEveryTriggerKindAndStillGetOneEndpointEach() {
+        GeneratedProject project = generator().generate(allTriggerKindsBpmn(), List.of());
+
+        String source = readString(controllerOf(project));
+        assertThat(countOccurrences(source, "/complete\")")).isEqualTo(3);
+        assertThat(source).contains("return completeUserTask(processInstanceId, \"Task_Human\");");
+        assertThat(source).contains("return signalReceiveTask(processInstanceId, \"Task_Await\");");
+        assertThat(source).contains("return completeExternalTask(processInstanceId, \"Task_Charge\");");
+        // only the helpers that are actually reachable
+        assertThat(source).contains("private ResponseEntity<Map<String, List<String>>> respond(");
+    }
+
+    // TEST D: same BPMN in, same endpoints out - a second generation of one model must not
+    // produce a different project
+    @Test
+    void endpointGenerationIsDeterministicForTheSameBpmn() {
+        String first = readString(controllerOf(generator().generate(fourActivityBpmn(), List.of())));
+        String second = readString(controllerOf(generator().generate(fourActivityBpmn(), List.of())));
+
+        assertThat(first).isEqualTo(second);
+    }
+
+    // service tasks execute synchronously and are never open tasks, so TaskService cannot complete
+    // one - an endpoint for it could only ever report "nothing to do". The generic endpoint being
+    // replaced was already user-task-only for the same reason.
+    @Test
+    void generatesEndpointsOnlyForActivitiesThatCanActuallyBeCompleted() {
+        GeneratedProject project = generator().generate(mixedTaskTypesBpmn(), List.of());
+
+        String source = readString(controllerOf(project));
+        assertThat(source).contains("@PostMapping(\"/{processInstanceId}/human-review/complete\")");
+        assertThat(source).doesNotContain("charge-card");
+        assertThat(countOccurrences(source, "/complete\")")).isEqualTo(1);
+    }
+
+    // two activities sharing a display name would otherwise map to the same path, which is a
+    // startup failure in the generated app rather than a subtle bug
+    @Test
+    void duplicateActivityNamesGetDistinctEndpointPaths() {
+        GeneratedProject project = generator().generate(duplicateNamesBpmn(), List.of());
+
+        String source = readString(controllerOf(project));
+        assertThat(source).contains("@PostMapping(\"/{processInstanceId}/review/complete\")");
+        assertThat(source).contains("@PostMapping(\"/{processInstanceId}/review-2/complete\")");
+        assertThat(source).contains("return completeUserTask(processInstanceId, \"Task_First\");");
+        assertThat(source).contains("return completeUserTask(processInstanceId, \"Task_Second\");");
+    }
+
+    // a model with nothing completable still has to produce a controller that compiles - the
+    // shared helper is only emitted when something calls it
+    @Test
+    void aModelWithNoCompletableActivitiesStillGeneratesAStartableController() {
+        GeneratedProject project = generator().generate(loanApprovalBpmn(), List.of());
+
+        String source = readString(controllerOf(project));
+        assertThat(source).contains("@PostMapping(\"/start\")");
+        assertThat(source).doesNotContain("completeUserTask");
+        assertThat(source).doesNotContain("respond(");
+    }
+
+    private static Path controllerOf(GeneratedProject project) {
+        return project.directory().resolve(
+                "src/main/java/com/example/camundademo/controller/GeneratedProcessController.java");
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        int index = haystack.indexOf(needle);
+        while (index >= 0) {
+            count++;
+            index = haystack.indexOf(needle, index + needle.length());
+        }
+        return count;
     }
 
     @Test
@@ -175,6 +332,110 @@ class SpringBootProjectGeneratorTest {
                 """;
     }
 
+    // deliberately shaped like Joanna's own worked example, so the endpoint names in the
+    // assertions above are the ones she actually asked about
+    private static String fourActivityBpmn() {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    id="Definitions_4" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="loanIntake" name="Loan Intake" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:userTask id="Task_Review" name="Review Application" />
+                    <bpmn2:userTask id="Task_CreditCheck" name="Credit Check" />
+                    <bpmn2:userTask id="Task_Fraud" name="Fraud Review" />
+                    <bpmn2:userTask id="Task_Approve" name="Approve Application" />
+                    <bpmn2:endEvent id="End" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+    }
+
+    private static String externalAndInlineServiceTaskBpmn() {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_7" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="externalProcess" name="External" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:serviceTask id="Task_Charge" name="Charge Card"
+                        camunda:type="external" camunda:topic="charge" />
+                    <bpmn2:serviceTask id="Task_Interest" name="Calculate Interest"
+                        camunda:delegateExpression="${calculateInterestService}" />
+                    <bpmn2:endEvent id="End" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+    }
+
+    private static String receiveTaskBpmn() {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    id="Definitions_8" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="receiveProcess" name="Receive" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:receiveTask id="Task_Await" name="Await Settlement" />
+                    <bpmn2:endEvent id="End" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+    }
+
+    private static String allTriggerKindsBpmn() {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_9" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="allKinds" name="All Kinds" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:userTask id="Task_Human" name="Human Review" />
+                    <bpmn2:receiveTask id="Task_Await" name="Await Settlement" />
+                    <bpmn2:serviceTask id="Task_Charge" name="Charge Card"
+                        camunda:type="external" camunda:topic="charge" />
+                    <bpmn2:serviceTask id="Task_Interest" name="Calculate Interest"
+                        camunda:delegateExpression="${calculateInterestService}" />
+                    <bpmn2:manualTask id="Task_Manual" name="Manual Step" />
+                    <bpmn2:endEvent id="End" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+    }
+
+    private static String mixedTaskTypesBpmn() {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_5" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="mixedProcess" name="Mixed" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:userTask id="Task_Human" name="Human Review" />
+                    <bpmn2:serviceTask id="Task_Charge" name="Charge Card"
+                        camunda:delegateExpression="${chargeCardService}" />
+                    <bpmn2:endEvent id="End" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+    }
+
+    private static String duplicateNamesBpmn() {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    id="Definitions_6" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="dupProcess" name="Duplicates" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:userTask id="Task_First" name="Review" />
+                    <bpmn2:userTask id="Task_Second" name="Review" />
+                    <bpmn2:endEvent id="End" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+    }
+
     private static String differentProcessKeyBpmn() {
         return """
                 <?xml version="1.0" encoding="UTF-8"?>
@@ -187,5 +448,147 @@ class SpringBootProjectGeneratorTest {
                   </bpmn2:process>
                 </bpmn2:definitions>
                 """;
+    }
+
+    // --- scanExisting() (restart persistence) ---
+
+    @Test
+    void scanExistingFindsAPreviouslyGeneratedProjectAndItsRealProcessKey() {
+        GeneratedProject original = generator().generate(loanApprovalBpmn(), List.of());
+
+        // a fresh generator instance pointed at the same outputDir - exactly what a real restart
+        // produces, no in-memory state carried over
+        List<GeneratedProject> rescanned = generator().scanExisting();
+
+        assertThat(rescanned).hasSize(1);
+        GeneratedProject found = rescanned.get(0);
+        assertThat(found.projectId()).isEqualTo(original.projectId());
+        assertThat(found.directory()).isEqualTo(original.directory());
+        assertThat(found.processKey()).isEqualTo("loanApproval");
+    }
+
+    @Test
+    void scanExistingFindsEveryGeneratedProjectNotJustTheFirst() {
+        GeneratedProject first = generator().generate(loanApprovalBpmn(), List.of());
+        GeneratedProject second = generator().generate(differentProcessKeyBpmn(), List.of());
+
+        List<GeneratedProject> rescanned = generator().scanExisting();
+
+        assertThat(rescanned).extracting(GeneratedProject::projectId)
+                .containsExactlyInAnyOrder(first.projectId(), second.projectId());
+        assertThat(rescanned).extracting(GeneratedProject::processKey)
+                .containsExactlyInAnyOrder("loanApproval", "gradAdmission");
+    }
+
+    // TEST 3 (existing projects): scanExisting() reads the same fixed directory layout generate()
+    // itself produces, whether or not this generator instance is the one that wrote it - proves
+    // restoration does not depend on any bookkeeping specific to the current process
+    @Test
+    void scanExistingDoesNotRequireTheSameGeneratorInstanceThatWroteTheProject() {
+        generator().generate(loanApprovalBpmn(), List.of());
+        SpringBootProjectGenerator differentInstance = generator();
+
+        assertThat(differentInstance.scanExisting()).hasSize(1);
+    }
+
+    @Test
+    void scanExistingReturnsEmptyWhenNothingHasEverBeenGenerated() {
+        // outputDir isn't even created yet - no generate() call has happened
+        assertThat(generator().scanExisting()).isEmpty();
+    }
+
+    // TEST 4 (missing artifact): a project directory whose one real file is gone must not be
+    // guessed at or silently associated with a different project - it is simply not returned
+    @Test
+    void scanExistingSkipsAProjectDirectoryWithNoBpmnFile() throws IOException {
+        GeneratedProject project = generator().generate(loanApprovalBpmn(), List.of());
+        Path bpmnFile = project.directory().resolve("src/main/resources/processes/loanApproval.bpmn");
+        Files.delete(bpmnFile);
+
+        assertThat(generator().scanExisting()).isEmpty();
+    }
+
+    // same "no safe single answer" reasoning as the no-file case above - two candidates is exactly
+    // as unresolvable as zero, not a coin flip
+    @Test
+    void scanExistingSkipsAProjectDirectoryWithAmbiguousBpmnFiles() throws IOException {
+        GeneratedProject project = generator().generate(loanApprovalBpmn(), List.of());
+        write(project.directory().resolve("src/main/resources/processes/extra.bpmn"), "<bpmn>unexpected</bpmn>");
+
+        assertThat(generator().scanExisting()).isEmpty();
+    }
+
+    @Test
+    void scanExistingIgnoresNonDirectoryEntriesUnderOutputDir() throws IOException {
+        generator().generate(loanApprovalBpmn(), List.of());
+        write(outputDir.resolve("stray-file.txt"), "not a project directory");
+
+        assertThat(generator().scanExisting()).hasSize(1);
+    }
+
+    // --- delete() (latest-generation-only retention) ---
+
+    @Test
+    void deleteRemovesTheWholeProjectDirectoryNotJustItsTopLevelFiles() {
+        GeneratedProject project = generator().generate(loanApprovalBpmn(), List.of());
+        assertThat(project.directory().resolve("src/main/resources/processes/loanApproval.bpmn")).exists();
+
+        assertThat(generator().delete(project.projectId())).isTrue();
+
+        assertThat(project.directory()).doesNotExist();
+        assertThat(generator().scanExisting()).isEmpty();
+    }
+
+    @Test
+    void deleteLeavesEveryOtherGeneratedProjectAlone() {
+        GeneratedProject doomed = generator().generate(loanApprovalBpmn(), List.of());
+        GeneratedProject keeper = generator().generate(differentProcessKeyBpmn(), List.of());
+
+        assertThat(generator().delete(doomed.projectId())).isTrue();
+
+        assertThat(doomed.directory()).doesNotExist();
+        assertThat(keeper.directory()).exists();
+        assertThat(generator().scanExisting()).extracting(GeneratedProject::projectId)
+                .containsExactly(keeper.projectId());
+    }
+
+    // the id reaches delete() from a persisted workflow event, so a traversal-shaped one has to be
+    // refused rather than resolved - this is the one operation in this class that can destroy
+    // something outside the generated-projects tree if it trusts its input
+    @Test
+    void deleteRefusesAnIdThatWouldEscapeTheOutputDirectory() throws IOException {
+        Path outsider = tempDir.resolve("not-a-generated-project");
+        write(outsider.resolve("important.txt"), "must survive");
+
+        assertThat(generator().delete("../not-a-generated-project")).isFalse();
+
+        assertThat(outsider.resolve("important.txt")).exists();
+    }
+
+    @Test
+    void deleteRefusesAnAbsolutePathDisguisedAsAProjectId() throws IOException {
+        Path outsider = tempDir.resolve("elsewhere");
+        write(outsider.resolve("important.txt"), "must survive");
+
+        assertThat(generator().delete(outsider.toAbsolutePath().toString())).isFalse();
+
+        assertThat(outsider.resolve("important.txt")).exists();
+    }
+
+    // cleanup is best-effort and runs from several lifecycle events, so the same project can
+    // legitimately be offered for deletion twice - the second time is a no-op, not a failure
+    @Test
+    void deleteReportsFalseForAProjectThatIsAlreadyGone() {
+        GeneratedProject project = generator().generate(loanApprovalBpmn(), List.of());
+        assertThat(generator().delete(project.projectId())).isTrue();
+
+        assertThat(generator().delete(project.projectId())).isFalse();
+    }
+
+    @Test
+    void deleteReportsFalseForABlankOrUnknownId() {
+        assertThat(generator().delete(null)).isFalse();
+        assertThat(generator().delete("  ")).isFalse();
+        assertThat(generator().delete("never-generated")).isFalse();
     }
 }

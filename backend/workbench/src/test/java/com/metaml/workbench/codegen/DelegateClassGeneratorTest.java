@@ -1,6 +1,7 @@
 package com.metaml.workbench.codegen;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 
@@ -72,6 +73,51 @@ class DelegateClassGeneratorTest {
         List<GeneratedDelegate> generated = generator.generate(bpmn);
 
         assertThat(generated).extracting(GeneratedDelegate::beanName).containsExactly("realService");
+    }
+
+    // Camunda accepts camunda:delegateExpression="" at deploy time, so a model carrying one saves
+    // cleanly and only breaks later, at runtime, with a bean that was never generated. Failing here
+    // - naming the element - is what lets the editor's "Go to error" select the offending task.
+    @Test
+    void aDelegateExpressionThatNamesNoBeanFailsAndIdentifiesTheBpmnElement() {
+        String bpmn = delegateExpressionBpmn("");
+
+        assertThatThrownBy(() -> generator.generate(bpmn))
+                .isInstanceOf(InvalidDelegateExpressionException.class)
+                .hasMessageContaining("does not name a delegate bean")
+                .extracting(e -> ((InvalidDelegateExpressionException) e).bpmnElementId())
+                .isEqualTo("Task_A");
+    }
+
+    // Pins a real constraint found by probing camunda-bpm-model: camunda:delegateExpression=""
+    // reads back as null, i.e. the parser cannot tell an empty attribute from an absent one. That
+    // is why the generator skips null rather than failing on it - failing would break every model
+    // whose service task legitimately has no delegate attribute at all. It also means the empty-
+    // attribute shape (the only one Camunda accepts at deploy) cannot reach the element-attributed
+    // failure below; see DEMO_PROTOCOL.md.
+    @Test
+    void anEmptyDelegateExpressionAttributeIsIndistinguishableFromAnAbsentOneAndIsSkipped() {
+        String bpmn = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="p" isExecutable="true">
+                    <bpmn2:serviceTask id="Task_A" name="Odd One" camunda:delegateExpression="" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+
+        assertThat(generator.generate(bpmn)).isEmpty();
+    }
+
+    // an expression that unwraps to nothing is the same defect wearing a different hat
+    @Test
+    void aDelegateExpressionOfOnlyWhitespaceIsTreatedAsNamingNoBean() {
+        assertThatThrownBy(() -> generator.generate(delegateExpressionBpmn("   ")))
+                .isInstanceOf(InvalidDelegateExpressionException.class)
+                .extracting(e -> ((InvalidDelegateExpressionException) e).bpmnElementId())
+                .isEqualTo("Task_A");
     }
 
     @Test
@@ -177,8 +223,15 @@ class DelegateClassGeneratorTest {
     // character to '_') both survived as separate GeneratedDelegates - which then fought over the
     // same file the moment SpringBootProjectGenerator wrote them to disk, with whichever one got
     // written second silently winning and the other bean simply never existing at runtime.
+    //
+    // This test used to assert only that the two didn't BOTH survive, which was the first, weaker
+    // half of the fix: deduping stopped the clobbering on disk but still dropped one element's bean
+    // on the floor without telling anyone, so the process still failed at runtime - just with a
+    // NoSuchBeanDefinitionException instead of a race over a file. Camunda accepts both expressions
+    // at deploy time, so nothing upstream catches this either. Failing here, naming the element
+    // that loses, is what the editor's "Go to error" needs to select the offending task.
     @Test
-    void twoDifferentBeanNamesThatSanitizeToTheSameClassNameDoNotBothSurvive() {
+    void twoDifferentBeanNamesThatSanitizeToTheSameClassNameFailAndIdentifyTheLosingElement() {
         String bpmn = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -195,13 +248,27 @@ class DelegateClassGeneratorTest {
                 </bpmn2:definitions>
                 """;
 
-        List<GeneratedDelegate> generated = generator.generate(bpmn);
+        // Task_A names the generated class, so Task_B is the one whose bean would never exist -
+        // that's the element the error has to point at, not just "somewhere in this model"
+        assertThatThrownBy(() -> generator.generate(bpmn))
+                .isInstanceOf(InvalidDelegateExpressionException.class)
+                .hasMessageContaining("generates the same delegate class 'Bad_name'")
+                .extracting(e -> ((InvalidDelegateExpressionException) e).bpmnElementId())
+                .isEqualTo("Task_B");
+    }
 
-        // both "bad-name" and "bad_name" sanitize to "Bad_name" - only one file can exist at that
-        // path, so only one GeneratedDelegate should come back, not two that would clobber each
-        // other on disk
-        assertThat(generated).hasSize(1);
-        assertThat(generated.get(0).className()).isEqualTo("Bad_name");
+    // the other half of the same contract: a failure that isn't attributable to one element must
+    // NOT come back wearing an element id. Only InvalidDelegateExpressionException carries one
+    // (see WorkbenchServiceImpl.generateErrorFrom) - anything else falls through to a StageError
+    // with a null bpmnElementId, which is what keeps "Go to error" hidden rather than pointing the
+    // user at a task that has nothing wrong with it.
+    @Test
+    void aFailureThatIsNotAboutOneElementCarriesNoElementIdRatherThanAFabricatedOne() {
+        String notEvenValidBpmn = "<nonsense/>";
+
+        assertThatThrownBy(() -> generator.generate(notEvenValidBpmn))
+                .isInstanceOf(RuntimeException.class)
+                .isNotInstanceOf(InvalidDelegateExpressionException.class);
     }
 
     private static String userTaskListenerBpmn(String expression, String taskName) {

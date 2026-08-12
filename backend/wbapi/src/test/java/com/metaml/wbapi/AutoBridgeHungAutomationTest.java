@@ -4,7 +4,7 @@ import org.camunda.bpm.engine.RuntimeService;
 import org.camunda.bpm.engine.delegate.DelegateExecution;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.metaml.workbench.automation.AutomationResult;
@@ -33,12 +33,9 @@ import static org.mockito.BDDMockito.given;
 // timed out too, with no Incident anywhere to explain why. Own Spring context (own H2 mem url,
 // own mocked "default" automation) so a genuinely-forever-hanging mock can't leak into any other
 // test's shared context.
-@SpringBootTest(properties = {
-        "spring.datasource.url=jdbc:h2:mem:metaml-hung-automation-test;DB_CLOSE_DELAY=-1",
-        "workbench.state.persist=false",
-        "workbench.models.directory=./target/test-data/models",
-        "workbench.generation.template-directory=../../templates/camundademo",
-        "workbench.generation.output-directory=./target/test-data/generated-projects"
+@IsolatedWorkbenchTest
+@TestPropertySource(properties = {
+        "spring.datasource.url=jdbc:h2:mem:metaml-hung-automation-test;DB_CLOSE_DELAY=-1"
 })
 class AutoBridgeHungAutomationTest {
 

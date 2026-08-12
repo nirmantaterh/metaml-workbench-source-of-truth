@@ -112,8 +112,18 @@ export default function useBpmnModeler({ withPropertiesPanel = true } = {}) {
         return xml;
     };
 
+    // The type list above catches an explicitly-selected process/collaboration/flow, but not the
+    // element rootAsSelection() falls back to when nothing is selected: on a diagram whose plane
+    // has no explicit process element, bpmn-js synthesises an implicit root whose type is none of
+    // those, so its generated id ("__implicitroot_2") was reaching callers as though the user had
+    // picked an activity. EvolvePage is the only consumer, and it now shows the selected activity
+    // as state and switches its actions on it, so "nothing selected" has to actually read as null.
+    const isImplicitRoot = selected && typeof selected.id === "string"
+        && selected.id.startsWith("__implicitroot");
     const selectedActivityId =
-        selected && selected.id && !NON_ACTIVITY_TYPES.includes(selected.type) ? selected.id : null;
+        selected && selected.id && !isImplicitRoot && !NON_ACTIVITY_TYPES.includes(selected.type)
+            ? selected.id
+            : null;
 
     return { canvasRef, propertiesPanelRef, modelerRef, selected, selectedActivityId, importXml, currentXml };
 }

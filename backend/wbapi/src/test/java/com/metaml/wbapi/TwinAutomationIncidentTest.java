@@ -7,7 +7,7 @@ import org.camunda.bpm.engine.delegate.DelegateExecution;
 import org.camunda.bpm.engine.runtime.Incident;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.metaml.workbench.automation.AutomationResult;
@@ -34,12 +34,9 @@ import static org.mockito.BDDMockito.given;
 // (own datasource, own ProjectAutomationService mock) rather than reusing an existing walkthrough
 // class, so overriding the "default" automation bean here can't affect any other test's automation
 // behavior.
-@SpringBootTest(properties = {
-        "spring.datasource.url=jdbc:h2:mem:metaml-twin-automation-incident-test;DB_CLOSE_DELAY=-1",
-        "workbench.state.persist=false",
-        "workbench.models.directory=./target/test-data/models",
-        "workbench.generation.template-directory=../../templates/camundademo",
-        "workbench.generation.output-directory=./target/test-data/generated-projects"
+@IsolatedWorkbenchTest
+@TestPropertySource(properties = {
+        "spring.datasource.url=jdbc:h2:mem:metaml-twin-automation-incident-test;DB_CLOSE_DELAY=-1"
 })
 class TwinAutomationIncidentTest {
 

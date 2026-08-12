@@ -98,6 +98,19 @@ public class DelegateClassGenerator {
             // the first BPMN element encountered still names/comments the generated class, exactly
             // as before this change (see renderSource below) - only bpmnElementId is new
             Source first = sources.get(0);
+            // Two elements reaching this className for the SAME bean name is fine - that's one
+            // shared Spring bean, which is exactly what Camunda does at runtime. Two elements
+            // reaching it via DIFFERENT bean names is not: only one class can be written to that
+            // path, so the other element's bean silently never exists and the process blows up the
+            // first time a token reaches that task. Dedup used to just drop the loser here, which
+            // is why the failure only ever surfaced at runtime. Camunda accepts both expressions at
+            // deploy time, so nothing upstream catches it either - this is the point where it can
+            // still be attributed to a specific element.
+            Source loser = firstWithDifferentBeanName(sources, first.beanName());
+            if (loser != null) {
+                throw InvalidDelegateExpressionException.collision(loser.elementId(), loser.taskName(),
+                        "${" + loser.beanName() + "}", "${" + first.beanName() + "}", className);
+            }
             // more than one BPMN element sharing this bean is a real, legitimate case (two
             // activities pointing at the same service) - "go to error" pointing at an arbitrary one
             // of them would be worse than not pointing anywhere, so this is left null rather than
@@ -110,6 +123,18 @@ public class DelegateClassGenerator {
         return delegates;
     }
 
+    // the element that loses the collision - the first one whose bean name isn't the one the
+    // generated class is going to be named after. Returns null when every element here agrees on
+    // the bean name, i.e. the legitimate shared-delegate case.
+    private static Source firstWithDifferentBeanName(List<Source> sources, String beanName) {
+        for (Source source : sources) {
+            if (!source.beanName().equals(beanName)) {
+                return source;
+            }
+        }
+        return null;
+    }
+
     // the BPMN element that pointed at this delegateExpression, kept alongside the same
     // beanName/taskName/kind DelegateClassGenerator always needed - elementId is new (Phase 3B),
     // everything else here already existed as addIfPresent's own local variables
@@ -118,9 +143,18 @@ public class DelegateClassGenerator {
 
     private static void addSource(Map<String, List<Source>> sourcesByClassName, String elementId,
             String rawExpression, String taskName, DelegateKind kind) {
+        // Absent attribute and present-but-unusable attribute are NOT the same thing, and treating
+        // them the same is what used to make a broken model generate a silently incomplete project.
+        // Absent: nothing was ever claimed, skip it (Camunda rejects such a model at save anyway).
+        // Present but empty/unresolvable: the BPMN claims this task runs a delegate and names none,
+        // so generating nothing here yields a project that builds and then fails at runtime with a
+        // missing bean. Fail now instead, naming the element responsible.
+        if (rawExpression == null) {
+            return;
+        }
         String beanName = unwrap(rawExpression);
         if (beanName.isBlank()) {
-            return;
+            throw new InvalidDelegateExpressionException(elementId, taskName, rawExpression);
         }
         String className = toClassName(beanName);
         sourcesByClassName.computeIfAbsent(className, cn -> new ArrayList<>())

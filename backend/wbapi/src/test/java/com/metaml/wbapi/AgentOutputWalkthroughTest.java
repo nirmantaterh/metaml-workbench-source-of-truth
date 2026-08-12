@@ -6,7 +6,7 @@ import org.camunda.bpm.engine.history.HistoricVariableInstance;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.metaml.workbench.client.AgentAvailabilityResult;
@@ -31,12 +31,9 @@ import static org.mockito.BDDMockito.given;
 // The walkthrough test next door covers riskFlagged, which is the one output the citi model has
 // an opinion about. This one is about the mechanism underneath it: an agent reporting outputs
 // nobody wrote Java for, which is what the next project attaching to this platform will be doing.
-@SpringBootTest(properties = {
-        "spring.datasource.url=jdbc:h2:mem:metaml-test;DB_CLOSE_DELAY=-1",
-        "workbench.state.persist=false",
-        "workbench.models.directory=./target/test-data/models",
-        "workbench.generation.template-directory=../../templates/camundademo",
-        "workbench.generation.output-directory=./target/test-data/generated-projects"
+@IsolatedWorkbenchTest
+@TestPropertySource(properties = {
+        "spring.datasource.url=jdbc:h2:mem:metaml-test;DB_CLOSE_DELAY=-1"
 })
 class AgentOutputWalkthroughTest {
 

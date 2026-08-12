@@ -14,11 +14,14 @@ import java.net.Socket;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 // New scope item 4 (Spring Boot Generation)'s last piece: actually starting a project
 // SpringBootProjectGenerator assembled on disk, as its own background process. Kept separate from
@@ -60,7 +63,11 @@ public class SpringBootProjectLauncher {
     // These entries are never removed: a stop()ped project can be relaunched under the same id, so
     // dropping the lock would reopen the race for exactly that case. Bounded by the number of
     // distinct generated projects seen since startup, which is small and in-memory anyway.
-    private final Map<String, Object> launchLocks = new ConcurrentHashMap<>();
+    //
+    // ReentrantLock rather than a plain Object monitor (which is what this was until retention
+    // needed it) purely because runIfIdle() below has to be able to give up instead of blocking -
+    // synchronized has no tryLock. The mutual exclusion launch() gets out of it is identical.
+    private final Map<String, ReentrantLock> launchLocks = new ConcurrentHashMap<>();
     private final Duration readyTimeout;
 
     public SpringBootProjectLauncher() {
@@ -84,7 +91,9 @@ public class SpringBootProjectLauncher {
     // itself dies. The whole sequence is now atomic per projectId; see launchLocks above for why
     // it's a per-key lock rather than a compute() on the running map.
     public LaunchedProject launch(GeneratedProject project) {
-        synchronized (launchLocks.computeIfAbsent(project.projectId(), id -> new Object())) {
+        ReentrantLock lock = lockFor(project.projectId());
+        lock.lock();
+        try {
             // re-launching a project id that's already running would otherwise leak the old process
             // and its port, orphaned with nothing left pointing at it
             stop(project.projectId());
@@ -111,6 +120,82 @@ public class SpringBootProjectLauncher {
             logger.info("Launched generated project {} (process key '{}') on port {}",
                     project.projectId(), project.processKey(), port);
             return info;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private ReentrantLock lockFor(String projectId) {
+        return launchLocks.computeIfAbsent(projectId, id -> new ReentrantLock());
+    }
+
+    // Retention safety gate. Runs `action` only while this projectId is provably idle - not
+    // running, and not in the middle of being launched - holding the same per-project lock launch()
+    // takes, so the answer cannot go stale between the check and the action.
+    //
+    // The in-flight half is the reason this exists at all rather than callers just asking find().
+    // launch() only publishes into `running` AFTER awaitReady returns, which for a real generated
+    // project is up to five minutes of Maven and Camunda startup. For that entire window find()
+    // honestly reports "not running" while a child JVM is actively compiling and booting out of
+    // that very directory - so a cleanup that trusted find() alone would delete a project's source
+    // out from under its own starting process. Holding the launch lock is what closes that window;
+    // nothing else in this class distinguishes "idle" from "starting".
+    //
+    // tryLock, not lock: the whole point is that the caller is doing opportunistic cleanup on a
+    // request thread. Blocking here would mean a regenerate sitting behind a five-minute launch of
+    // the very project it was about to discard. Returning false instead just leaves the directory
+    // for the next lifecycle event (stop, another regenerate, restart) to collect - cleanup is
+    // always best-effort by design, never the thing that makes an operation fail.
+    public boolean runIfIdle(String projectId, Runnable action) {
+        if (projectId == null || projectId.isBlank()) {
+            return false;
+        }
+        return runIfAllIdle(List.of(projectId), action);
+    }
+
+    // The all-or-nothing form, for a caller acting on a whole SET of projects at once - model
+    // deletion, which must not remove some of a model's generated projects and then discover
+    // another one is running. Same guarantee as runIfIdle scaled up: every project is proven idle,
+    // and stays idle, for the whole action.
+    //
+    // Locks are taken in sorted order purely as a discipline. Two concurrent model deletions can't
+    // actually contend (a generated project belongs to exactly one model), so this isn't fixing a
+    // live deadlock; it means a future caller with overlapping sets can't introduce one either.
+    // Liveness is checked only after ALL locks are held - checking as we went would let an
+    // already-checked project start launching while later ones were still being locked.
+    public boolean runIfAllIdle(Collection<String> projectIds, Runnable action) {
+        List<String> ordered = projectIds.stream()
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .sorted()
+                .toList();
+        List<ReentrantLock> held = new ArrayList<>(ordered.size());
+        try {
+            for (String projectId : ordered) {
+                ReentrantLock lock = lockFor(projectId);
+                if (!lock.tryLock()) {
+                    // something is mid-launch; give up rather than block the caller behind it
+                    return false;
+                }
+                held.add(lock);
+            }
+            for (String projectId : ordered) {
+                // same liveness question find() already answers, asked while nothing can change it
+                // - and it self-heals a dead entry on the way past, exactly as it does for any
+                // other caller (see find()'s own comment); a project whose JVM died externally
+                // reads as idle here for the same reason it reads as not-running everywhere else
+                if (find(projectId).isPresent()) {
+                    return false;
+                }
+            }
+            // an empty set is vacuously idle - a model that was never generated has nothing to
+            // guard, and its deletion should not be refused for lack of anything to check
+            action.run();
+            return true;
+        } finally {
+            for (int i = held.size() - 1; i >= 0; i--) {
+                held.get(i).unlock();
+            }
         }
     }
 
@@ -123,13 +208,52 @@ public class SpringBootProjectLauncher {
                 : new GeneratedProjectLaunchException(e.getMessage(), port, null, e);
     }
 
+    // Query-time liveness, not a background daemon: awaitReady already proved isAlive() is the
+    // right signal for "did this JVM actually survive", this just asks the same question again on
+    // every read instead of trusting whatever launch() last observed. A generated app that dies on
+    // its own (OOM, an uncaught exception, someone kill -9ing it directly - proven live against a
+    // real generated project) leaves its port unreachable and its Process no longer alive; nothing
+    // about that requires polling in the background to detect, only checking before this class
+    // hands the entry to a caller who's about to act on "is this actually running".
     public Optional<LaunchedProject> find(String projectId) {
-        return Optional.ofNullable(running.get(projectId)).map(Running::info);
+        Running r = running.get(projectId);
+        if (r == null) {
+            return Optional.empty();
+        }
+        if (!r.process().isAlive()) {
+            forgetIfStillDead(projectId, r);
+            return Optional.empty();
+        }
+        return Optional.of(r.info());
     }
 
-    // the Evolve workflow step's own future read of "what's currently deployed to connect to"
+    // the Evolve workflow step's own future read of "what's currently deployed to connect to" -
+    // same liveness re-check as find(), for the same reason: a dead entry here would otherwise
+    // read as a real, connectable application
     public List<LaunchedProject> listRunning() {
-        return running.values().stream().map(Running::info).toList();
+        List<LaunchedProject> alive = new ArrayList<>();
+        for (Map.Entry<String, Running> entry : running.entrySet()) {
+            Running r = entry.getValue();
+            if (r.process().isAlive()) {
+                alive.add(r.info());
+            } else {
+                forgetIfStillDead(entry.getKey(), r);
+            }
+        }
+        return alive;
+    }
+
+    // Self-heals the registry the moment a dead entry is observed, rather than leaving it for
+    // stop() to eventually clear - conditional on value (remove(key, value), not remove(key)) so
+    // this can never delete a DIFFERENT, freshly-launched Running that raced in under the same
+    // projectId between the isAlive() check above and this call (launch()'s own per-key lock
+    // allows exactly that: stop-then-relaunch under one id is the documented, intended way to
+    // reuse a projectId).
+    private void forgetIfStillDead(String projectId, Running observed) {
+        if (running.remove(projectId, observed)) {
+            logger.warn("Generated project {} was reported running but its process has died; "
+                    + "removing the stale entry", projectId);
+        }
     }
 
     public boolean stop(String projectId) {
@@ -177,6 +301,37 @@ public class SpringBootProjectLauncher {
             Thread.currentThread().interrupt();
             process.descendants().forEach(ProcessHandle::destroyForcibly);
             process.destroyForcibly();
+        }
+    }
+
+    // Restart-only liveness probe, for the one case the registry above genuinely cannot answer: a
+    // hard kill (kill -9 / taskkill /F) of the workbench leaves its generated JVMs running - they
+    // are ProcessBuilder children and do not die with the parent, and @PreDestroy never got to run
+    // - so the next workbench starts with an empty `running` map while those apps are still up and
+    // still holding their ports. Cleanup would then see "not running" and delete a live project's
+    // directory out from under it.
+    //
+    // Deliberately NOT consulted during normal operation. While the workbench is up, `running` is
+    // the single authority on liveness and a port probe could only disagree with it - a second,
+    // weaker source of truth is exactly the kind of thing that causes the bug it is meant to
+    // prevent. At startup there is nothing to disagree with: the map is empty by construction, so
+    // this only ever adds information.
+    //
+    // Fails closed on purpose. A listening port proves something is there, not that it is the
+    // generated app (the OS may have handed the port to an unrelated process since). Treating that
+    // as "may still be alive" over-retains a directory at worst, and over-retention is recoverable
+    // - the next regenerate or restart tries again - whereas deleting a running app's source is
+    // not. Uses the same loopback connect awaitReady already relies on, so it stays portable
+    // rather than shelling out to a platform-specific process lister.
+    public boolean somethingIsListeningOn(int port) {
+        if (port <= 0 || port > 65535) {
+            return false;
+        }
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress("127.0.0.1", port), 300);
+            return true;
+        } catch (IOException nothingThere) {
+            return false;
         }
     }
 

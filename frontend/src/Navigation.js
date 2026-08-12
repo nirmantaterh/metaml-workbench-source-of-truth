@@ -13,6 +13,8 @@ import ModelPage from "./pages/workbench/ModelPage";
 import EditProjectListPage from "./pages/workbench/EditProjectListPage";
 import EvolvePage from "./pages/workbench/EvolvePage";
 import DeployedAppsPage from "./pages/workbench/DeployedAppsPage";
+import GovernancePoliciesPage from "./pages/workbench/GovernancePoliciesPage";
+import GovernanceApprovalsPage from "./pages/workbench/GovernanceApprovalsPage";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import { CommonRoutes, WorkbenchRoutes } from "./routes";
 
@@ -31,6 +33,8 @@ const router = createBrowserRouter(
                 <Route path={WorkbenchRoutes.EditProject.path} element={<EditProjectListPage/>} />
                 <Route path={WorkbenchRoutes.EvolvePage.path} element={<EvolvePage/>} />
                 <Route path={WorkbenchRoutes.DeployedAppsPage.path} element={<DeployedAppsPage/>} />
+                <Route path={WorkbenchRoutes.GovernancePolicies.path} element={<GovernancePoliciesPage/>} />
+                <Route path={WorkbenchRoutes.GovernanceApprovals.path} element={<GovernanceApprovalsPage/>} />
             </Route>
         </>
     )

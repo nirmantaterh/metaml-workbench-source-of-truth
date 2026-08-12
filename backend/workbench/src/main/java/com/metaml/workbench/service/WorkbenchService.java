@@ -3,6 +3,7 @@ package com.metaml.workbench.service;
 import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.generation.GeneratedProject;
 import com.metaml.workbench.generation.LaunchedProject;
+import com.metaml.workbench.governance.Approval;
 import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.workflow.WorkflowState;
 import com.metaml.workbench.model.ProcessModel;
@@ -15,9 +16,31 @@ public interface WorkbenchService {
 
     String sampleMethod();
 
-    ProcessModel saveProcessModel(String id, String name, String bpmnXml);
+    // kept for the many existing callers that don't care about tenant ownership - resolves to
+    // tenantId=null, same as any legacy model saved before tenancy existed
+    default ProcessModel saveProcessModel(String id, String name, String bpmnXml) {
+        return saveProcessModel(id, name, bpmnXml, null);
+    }
+
+    // Tenant ownership (see the Phase 0 governance audit): the model is the enterprise-owned
+    // resource, established exactly once, here, at creation - never reassigned afterward, since
+    // saveProcessModel never overwrites an existing id. tenantId is still just caller-supplied
+    // metadata, not authentication; there is no login to derive it from yet.
+    ProcessModel saveProcessModel(String id, String name, String bpmnXml, String tenantId);
 
     ProcessModel getProcessModel(String id);
+
+    // Authoring/catalog deletion: removes the model, its .bpmn artifact, and every generated
+    // project it produced. Deliberately NOT a runtime teardown - twins, their Camunda process
+    // instances, Camunda deployments, approvals and tenant/policy data all survive, because a twin
+    // holds its model id as provenance only and Camunda deployments are shared between a model's
+    // twins (deleting one cascade-deletes live instances).
+    //
+    // Throws IllegalStateException if any of the model's generated applications is running or
+    // being launched - deleting a model never kills a running app as a side effect. Workflow
+    // history is retained, which is also what permanently retires the model id: it can never be
+    // recreated, or the new model would inherit the dead one's Generate/Launch history.
+    boolean deleteProcessModel(String modelId);
 
     // New scope item 1 (Navigation & UI): "Edit Existing Project" needs something to list, not
     // just a lookup by an id the user already has to know. Newest first - that's the one someone
@@ -76,6 +99,20 @@ public interface WorkbenchService {
     TwinProcess connectActivity(String twinProcessId, String originalActivityId, String twinActivityId);
 
     AgentDecision evolveActivity(String twinProcessId, String activityId, String agentType);
+
+    // Phase 4 (approval workflow): resolves a REQUIRE_APPROVAL decision. approveEvolution
+    // resumes and actually runs the exact original operation, once, under the ORIGINAL pinned
+    // policy decision - it does not ask PolicyDecisionEngine again. rejectApproval permanently
+    // stops it; the governed action never runs. Both are tenant-scoped the same way every other
+    // governance method is - tenantId must match the approval's own, or it's treated as not
+    // found.
+    AgentDecision approveEvolution(String approvalId, String tenantId);
+
+    AgentDecision rejectApproval(String approvalId, String tenantId);
+
+    // what a minimal approval UI would list for one tenant - PENDING and resolved alike, the
+    // caller filters if it only wants PENDING
+    List<Approval> listApprovals(String tenantId);
 
     // manual Bridge button: works out which visit of the activity the original is on
     AgentDecision bridgeActivityEvent(String twinProcessId, String activityId);

@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.metaml.workbench.client.AgentAvailabilityResult;
@@ -47,10 +47,9 @@ import static org.mockito.BDDMockito.given;
 // either, so this runs against whatever the app is actually configured to do; the two wait-time
 // properties only change how often the acquisition thread looks, not whether it runs, and without
 // them each timer would sit out the default 60s backoff.
-@SpringBootTest(properties = {
+@IsolatedWorkbenchTest
+@TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:metaml-timer-test;DB_CLOSE_DELAY=-1",
-        "workbench.state.persist=false",
-        "workbench.models.directory=./target/test-data/models",
         "camunda.bpm.job-execution.wait-time-in-millis=250",
         "camunda.bpm.job-execution.max-wait=1000"
 })
