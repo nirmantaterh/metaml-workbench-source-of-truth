@@ -63,6 +63,11 @@
       "react-app/jest"
     ]
   },
+  "jest": {
+    "moduleNameMapper": {
+      "^react-router/dom$": "<rootDir>/node_modules/react-router/dist/development/dom-export.js"
+    }
+  },
   "browserslist": {
     "production": [
       ">0.2%",
