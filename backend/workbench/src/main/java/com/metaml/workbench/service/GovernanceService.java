@@ -19,10 +19,7 @@ public interface GovernanceService {
 
     void releaseEvolutionSlot(String twinProcessId);
 
-    // The twin advancing its own token is not an evolution and must not come out of the same
-    // budget. The citi walkthrough alone spends seven evolution slots on auto-bridging, and a twin
-    // takes a step for every activity it passes through - put them together and the quota that is
-    // supposed to be limiting agent requests gets emptied by ordinary automation instead.
+    // twin advances draw from a separate budget; automation must not exhaust the agent-request quota
     GovernanceDecision reserveTwinExecutionSlot(String twinProcessId);
 
     void releaseTwinExecutionSlot(String twinProcessId);

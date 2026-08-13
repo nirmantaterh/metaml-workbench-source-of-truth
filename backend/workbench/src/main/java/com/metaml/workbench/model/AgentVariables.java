@@ -3,14 +3,11 @@ package com.metaml.workbench.model;
 import java.util.Collection;
 import java.util.List;
 
-// Evolve writes evolvedAgent_* on the twin instance and AgentExecutionDelegate reads it back on
-// the original, so the two have to build the same name from opposite ends. Lives here rather
-// than as a constant in either of them.
+// Shared naming contract: evolve writes evolvedAgent_* on the twin, AgentExecutionDelegate reads
+// it on the original. Both ends must build the same name.
 public final class AgentVariables {
 
-    // the output name that predates the generic mechanism. It still gets copied onto the original
-    // under its old bare name as well, because Gateway_ChecksPassed in the citi model asks for
-    // that name and nothing else.
+    // predates the generic mechanism; bare name kept because Gateway_ChecksPassed in the citi model reads it
     public static final String RISK_FLAGGED_OUTPUT = "riskFlagged";
 
     private static final String OUTPUT_NAME_SEPARATOR = ",";
@@ -22,14 +19,11 @@ public final class AgentVariables {
         return "evolvedAgent_" + perVisit(twinActivityId, loopCounter);
     }
 
-    // one variable per named output the agent reported, so a catalog entry can report several
-    // things without any of them needing a field of its own anywhere
     public static String evolvedAgentOutput(String outputName, String twinActivityId, Object loopCounter) {
         return "evolvedAgentOutput_" + outputName + "_" + perVisit(twinActivityId, loopCounter);
     }
 
-    // which of the above the last evolution of this visit wrote. Without it a re-evolution can
-    // only add outputs, never take away one the previous agent left behind.
+    // tracks which outputs the last evolution wrote; re-evolution needs this to remove stale ones
     public static String evolvedAgentOutputIndex(String twinActivityId, Object loopCounter) {
         return "evolvedAgentOutputs_" + perVisit(twinActivityId, loopCounter);
     }
@@ -38,31 +32,20 @@ public final class AgentVariables {
         return "agentExecuted_" + perVisit(activityId, loopCounter);
     }
 
-    // The twin's side of the story, and the only variable on the twin that says an activity there
-    // actually executed rather than just having an agent assigned to it. Per-visit like
-    // evolvedAgent_* above and for the same reason.
+    // written on the twin; the only signal that automation actually ran (vs. just having an agent assigned)
     public static String twinAutomation(String twinActivityId, Object loopCounter) {
         return "twinAutomation_" + perVisit(twinActivityId, loopCounter);
     }
 
-    // whatever the project's automation reported, one variable per name, same shape as the
-    // evolvedAgentOutput_* family so a model author only has to learn the one convention
     public static String twinAutomationOutput(String outputName, String twinActivityId, Object loopCounter) {
         return "twinAutomationOutput_" + outputName + "_" + perVisit(twinActivityId, loopCounter);
     }
 
-    // Deliberately not per-visit like the names above: gateway conditions downstream in the model
-    // read this by hand and have no idea which visit of the activity produced it, same as the
-    // agentFlaggedRisk flag it generalises. Nothing reconciles this one the way the twin side
-    // does, so a multi-instance activity whose later visits report fewer outputs than an earlier
-    // one leaves the earlier value sitting here, attributed to whichever visit last touched it.
-    // Neither example model does this today; worth an index here too if one ever does.
+    // not per-visit: gateway conditions read it without knowing which visit produced it; later visits may overwrite.
     public static String agentOutput(String activityId, String outputName) {
         return "agentOutput_" + activityId + "_" + outputName;
     }
 
-    // the index variable is just the output names joined up, and both ends have to agree on that
-    // the same way they agree on the names, so the two halves of it live together
     public static String outputIndexValue(Collection<String> outputNames) {
         return String.join(OUTPUT_NAME_SEPARATOR, outputNames);
     }
@@ -74,10 +57,7 @@ public final class AgentVariables {
         return List.of(joined.split(OUTPUT_NAME_SEPARATOR));
     }
 
-    // A multi-instance activity is the same activity id several times over, each visit with its
-    // own agent, so the loop index has to be part of the name or visit 3 overwrites 1 and 2 and
-    // three evolutions end up looking like one. Plain activities have no loopCounter and keep
-    // the short name they always had.
+    // multi-instance: same activity id per visit, so loop index is in the name to keep visits distinct
     private static String perVisit(String activityId, Object loopCounter) {
         return loopCounter == null ? activityId : activityId + "_" + loopCounter;
     }

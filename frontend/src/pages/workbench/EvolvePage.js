@@ -23,14 +23,7 @@ import {
 // comes back shaped like a denial (approved:false + reason) but really means "already done"
 const BRIDGE_ALREADY_FORWARDED_REASON = "Activity event already forwarded to twin";
 
-// Turns an unapproved decision into the right status. The distinction matters and was being lost:
-// a REQUIRE_APPROVAL decision is approved:false like a denial, so it was reported in red as
-// "blocked", which is both the wrong colour and the wrong word. Nothing failed - the evolution is
-// parked on an approval someone still has to resolve, which is the amber/pending state in the same
-// language the Model -> Generate -> Launch breadcrumb already uses (see WorkflowProgress.css).
-//
-// Reads governanceDecision, the PolicyEffect name the backend already puts on AgentDecision for
-// exactly this case; a plain denial or a node-manager refusal leaves it null and stays red.
+// REQUIRE_APPROVAL is approved:false but shows amber; governanceDecision is null for real denials.
 const decisionStatus = (verb, decision) => {
     const reason = decision.reason || "no reason given";
     if (decision.governanceDecision === "REQUIRE_APPROVAL") {
@@ -43,56 +36,35 @@ const decisionStatus = (verb, decision) => {
     return { type: "err", text: `${verb} blocked: ${reason}` };
 };
 
-// New scope item 1: Connect and Evolve move out of the model editor into their own top-level
-// page. This is the pre-existing twin (Deploy + Twin / Connect / Evolve / Bridge) workflow,
-// relocated as-is - not the newer Model -> Generate -> Launch Spring Boot pipeline, which stays on
-// the editor page. Its own canvas, no properties panel - this page only needs to select an
-// activity on an already-deployed model's diagram, not edit it.
 const EvolvePage = () => {
     const { canvasRef, selectedActivityId, importXml } = useBpmnModeler({
         withPropertiesPanel: false,
     });
 
-    // what to deploy a fresh twin from
     const [modelIdInput, setModelIdInput] = useState("");
-    // editable because twin ids don't survive a backend restart - paste the old one back in
+    // editable: twin ids don't survive a backend restart
     const [twinId, setTwinId] = useState("");
     const [agentType, setAgentType] = useState("validator");
     const [twinLog, setTwinLog] = useState([]);
-    // which original activities this twin already has links for. Read straight off the twin
-    // responses this page was already receiving (deploy, refresh, connect) - no extra request -
-    // so the bar can show Connect or Evolve/Bridge for the selected activity rather than all
-    // three at once.
+    // drives Connect vs Evolve/Bridge context switching
     const [activityLinks, setActivityLinks] = useState([]);
     const [status, setStatus] = useState(null);
     const [busy, setBusy] = useState(false);
-    // which secondary panel the sidebar is showing, and whether it is showing at all. Closing it
-    // hands the whole width to the canvas.
     const [sidebarTab, setSidebarTab] = useState("log");
     const [sidebarOpen, setSidebarOpen] = useState(true);
 
-    // every twin response already carries both of these; this just stops each call site
-    // remembering to pick them apart the same way
     const absorbTwin = (twin) => {
         setTwinLog(Array.isArray(twin.eventLog) ? twin.eventLog : []);
         setActivityLinks(Array.isArray(twin.activityLinks) ? twin.activityLinks : []);
     };
 
-    // --- Governance ---
     const [deniedAgentTypesInput, setDeniedAgentTypesInput] = useState("");
     const [maxEvolutionsInput, setMaxEvolutionsInput] = useState("");
     const [policyLoaded, setPolicyLoaded] = useState(false);
     const [governanceResult, setGovernanceResult] = useState(null);
     const [governanceError, setGovernanceError] = useState(null);
 
-    // Returns whether the model is still there, so callers can tell "diagram didn't refresh" from
-    // "there is no model to refresh from any more".
-    //
-    // A twin deliberately outlives the model it was launched from (deleting a model preserves its
-    // twins - see WorkbenchService.deleteProcessModel), so twin.modelId can name a model that no
-    // longer exists. That used to land in the silent catch below: the id was still written into the
-    // input box and the canvas kept whatever diagram happened to be showing, so the page implied a
-    // deleted model was still there. A 404 is now reported instead of swallowed.
+    // returns false on 404; twins outlive their model so a 404 is plausible
     const loadModelDiagram = async (modelId) => {
         if (!modelId) return true;
         try {
@@ -106,8 +78,6 @@ const EvolvePage = () => {
             if (err.response?.status === 404) {
                 return false;
             }
-            // any other failure really is just a diagram refresh problem, and shouldn't block the
-            // log/status update that called this
             return true;
         }
     };
@@ -143,12 +113,11 @@ const EvolvePage = () => {
             const res = await getTwin(t);
             absorbTwin(res.data || res);
         } catch (err) {
-            // keep whatever we had
+            // ignore
         }
     };
 
-    // pulls the twin's own event log AND its underlying model's diagram back in - pasting a twin
-    // id you already have is otherwise a dead end with nothing on the canvas to select
+    // also reloads the diagram so pasting an existing twin id isn't a dead end
     const handleRefreshTwin = async () => {
         const t = twinId.trim();
         if (!t) return;
@@ -162,9 +131,7 @@ const EvolvePage = () => {
                 if (modelStillExists) {
                     setModelIdInput(twin.modelId);
                 } else {
-                    // don't put a dead id in the box you'd deploy a new twin from, and say plainly
-                    // that the twin still works - Connect/Evolve/Bridge all run off the twin and
-                    // its Camunda state, never off the model
+                    // don't pre-fill: deleted model, twin still works off Camunda state
                     setModelIdInput("");
                     setStatus({
                         type: "info",
@@ -175,7 +142,7 @@ const EvolvePage = () => {
                 }
             }
         } catch (err) {
-            // log/diagram refresh failing shouldn't wipe whatever's already showing
+            // ignore
         } finally {
             setBusy(false);
         }
@@ -234,9 +201,8 @@ const EvolvePage = () => {
                 activityId: selectedActivityId,
                 agentType: type,
             });
-            // a 200 is not an approval, that's inside the decision
             const decision = res.data || res;
-            // evolve gives back the decision, not the twin, so the log needs its own fetch
+            // evolve returns the decision, not the twin; fetch log separately
             await refreshTwinLog(twin);
             if (decision.approved) {
                 setStatus({
@@ -289,8 +255,7 @@ const EvolvePage = () => {
         }
     };
 
-    // evolve/bridge need the activity reached in the original, and the original sits at its
-    // first user task until someone completes it. ignores the canvas selection entirely.
+    // advances the original so the next activity becomes reachable; ignores canvas selection
     const handleCompleteTasks = async () => {
         const twin = twinId.trim();
         if (!twin) {
@@ -378,14 +343,11 @@ const EvolvePage = () => {
         }
     };
 
-    // load policy on mount so the denylist box isn't empty, see policyLoaded above
     useEffect(() => {
         handleViewPolicy();
     }, [handleViewPolicy]);
 
-    // same three-colour language the workflow breadcrumb uses: green done, amber pending, red
-    // failed. "warn" is amber via a local class rather than Bootstrap's text-warning, which is a
-    // pale yellow that fails to read on this bar's light background.
+    // "warn" maps to amber via local class; Bootstrap's text-warning is too pale on this background
     const statusClass =
         status?.type === "err"
             ? "text-danger"
@@ -395,8 +357,6 @@ const EvolvePage = () => {
             ? "evolve-status-warn"
             : "text-muted";
 
-    // The one piece of state the bar branches on. A link is per ORIGINAL activity id, which is
-    // exactly what connectActivity keys on, so this asks the same question the backend would.
     const selectedIsConnected =
         !!selectedActivityId &&
         activityLinks.some((link) => link.originalActivityId === selectedActivityId);
@@ -404,8 +364,7 @@ const EvolvePage = () => {
     const hasTwin = !!twinId.trim();
 
     const openPanel = (tab) => {
-        // clicking the panel you are already looking at closes it, which is how the canvas gets
-        // the full width back without needing a separate close control
+        // same-tab click closes the panel, returning full width to the canvas
         if (sidebarOpen && sidebarTab === tab) {
             setSidebarOpen(false);
             return;
@@ -416,9 +375,6 @@ const EvolvePage = () => {
 
     return (
         <div className="bpmn-editor">
-            {/* One contextual bar, grouped Model | Twin | Activity. This was three stacked
-                toolbars, each of which also rendered its controls full-width because
-                .bpmn-toolbar is a column and this page never used .bpmn-toolbar-row. */}
             <div className="evolve-bar">
                 <div className="evolve-bar-row">
                     <span className="evolve-label">Model</span>
@@ -452,8 +408,7 @@ const EvolvePage = () => {
                     >
                         Refresh
                     </Button>
-                    {/* acts on the ORIGINAL process instance, not on the selected activity, so it
-                        sits with the twin context rather than beside Evolve/Bridge */}
+                    {/* acts on original instance, not selected activity */}
                     <Button
                         size="sm"
                         variant="outline-success"
@@ -484,9 +439,7 @@ const EvolvePage = () => {
                         placeholder="Agent type"
                     />
 
-                    {/* Contextual: an unconnected activity can only be connected, and a connected
-                        one no longer needs Connect competing with the two actions that matter.
-                        Selecting a different, unconnected activity brings Connect back. */}
+                    {/* connected activity shows Evolve/Bridge; unconnected shows Connect */}
                     {selectedIsConnected ? (
                         <>
                             <span className="evolve-chip evolve-chip-connected">
@@ -541,8 +494,6 @@ const EvolvePage = () => {
                     </Button>
                 </div>
 
-                {/* quiet second line, the same shape the model editor's toolbar already uses -
-                    keeps a long decision reason from stretching the control row */}
                 {(status || !hasTwin || !selectedActivityId) && (
                     <div className={`evolve-bar-status ${status ? statusClass : "text-muted"}`}>
                         {status
@@ -550,8 +501,6 @@ const EvolvePage = () => {
                             : !hasTwin
                             ? "Deploy + Twin first, or paste an existing twin id."
                             : "Select an activity on the canvas to connect, evolve or bridge it."}
-                        {/* the status says what happened; this is where the user goes to act on
-                            it. Only set for outcomes that are resolved on another page. */}
                         {status?.link && (
                             <Link className="evolve-status-link" to={status.link.to}>
                                 {status.link.label}
@@ -573,9 +522,7 @@ const EvolvePage = () => {
                             >
                                 Twin Event Log
                             </button>
-                            {/* platform governance, deliberately NOT the tenant policy page: this
-                                is GovernanceServiceImpl's runtime-only denylist/quota, a different
-                                layer from Tenant -> Policy -> Version -> Rule */}
+                            {/* platform denylist/quota, not the tenant policy layer */}
                             <button
                                 type="button"
                                 className={`evolve-tab${sidebarTab === "governance" ? " active" : ""}`}

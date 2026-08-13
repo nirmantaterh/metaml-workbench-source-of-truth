@@ -15,21 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-// The first thing on the backend to read a metaml: element. Until now the whole extension was the
-// modeller's business and travelled through save/deploy as inert XML.
-//
-// What it reads: <metaml:agentOutputs><metaml:agentOutput name="riskFlagged"
-// variable="agentFlaggedRisk" /></metaml:agentOutputs> hanging off an activity's
-// extensionElements. The name is one of the outputs the evolved agent reported; the variable is
-// what the model author wants it published as alongside the generic agentOutput_* name.
-//
-// Nothing registers the metaml namespace with the Camunda model API, so the extension elements
-// come back as plain ModelElementInstances rather than typed ones. That's fine and it's why this
-// drops to the DOM for the last step instead of parsing ProcessModel.getBpmnXml() over again:
-// getBpmnModelInstance tolerates the unknown namespace, hands the elements over generically, and
-// the engine's deployment cache means the lookup isn't re-reading the XML on every task
-// completion. Registering a proper moddle extension would be the tidier version of this, but it
-// buys typed getters for two string attributes and nothing else.
+// Reads metaml:agentOutputs extension elements to map agent output names to process variable names.
 @Component
 public class AgentOutputDeclarations {
 
@@ -39,8 +25,7 @@ public class AgentOutputDeclarations {
     private static final String DECLARATIONS_ELEMENT = "agentOutputs";
     private static final String DECLARATION_ELEMENT = "agentOutput";
 
-    // same shape NodeManagerClient holds its output names to. A variable is going straight onto a
-    // running process instance, so it gets the same treatment as a name coming off the wire.
+    // lands directly on a running process instance; must be plain camelCase
     private static final Pattern SAFE_VARIABLE_NAME = Pattern.compile("^[A-Za-z][A-Za-z0-9]*$");
 
     private final RepositoryService repositoryService;
@@ -49,8 +34,7 @@ public class AgentOutputDeclarations {
         this.repositoryService = repositoryService;
     }
 
-    // output name -> the variable the author wants it published under. Empty for the usual case
-    // of an activity that declared nothing.
+    // returns output name → declared variable name; empty map for undeclared activities
     public Map<String, String> forActivity(String processDefinitionId, String activityId) {
         if (processDefinitionId == null || activityId == null) {
             return Map.of();
@@ -61,8 +45,7 @@ public class AgentOutputDeclarations {
             BpmnModelInstance modelInstance = repositoryService.getBpmnModelInstance(processDefinitionId);
             activity = modelInstance.getModelElementById(activityId);
         } catch (ProcessEngineException e) {
-            // a declaration is an extra, so a definition that has gone missing shouldn't be the
-            // thing that fails a task completion
+            // missing definition shouldn't fail a task completion
             logger.warn("Could not read process definition {} for output declarations on {}: {}",
                     processDefinitionId, activityId, e.getMessage());
             return Map.of();
@@ -86,8 +69,6 @@ public class AgentOutputDeclarations {
                 }
                 String name = declaration.getAttribute("name");
                 String variable = declaration.getAttribute("variable");
-                // a half-filled row is what the modeller's Add button leaves behind before anyone
-                // types in it, so it reaches here often enough to be worth ignoring quietly
                 if (isBlank(name) || isBlank(variable)) {
                     continue;
                 }

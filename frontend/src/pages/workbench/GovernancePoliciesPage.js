@@ -15,19 +15,7 @@ import {
 import ProcessSpinner from "../../components/common/ProcessSpinner";
 import NoDataAvailable from "../../components/common/NoDataAvailable";
 
-// Phase 6C: a UI on top of the Phase 1/2 tenant policy API - no new backend, see the Phase 6B
-// audit for why (the existing create-draft/add-rule/activate lifecycle already gives a
-// complete, safe editing workflow; there's nothing here for a removeRule/clone-version call to
-// do that a fresh draft doesn't already do).
-//
-// No auth exists yet (see WebSecurityConfig), so "tenant" here is a plain selector, not an
-// identity - labeled as such below rather than implying a login. Reuses the same
-// paste-or-pick-an-id pattern EvolvePage already uses for twin/model ids, not a new pattern.
-//
-// No polling: unlike a generated app's launch (an external process the backend can't push
-// updates about), policy state only ever changes from actions this same page just took, so
-// refetching right after each mutation is honest and sufficient - a setInterval loop here would
-// just be re-asking a question nothing else could have changed the answer to.
+// Refetches after mutations because policy state changes only through this page.
 const EFFECTS = ["ALLOW", "DENY", "REQUIRE_APPROVAL"];
 const OPERATORS = ["==", "!=", ">", ">=", "<", "<="];
 
@@ -43,13 +31,13 @@ const GovernancePoliciesPage = () => {
     const [policiesError, setPoliciesError] = useState(null);
     const [newPolicyName, setNewPolicyName] = useState("");
 
-    // versionsByPolicyId: { [policyId]: PolicyVersion[] | undefined }. undefined = not expanded yet
+    // undefined = not yet expanded; null/[] = loaded
     const [versionsByPolicyId, setVersionsByPolicyId] = useState({});
-    const [ruleForms, setRuleForms] = useState({}); // { [versionId]: { field, operator, value, effect } }
-    const [evalForms, setEvalForms] = useState({}); // { [policyId]: { action, field, value } }
-    const [evalResults, setEvalResults] = useState({}); // { [policyId]: PolicyDecision | { error } }
+    const [ruleForms, setRuleForms] = useState({});
+    const [evalForms, setEvalForms] = useState({});
+    const [evalResults, setEvalResults] = useState({});
     const [busy, setBusy] = useState(false);
-    const [status, setStatus] = useState(null); // { type: 'ok'|'err', text }
+    const [status, setStatus] = useState(null);
 
     const errorText = (err) => err.response?.data?.message || err.message;
 
@@ -198,9 +186,7 @@ const GovernancePoliciesPage = () => {
         }
     };
 
-    // Phase 6D: exercises the existing PolicyDecisionEngine.evaluate() - always the tenant's
-    // ACTIVE version, there is no way to target a specific version, on purpose. This is what
-    // proves the versioning UI above actually drives runtime decisions, not just its own display.
+    // always evaluates the ACTIVE version — no parameter to target a draft, by design
     const evalForm = (policyId) => evalForms[policyId] || { action: "", field: "", value: "" };
     const setEvalForm = (policyId, patch) =>
         setEvalForms((prev) => ({ ...prev, [policyId]: { ...evalForm(policyId), ...patch } }));
@@ -231,9 +217,6 @@ const GovernancePoliciesPage = () => {
                 {status && <span className={statusClass}>{status.text}</span>}
             </div>
 
-            {/* Tenant selection is a plain field, not an identity - there is no login in this
-                system yet. Whatever tenantId is picked here is what every call below sends,
-                exactly the same trust level as every other governance call in this app. */}
             <div className="border rounded p-3 mb-4">
                 <div className="text-muted small mb-2">
                     Acting as tenant (not authenticated - no login exists in this system yet):
@@ -432,9 +415,6 @@ const GovernancePoliciesPage = () => {
                                             </tbody>
                                         </Table>
 
-                                        {/* Phase 6D: this always evaluates the policy's ACTIVE
-                                            version - never whatever DRAFT you're looking at above,
-                                            even if one is expanded/being edited right now */}
                                         <div className="border rounded p-2 mt-2">
                                             <div className="text-muted small mb-2">
                                                 Test evaluation (always against the ACTIVE version, never a DRAFT):

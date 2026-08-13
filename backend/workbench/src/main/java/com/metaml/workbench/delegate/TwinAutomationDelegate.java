@@ -16,17 +16,7 @@ import com.metaml.workbench.service.WorkbenchService;
 
 import java.util.Map;
 
-// Runs as the twin's automation service task: camunda:delegateExpression="${twinAutomationDelegate}",
-// synchronous, no async marker. It used to be an execution listener on the receive task itself, back
-// when synchronization and automation were one element; splitting them meant this had to become a
-// JavaDelegate on the new service task instead - the receive task now does nothing but wait, and this
-// runs the instant that wait is over, in the same correlate() command, before the twin moves on.
-// delegateExpression rather than class= to match agentExecutionDelegate next door - the engine
-// resolves it against the Spring context, so this gets its dependencies injected like anything else.
-//
-// All it does is decide whose automation this twin belongs to, run it, and write down what came
-// back. The deciding part is a map lookup: Spring collects every ProjectAutomationService bean by
-// name, and a twin's projectId is the name it asks for.
+// Runs automation synchronously on the twin's service task, looked up by projectId bean name.
 @Component("twinAutomationDelegate")
 public class TwinAutomationDelegate implements JavaDelegate {
 
@@ -46,9 +36,7 @@ public class TwinAutomationDelegate implements JavaDelegate {
 
     @Override
     public void execute(DelegateExecution execution) {
-        // execution.getCurrentActivityId() here is this service task's own id (the automation task,
-        // e.g. Task_KYC_automate), not the receive task's - every twinAutomation_<id>/
-        // evolvedAgent_<id> variable is named after the synchronization point instead, so recover it
+        // getCurrentActivityId() returns the automation task's id; recover the receive task's id that variables key off
         String activityId = TwinModelGenerator.synchronizationActivityIdOf(execution.getCurrentActivityId());
         ProjectAutomationService automation = automationFor(execution);
         AutomationResult result = automation.execute(execution);
@@ -62,9 +50,7 @@ public class TwinAutomationDelegate implements JavaDelegate {
         }
     }
 
-    // The business key is the only thing on the execution that ties it back to a twin the workbench
-    // knows about. A twin that has fallen out of the workbench's own bookkeeping still has a real
-    // token to move, so it gets the default automation rather than an exception.
+    // falls back to default if the twin is no longer in bookkeeping but its token is still live
     private ProjectAutomationService automationFor(DelegateExecution execution) {
         String projectId = DEFAULT_PROJECT_ID;
         String businessKey = execution.getProcessBusinessKey();
@@ -80,8 +66,7 @@ public class TwinAutomationDelegate implements JavaDelegate {
         if (automation != null) {
             return automation;
         }
-        // a project id with no bean behind it is a configuration mistake, not a reason to fail the
-        // twin's job and leave its token stuck where the original has already moved on from
+        // missing bean is a config mistake; don't leave the twin's token stuck
         logger.warn("No ProjectAutomationService named '{}' for twin instance {}, falling back to '{}'. "
                 + "Registered: {}", projectId, execution.getProcessInstanceId(), DEFAULT_PROJECT_ID,
                 automationsByProject.keySet());

@@ -28,22 +28,18 @@ function fitViewport(modeler) {
     try {
         modeler.get("canvas").zoom("fit-viewport");
     } catch (e) {
-        // keep whatever zoom we have
+        // ignore
     }
 }
 
-// Split out of ModelPage so the new EvolvePage (New scope item 1: Connect/Evolve/Bridge move to
-// their own top-level page) can select an activity on the same kind of canvas without duplicating
-// the modeler bootstrapping - only ModelPage needs the properties panel wired to an editable
-// canvas, but both need "click an activity, know which one is selected".
+// Shared canvas hook; handles both the editable (with properties panel) and read-only cases.
 export default function useBpmnModeler({ withPropertiesPanel = true } = {}) {
     const canvasRef = useRef(null);
     const propertiesPanelRef = useRef(null);
     const modelerRef = useRef(null);
 
     const [selected, setSelected] = useState(null);
-    // bumped on command-stack changes, otherwise a properties-panel-driven edit never re-renders
-    // anything reading modelerRef.current
+    // properties-panel edits only change modelerRef; bump revision to re-render consumers
     const [, setRevision] = useState(0);
     const bump = useCallback(() => setRevision((r) => r + 1), []);
 
@@ -89,7 +85,7 @@ export default function useBpmnModeler({ withPropertiesPanel = true } = {}) {
                 if (!destroyed) fitViewport(modeler);
             })
             .catch(() => {
-                // caller decides what a failed default import means for its own status UI
+                // ignore
             });
 
         return () => {
@@ -112,12 +108,7 @@ export default function useBpmnModeler({ withPropertiesPanel = true } = {}) {
         return xml;
     };
 
-    // The type list above catches an explicitly-selected process/collaboration/flow, but not the
-    // element rootAsSelection() falls back to when nothing is selected: on a diagram whose plane
-    // has no explicit process element, bpmn-js synthesises an implicit root whose type is none of
-    // those, so its generated id ("__implicitroot_2") was reaching callers as though the user had
-    // picked an activity. EvolvePage is the only consumer, and it now shows the selected activity
-    // as state and switches its actions on it, so "nothing selected" has to actually read as null.
+    // __implicitroot_* leaks through as if the user picked an activity; "nothing selected" must be null.
     const isImplicitRoot = selected && typeof selected.id === "string"
         && selected.id.startsWith("__implicitroot");
     const selectedActivityId =

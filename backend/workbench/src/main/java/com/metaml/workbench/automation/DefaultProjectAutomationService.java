@@ -11,14 +11,7 @@ import com.metaml.workbench.model.AgentVariables;
 import java.time.Instant;
 import java.util.Map;
 
-// The automation every twin gets unless its project says otherwise. There is exactly one of these
-// on purpose: the registry only needs one real implementation to be a working extension point, and
-// making up business rules for the other course projects would be inventing requirements nobody
-// gave us.
-//
-// It still has to do something you can point at, or a twin activity "running" would be
-// indistinguishable from the job never having been executed. So it timestamps itself, both into
-// the log and onto the twin instance.
+// Fallback automation for twins with no project-specific implementation; timestamps as proof of execution.
 @Service("default")
 public class DefaultProjectAutomationService implements ProjectAutomationService {
 
@@ -29,14 +22,9 @@ public class DefaultProjectAutomationService implements ProjectAutomationService
     @Override
     public AutomationResult execute(DelegateExecution execution) {
         Instant ranAt = Instant.now();
-        // execution.getCurrentActivityId() here is the automation service task's own id
-        // (e.g. Task_KYC_automate), not the synchronization point's - evolvedAgent_<id> and every
-        // other twin-side variable are named after the receive task, so recover that id first or
-        // this always misses and logs "agent: none" even when one really was evolved
+        // getCurrentActivityId() is the automation task's id; variables are keyed off the receive task's id
         String activityId = TwinModelGenerator.synchronizationActivityIdOf(execution.getCurrentActivityId());
 
-        // whatever the bridge evolved for this activity a moment ago, so the log line ties the
-        // twin's own step back to the agent that was picked for it
         Object agent = execution.getVariable(AgentVariables.evolvedAgent(activityId,
                 execution.getVariable("loopCounter")));
 

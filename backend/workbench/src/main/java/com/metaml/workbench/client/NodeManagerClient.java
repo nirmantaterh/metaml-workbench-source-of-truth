@@ -19,20 +19,13 @@ public class NodeManagerClient {
 
     private static final String NODE_MANAGER_AGENT_URL = "http://localhost:8083/api/v1/node-manager/agents/{agentType}";
 
-    // agentType is free text from the request body and goes straight into the path above.
-    // RestTemplate doesn't escape "/" in a path variable, so restrict it.
+    // agentType goes into the URL path; RestTemplate doesn't escape "/", so restrict the alphabet.
     private static final Pattern SAFE_AGENT_TYPE = Pattern.compile("^[a-z0-9-]+$");
 
-    // output names get pasted into generated Camunda variable names on both sides of the bridge,
-    // and the code that builds those names assumes a plain camelCase identifier. Same reasoning
-    // as SAFE_AGENT_TYPE, different alphabet.
+    // output names become Camunda variable names; must be plain camelCase
     private static final Pattern SAFE_OUTPUT_NAME = Pattern.compile("^[A-Za-z][A-Za-z0-9]*$");
 
-    // a bare RestTemplate never times out - one stuck call here and the auto-bridge's single
-    // thread never bridges anything again. Was 2s/5s, which put the worst case at 7s and forced
-    // AutoBridgeTrigger's wait to be at least that long; a multi-instance activity pays that per
-    // visit, so it's now 3s worst case for what is a call to localhost. Anything slower than
-    // this isn't a stub having a bad day, it's something actually broken.
+    // bare RestTemplate never times out; 1s+2s keeps AutoBridgeTrigger's budget above worst-case
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(2);
 
@@ -63,7 +56,6 @@ public class NodeManagerClient {
             throw new NodeManagerUnavailableException(
                     "Node manager returned an empty response for agent type " + agentType);
         }
-        // available with no agent name is nonsense, and it used to come back as an approved decision with a null agent that then got written into evolvedAgent_*
         if (result.isAvailable() && (result.getAgentName() == null || result.getAgentName().isBlank())) {
             return new AgentAvailabilityResult(agentType, false, null,
                     "Node manager reported the agent type as available but named no agent", false);
@@ -72,9 +64,7 @@ public class NodeManagerClient {
         return result;
     }
 
-    // The node manager is a stub with no authentication in front of it, so its answers get the
-    // same treatment as anything else off the wire: drop what doesn't fit the contract and carry
-    // on with the rest. Throwing here would take down an evolution over one odd catalog entry.
+    // Node manager has no auth; drop bad entries rather than failing the whole evolution.
     private static Map<String, Object> usableOutputs(String agentType, Map<String, Object> outputs) {
         if (outputs == null || outputs.isEmpty()) {
             return Map.of();
@@ -88,8 +78,6 @@ public class NodeManagerClient {
                         name, agentType);
                 continue;
             }
-            // anything richer than a scalar can't survive the trip into a process variable in a
-            // shape a gateway condition could read back
             if (!(value instanceof Boolean || value instanceof String || value instanceof Number)) {
                 logger.warn("Dropping output '{}' reported for agent type {}: {} is not a scalar",
                         name, agentType, value == null ? "null" : value.getClass().getName());
