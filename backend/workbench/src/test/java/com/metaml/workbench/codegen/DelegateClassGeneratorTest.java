@@ -157,6 +157,11 @@ class DelegateClassGeneratorTest {
                     || trimmed.startsWith("public")
                     || trimmed.startsWith("private")
                     || trimmed.startsWith("@Override")
+                    // the generated delegate now logs its own execution (professor: "just print
+                    // out a statement") - a legitimate two-line logger.info(...) call, not a
+                    // broken-comment fragment
+                    || trimmed.startsWith("logger.")
+                    || trimmed.startsWith("+ \"")
                     || trimmed.equals("{") || trimmed.equals("}"))
                     .as("line should be recognizable Java, not a fragment of a broken comment: '%s'", line)
                     .isTrue();

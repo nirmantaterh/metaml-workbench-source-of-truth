@@ -8,6 +8,7 @@ import "bpmn-js/dist/assets/bpmn-js.css";
 import TokenSimulationModule from "bpmn-js-token-simulation";
 import "bpmn-js-token-simulation/assets/css/bpmn-js-token-simulation.css";
 
+import { assertRenderableBpmn } from "./renderableBpmn";
 import metamlModdle from "./moddle/metamlModdle.json";
 import camundaModdle from "camunda-bpmn-moddle/resources/camunda.json";
 import defaultDiagram from "./defaultDiagram";
@@ -98,7 +99,10 @@ export default function useBpmnModeler({ withPropertiesPanel = true } = {}) {
         };
     }, [bump, withPropertiesPanel]);
 
+    // guard BEFORE importXML - see assertRenderableBpmn: once bpmn-js has been handed a
+    // DI-less model the properties panel is wedged for the rest of the page's life
     const importXml = async (xml) => {
+        assertRenderableBpmn(xml);
         await modelerRef.current.importXML(xml);
         fitViewport(modelerRef.current);
     };

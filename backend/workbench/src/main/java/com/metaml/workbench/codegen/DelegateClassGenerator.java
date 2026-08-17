@@ -16,20 +16,18 @@ import java.util.List;
 import java.util.Map;
 
 // New scope item 3 (BPMN Processing): parse a saved model and generate a real Java class per
-// delegateExpression, replacing what used to be a person hand-writing these. The class name comes
-// from the delegateExpression itself (e.g. delegateExpression="${calculateInterestService}" ->
-// class CalculateInterestService), not from the task's display name - the expression is what
-// Camunda actually looks up at runtime to find the bean, so deriving from it is the only choice
-// that's guaranteed to produce a class the generated app can actually run. Deriving from the
-// display name instead risks exactly the mismatch the example that kicked this off already showed
-// ("Calculate Interest" next to delegateExpression "calculateInterestService" - different casing,
-// different wording).
+// delegateExpression, replacing hand-written ones. The class name comes from the
+// delegateExpression itself (e.g. "${calculateInterestService}" -> class
+// CalculateInterestService), not the task's display name - the expression is what Camunda
+// actually looks up at runtime, so deriving from it is the only choice guaranteed to produce a
+// class the generated app can run. Deriving from the display name risks exactly the mismatch that
+// kicked this off ("Calculate Interest" next to delegateExpression "calculateInterestService" -
+// different casing, different wording).
 //
 // Two BPMN shapes carry a delegateExpression, and they're not interchangeable - see DelegateKind's
-// own comment. Originally this only scanned service tasks (Joanna's own example is one), which
-// meant generating a project from this repo's own demo models - which use a userTask taskListener
-// instead - silently produced zero delegates and shipped a project that crashed the moment a task
-// completed. Found by actually trying it, not assumed.
+// own comment. Originally this only scanned service tasks (Joanna's own example is one); this
+// repo's own demo models use a userTask taskListener instead, so it silently produced zero
+// delegates and shipped a project that crashed on the first completed task. Found by trying it.
 @Component
 public class DelegateClassGenerator {
 
@@ -46,19 +44,17 @@ public class DelegateClassGenerator {
     // delegateExpression share the one Spring bean already, generating it twice would just be two
     // classes fighting over the same @Component name.
     //
-    // Deduped by className rather than beanName: two different bean names can sanitize down to the
-    // same Java identifier (toClassName maps every illegal character to '_', so "bad-name" and
-    // "bad_name" both become "Bad_name"), and deduping on the raw bean name let both through as
-    // separate GeneratedDelegates that would then fight over the same file when written to disk -
-    // whichever one SpringBootProjectGenerator happened to write second would silently win, and the
-    // bean the other one needed would simply never exist at runtime.
+    // Deduped by className rather than beanName: two different bean names can sanitize to the same
+    // Java identifier (toClassName maps every illegal character to '_', so "bad-name" and
+    // "bad_name" both become "Bad_name"). Deduping on the raw bean name let both through as
+    // separate GeneratedDelegates fighting over the same file - whichever wrote second would
+    // silently win, and the other's bean would never exist at runtime.
     //
-    // packageName has to match wherever the caller is actually going to place the .java file -
-    // javac happily compiles a file whose package statement disagrees with its directory, but
-    // Spring Boot's default @ComponentScan only looks under the application class's own package,
-    // so a mismatch here means the bean silently never registers at runtime even though the build
-    // succeeds. SpringBootProjectGenerator passes the template's real delegates package for this
-    // reason instead of relying on the default.
+    // packageName must match wherever the caller actually places the .java file - javac compiles a
+    // file whose package disagrees with its directory, but Spring Boot's default @ComponentScan
+    // only looks under the application class's own package, so a mismatch here means the bean
+    // silently never registers even though the build succeeds. SpringBootProjectGenerator passes
+    // the template's real delegate package for this reason.
     public List<GeneratedDelegate> generate(String bpmnXml, String packageName) {
         BpmnModelInstance model = Bpmn.readModelFromStream(
                 new ByteArrayInputStream(bpmnXml.getBytes(StandardCharsets.UTF_8)));
@@ -143,12 +139,10 @@ public class DelegateClassGenerator {
 
     private static void addSource(Map<String, List<Source>> sourcesByClassName, String elementId,
             String rawExpression, String taskName, DelegateKind kind) {
-        // Absent attribute and present-but-unusable attribute are NOT the same thing, and treating
-        // them the same is what used to make a broken model generate a silently incomplete project.
-        // Absent: nothing was ever claimed, skip it (Camunda rejects such a model at save anyway).
-        // Present but empty/unresolvable: the BPMN claims this task runs a delegate and names none,
-        // so generating nothing here yields a project that builds and then fails at runtime with a
-        // missing bean. Fail now instead, naming the element responsible.
+        // Absent and present-but-unusable are NOT the same: absent means nothing was ever claimed,
+        // skip it (Camunda rejects such a model at save anyway). Present but empty/unresolvable
+        // means the BPMN claims this task runs a delegate and names none - fail now, naming the
+        // element responsible, rather than shipping a project that fails at runtime instead.
         if (rawExpression == null) {
             return;
         }
@@ -191,13 +185,10 @@ public class DelegateClassGenerator {
         return sanitized.toString();
     }
 
-    // task labels are free-text from the modeler, not code - BPMN happily carries an embedded
-    // newline in a name attribute (Joanna's own loanApproval.bpmn does: "Calculate\nInterest"),
-    // and every use of this label lands inside a single-line // comment. An unsanitized newline
-    // there doesn't just look wrong, it breaks the comment mid-line and turns the rest of the
-    // label into a syntax error in the generated file - found by actually compiling generated
-    // output against the real template, not by the unit tests, none of which had a multi-line
-    // name in their fixtures.
+    // task labels are free-text from the modeler, not code - BPMN can carry an embedded newline in
+    // a name attribute (Joanna's own loanApproval.bpmn does: "Calculate\nInterest"), and every use
+    // of this label lands inside a single-line // comment, where an unsanitized newline breaks the
+    // generated file's syntax.
     private static String sanitizeForComment(String label) {
         return label.replaceAll("\\s+", " ").trim();
     }
@@ -217,20 +208,25 @@ public class DelegateClassGenerator {
 
                 import org.camunda.bpm.engine.delegate.DelegateExecution;
                 import org.camunda.bpm.engine.delegate.JavaDelegate;
+                import org.slf4j.Logger;
+                import org.slf4j.LoggerFactory;
                 import org.springframework.stereotype.Component;
 
                 // Generated from the BPMN activity "%s" (camunda:delegateExpression="${%s}").
-                // Fill in the actual logic below - this stub only exists so the process can deploy
-                // and run end to end without a NoClassDefFoundError on this bean.
+                // Logs on execution so the process can deploy and run end to end and its execution
+                // is directly observable - replace the log line below with real logic when ready.
                 @Component("%s")
                 public class %s implements JavaDelegate {
 
+                    private static final Logger logger = LoggerFactory.getLogger(%s.class);
+
                     @Override
                     public void execute(DelegateExecution execution) {
-                        // TODO: implement %s
+                        logger.info("Executing generated delegate for activity \\"%s\\" "
+                                + "(process instance {})", execution.getProcessInstanceId());
                     }
                 }
-                """.formatted(packageName, label, beanName, beanName, className, label);
+                """.formatted(packageName, label, beanName, beanName, className, className, label);
     }
 
     // A taskListener's delegateExpression points at a TaskListener, not a JavaDelegate - it fires
@@ -246,19 +242,24 @@ public class DelegateClassGenerator {
 
                 import org.camunda.bpm.engine.delegate.DelegateTask;
                 import org.camunda.bpm.engine.delegate.TaskListener;
+                import org.slf4j.Logger;
+                import org.slf4j.LoggerFactory;
                 import org.springframework.stereotype.Component;
 
                 // Generated from the BPMN user task "%s" (camunda:taskListener delegateExpression="${%s}").
-                // Fill in the actual logic below - this stub only exists so the process can deploy
-                // and run end to end without a NoClassDefFoundError on this bean.
+                // Logs on execution so the process can deploy and run end to end and its execution
+                // is directly observable - replace the log line below with real logic when ready.
                 @Component("%s")
                 public class %s implements TaskListener {
 
+                    private static final Logger logger = LoggerFactory.getLogger(%s.class);
+
                     @Override
                     public void notify(DelegateTask delegateTask) {
-                        // TODO: implement %s
+                        logger.info("Executing generated task listener for activity \\"%s\\" "
+                                + "(process instance {})", delegateTask.getProcessInstanceId());
                     }
                 }
-                """.formatted(packageName, label, beanName, beanName, className, label);
+                """.formatted(packageName, label, beanName, beanName, className, className, label);
     }
 }

@@ -24,7 +24,6 @@ const router = createBrowserRouter(
             <Route path={CommonRoutes.Home.path} element={<RootLayout />}>
                 <Route index element={<Home />}/>
 
-                {/* Workbench Routes */}
                 <Route path={WorkbenchRoutes.SamplePage.path} element={<SamplPage/>} />
                 {/* legacy path, still works if bookmarked - starts blank, same as CreateProject */}
                 <Route path={WorkbenchRoutes.ModelPage.path} element={<ModelPage/>} />

@@ -4,7 +4,6 @@ import { Link } from "react-router-dom";
 const Footer = () => {
     return (
         <footer className='page-footer fixed-bottom py-0'>
-            {/* Copyright etc */}
             <div className="small-print fixed-bottom">
                 <div className="container">
                     <span className="pull-left pb-2">

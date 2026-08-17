@@ -16,6 +16,8 @@ import org.camunda.bpm.model.bpmn.instance.ParallelGateway;
 import org.camunda.bpm.model.bpmn.instance.Process;
 import org.camunda.bpm.model.bpmn.instance.SequenceFlow;
 import org.camunda.bpm.model.bpmn.instance.StartEvent;
+import org.camunda.bpm.model.bpmn.instance.ReceiveTask;
+import org.camunda.bpm.model.bpmn.instance.ServiceTask;
 import org.camunda.bpm.model.bpmn.instance.UserTask;
 import org.camunda.bpm.model.bpmn.instance.bpmndi.BpmnDiagram;
 import org.camunda.bpm.model.xml.instance.DomDocument;
@@ -273,8 +275,18 @@ public class TwinModelGenerator {
     }
 
     // InclusiveGateway unsupported: branch conditions on twin variables cause irrecoverable deadlocks.
+    // ReceiveTask and ServiceTask joined this list because this generator is now reached from two
+    // very different places. It was written for the Workbench-side twin launch, where the models
+    // were hand-picked and made of user tasks. It is now ALSO called for every generated Target
+    // Harness Platform, against whatever the user actually modelled - and a manufacturing process
+    // realistically contains service tasks (the professor's own worked example is a serviceTask with
+    // delegateExpression="${calculateInterestService}"). Without ServiceTask here, Generate failed
+    // outright for those models; without ReceiveTask, a process could not express "wait here for the
+    // twin's answer" at all. Both are exactly what that throw means by "extend the generator to
+    // handle it".
     private static boolean isSupported(FlowNode node) {
-        if (node instanceof UserTask || node instanceof ExclusiveGateway || node instanceof ParallelGateway) {
+        if (node instanceof UserTask || node instanceof ReceiveTask || node instanceof ServiceTask
+                || node instanceof ExclusiveGateway || node instanceof ParallelGateway) {
             return true;
         }
         return node instanceof EndEvent end && end.getEventDefinitions().isEmpty();
@@ -285,6 +297,14 @@ public class TwinModelGenerator {
         String id = node.getId();
         if (node instanceof UserTask task) {
             return appendSynchronizedActivity(at, task);
+        }
+        // Receive and service tasks both become the same sync-then-automate pair the twin uses for
+        // every activity: the twin waits on its own TwinAdvance_<id> message and then runs the twin
+        // automation delegate. That keeps the twin advancing in lockstep with the original under the
+        // bridge's control, and - importantly for a service task - means the twin does NOT re-run
+        // the original's own delegate, which would execute the real business logic a second time.
+        if (node instanceof ReceiveTask || node instanceof ServiceTask) {
+            return appendSyncThenAutomate(at, id);
         }
         if (node instanceof ExclusiveGateway) {
             return at.exclusiveGateway(id);

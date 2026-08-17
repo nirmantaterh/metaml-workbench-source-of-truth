@@ -224,11 +224,16 @@ class WireTransferWalkthroughTest {
                 workbenchService.generateSpringBootProject(model.getId());
 
         assertThat(project.processKey()).isEqualTo("loanApproval");
+        // Generated projects are now packaged per project (com.metaml.targetplatform.<processKey
+        // slug>) and split into manufacturing/twin sides, so the delegate no longer lands under the
+        // template's own com.example.camundademo. The invariant this test exists for is unchanged:
+        // the package statement inside the file must match the directory it was written to.
         java.nio.file.Path delegateFile = project.directory().resolve(
-                "src/main/java/com/example/camundademo/delegates/CalculateInterestService.java");
+                "src/main/java/com/metaml/targetplatform/loanapproval/delegate/manufacturing/"
+                        + "CalculateInterestService.java");
         assertThat(delegateFile).exists();
         assertThat(java.nio.file.Files.readString(delegateFile))
-                .contains("package com.example.camundademo.delegates;");
+                .contains("package com.metaml.targetplatform.loanapproval.delegate.manufacturing;");
         assertThat(project.directory().resolve("src/main/resources/processes/loanApproval.bpmn")).exists();
     }
 
@@ -545,7 +550,8 @@ class WireTransferWalkthroughTest {
     @Test
     void aRealGenerateFailureIsRecordedAsFailedWithTheRealErrorNotSilentlySwallowed() throws Exception {
         var brokenGenerator = new com.metaml.workbench.generation.SpringBootProjectGenerator(
-                "./no-such-template-directory-anywhere", "target/test-data/generated-projects");
+                "./no-such-template-directory-anywhere", "target/test-data/generated-projects",
+                twinModelGenerator, delegateClassGenerator);
         WorkbenchServiceImpl serviceWithBrokenTemplate = new WorkbenchServiceImpl(nodeManagerClient,
                 governanceService, policyDecisionEngine, approvalService, runtimeService, repositoryService,
                 historyService, taskService, twinModelGenerator, stateStore, modelFileStore, delegateClassGenerator,

@@ -24,9 +24,8 @@ const Header = () => {
                 <Navbar.Collapse id="basic-navbar-nav">
                     <Nav className="me-auto">
                         <Nav.Link to={"/"}>Catalog</Nav.Link>
-                        {/* New scope item 1: just these two now - Sample and the old bare Model
-                            link are gone from here (Sample's route still works if linked to
-                            directly, it's just not part of this menu anymore) */}
+                        {/* Sample and the old bare Model link are gone from this menu (Sample's
+                            route still works if linked to directly) */}
                         <NavDropdown title="Transmute" id="basic-nav-dropdown">
                             <NavDropdown.Item as={Link} to={WorkbenchRoutes.CreateProject.path}>
                                 Create Project
@@ -35,11 +34,9 @@ const Header = () => {
                                 Edit Existing Project
                             </NavDropdown.Item>
                         </NavDropdown>
-                        {/* Two genuinely different things share this menu now: the pre-existing
-                            twin workflow (Connect/Evolve/Bridge, relocated out of the model
-                            editor's own toolbar per scope item 1) and New scope item 5's actual
-                            "Evolve Workflow" - connecting to and evolving a real deployed
-                            generated application, not a twin. */}
+                        {/* Two different things share this menu: the twin workflow
+                            (Connect/Evolve/Bridge) and Evolve Workflow itself - connecting to a
+                            deployed generated application, not a twin */}
                         <NavDropdown title="Evolve" id="evolve-nav-dropdown">
                             <NavDropdown.Item as={Link} to={WorkbenchRoutes.EvolvePage.path}>
                                 Twin Workflow
@@ -48,10 +45,8 @@ const Header = () => {
                                 Deployed Applications
                             </NavDropdown.Item>
                         </NavDropdown>
-                        {/* Phase 6C/this phase: tenant policy lifecycle plus resolving the
-                            approvals that policy produces - unrelated to either Evolve entry
-                            above, this is what a tenant's policy SAYS and what's pending on it,
-                            not any twin's execution */}
+                        {/* Tenant policy lifecycle plus its approvals - unrelated to Evolve
+                            above, which is twin execution, not policy */}
                         <NavDropdown title="Governance" id="governance-nav-dropdown">
                             <NavDropdown.Item as={Link} to={WorkbenchRoutes.GovernancePolicies.path}>
                                 Policies

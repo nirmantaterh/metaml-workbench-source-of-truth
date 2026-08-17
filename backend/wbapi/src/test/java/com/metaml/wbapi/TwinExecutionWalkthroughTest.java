@@ -732,6 +732,10 @@ class TwinExecutionWalkthroughTest {
                 """;
     }
 
+    // Was a serviceTask until service tasks became supported (the twin generator now has to cope
+    // with whatever a real manufacturing process contains, not just the curated user-task models it
+    // was first written for). A businessRuleTask keeps this test doing its actual job: proving an
+    // activity type with no rule fails generation loudly instead of being silently dropped.
     private static String unsupportedServiceTaskBpmn() {
         return """
                 <?xml version="1.0" encoding="UTF-8"?>
@@ -742,10 +746,10 @@ class TwinExecutionWalkthroughTest {
                     <bpmn:startEvent id="StartEvent_1">
                       <bpmn:outgoing>Flow_1</bpmn:outgoing>
                     </bpmn:startEvent>
-                    <bpmn:serviceTask id="Task_AutoStep" name="Auto step" camunda:expression="${true}">
+                    <bpmn:businessRuleTask id="Task_AutoStep" name="Auto step" camunda:expression="${true}">
                       <bpmn:incoming>Flow_1</bpmn:incoming>
                       <bpmn:outgoing>Flow_2</bpmn:outgoing>
-                    </bpmn:serviceTask>
+                    </bpmn:businessRuleTask>
                     <bpmn:endEvent id="EndEvent_1">
                       <bpmn:incoming>Flow_2</bpmn:incoming>
                     </bpmn:endEvent>

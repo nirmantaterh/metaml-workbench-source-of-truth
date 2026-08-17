@@ -17,7 +17,7 @@ $genResponse = Invoke-RestMethod -Uri "$Base/generate" -Method Post -ContentType
 $genResponse | ConvertTo-Json -Depth 5
 Write-Host ">>> look for TWO delegates: calculateReimbursementService (JavaDelegate) and expenseApprovalNotifier (TaskListener)"
 
-Write-Host "`n=== 3. GENERATE PROJECT - assemble the full Spring Boot project ==="
+Write-Host "`n=== 3. GENERATE PROJECT - assemble the full Target Harness Platform ==="
 $projResponse = Invoke-RestMethod -Uri "$Base/generate-project" -Method Post -ContentType "application/json" -Body $modelIdBody
 $projResponse | ConvertTo-Json -Depth 5
 $projectId = $projResponse.data.projectId

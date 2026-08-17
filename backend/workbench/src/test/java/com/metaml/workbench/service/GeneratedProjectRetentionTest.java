@@ -86,7 +86,8 @@ class GeneratedProjectRetentionTest {
         write(templateDir.resolve("pom.xml"), "<project>fake pom</project>");
         write(templateDir.resolve("src/main/resources/processes/loanApproval.bpmn"), "<bpmn>placeholder</bpmn>");
 
-        generator = new SpringBootProjectGenerator(templateDir.toString(), outputDir.toString());
+        generator = new SpringBootProjectGenerator(templateDir.toString(), outputDir.toString(),
+                new TwinModelGenerator(), new DelegateClassGenerator());
         launcher = new SpringBootProjectLauncher();
         service = newService(newTracker());
     }

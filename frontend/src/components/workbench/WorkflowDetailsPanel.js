@@ -38,10 +38,9 @@ const startOf = (history, stage) => {
 };
 
 // Phase 3C: onGoToError is a synchronous (bpmnElementId) => boolean the caller supplies - true if
-// the existing modeler actually found and selected the element, false otherwise. This component
-// has no idea what a bpmn-js modeler even is; it just renders whatever structured error the
-// backend already sent (see StageError) and reports back whether the click actually landed
-// anywhere, so it can show the one required message if it didn't.
+// the modeler found and selected the element. This component has no idea what a bpmn-js modeler
+// is; it renders whatever structured error the backend sent (see StageError) and reports whether
+// the click landed, so it can show the one required message if not.
 const WorkflowDetailsPanel = ({ workflowState, onClose, onGoToError }) => {
     const [notFoundElementId, setNotFoundElementId] = useState(null);
 

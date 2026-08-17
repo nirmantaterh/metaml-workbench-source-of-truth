@@ -167,20 +167,45 @@ const ModelPage = () => {
         }
     };
 
+    // Shared by the manual Launch button and the automatic post-generation launch below. Reports
+    // its own success/failure so a launch failure is never mistaken for a generate failure.
+    const launchProjectId = async (idToLaunch) => {
+        try {
+            const res = await launchProject({ projectId: idToLaunch });
+            const launched = res.data || res;
+            setStatus({
+                type: "ok",
+                text: `Launched on port ${launched.port ?? "?"} (process "${launched.processKey || "?"}").`,
+            });
+        } catch (err) {
+            setStatus({ type: "err", text: "Launch failed: " + (err.response?.data?.message || err.message) });
+        }
+    };
+
     const handleGenerate = async () => {
         if (!savedModelId) {
-            setStatus({ type: "err", text: "Save the model before generating a project." });
+            setStatus({ type: "err", text: "Save the model before generating a Target Harness Platform." });
             return;
         }
         setBusy(true);
         try {
             const res = await generateProject({ modelId: savedModelId });
             const project = res.data || res;
-            setProjectId(project.projectId || null);
-            setStatus({
-                type: "ok",
-                text: `Generated Spring Boot project for process "${project.processKey || "?"}" (id ${project.projectId ?? "?"}).`,
-            });
+            const newProjectId = project.projectId || null;
+            setProjectId(newProjectId);
+            // Automatic launch after generation (explicit requirement): a successful Generate must
+            // not require a separate manual Launch click. Reuses the same launch endpoint the Launch
+            // button uses; the Model -> Generate -> Launch indicator still advances on its own as each
+            // backend stage completes. The Launch button stays for re-launching later.
+            if (newProjectId) {
+                setStatus({
+                    type: "info",
+                    text: `Generated Target Harness Platform for process "${project.processKey || "?"}" (id ${newProjectId}) - launching...`,
+                });
+                await launchProjectId(newProjectId);
+            } else {
+                setStatus({ type: "err", text: "Generation returned no project id to launch." });
+            }
         } catch (err) {
             setStatus({ type: "err", text: "Generate failed: " + (err.response?.data?.message || err.message) });
         } finally {
@@ -195,19 +220,9 @@ const ModelPage = () => {
             return;
         }
         setBusy(true);
-        try {
-            const res = await launchProject({ projectId });
-            const launched = res.data || res;
-            setStatus({
-                type: "ok",
-                text: `Launched on port ${launched.port ?? "?"} (process "${launched.processKey || "?"}").`,
-            });
-        } catch (err) {
-            setStatus({ type: "err", text: "Launch failed: " + (err.response?.data?.message || err.message) });
-        } finally {
-            await refreshWorkflowState(savedModelId);
-            setBusy(false);
-        }
+        await launchProjectId(projectId);
+        await refreshWorkflowState(savedModelId);
+        setBusy(false);
     };
 
     const statusClass =

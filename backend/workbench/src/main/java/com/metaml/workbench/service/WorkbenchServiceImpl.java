@@ -704,7 +704,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             // launchGeneratedProject both key off project ids, and the breadcrumb needs a way to
             // hand one to the caller without a second round trip through generatedProjects
             workflowStateTracker.record(modelId, WorkflowStage.GENERATE, StageStatus.COMPLETED, project.projectId());
-            logger.info("Generated Spring Boot project {} for model {}", project.projectId(), modelId);
+            logger.info("Generated Target Harness Platform {} for model {}", project.projectId(), modelId);
             // Retention, primary trigger: this generation is now the current one, so every earlier
             // generation of this model just became superseded. Deliberately after the COMPLETED
             // record above, so "current" is read from committed history rather than from the local

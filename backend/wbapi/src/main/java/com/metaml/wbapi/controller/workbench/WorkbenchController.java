@@ -155,7 +155,7 @@ public class WorkbenchController {
     }
 
     // New scope item 4 (Spring Boot Generation): the second step of Model -> Generate -> Launch.
-    // Assembles a full standalone Spring Boot project (Joanna's camundademo template, with the
+    // Assembles a full standalone Target Harness Platform (Joanna's camundademo template, with the
     // real BPMN and generated delegates dropped in) and writes it to disk. Doesn't launch it -
     // that's still a separate step, not built yet.
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_GENERATE_PROJECT)

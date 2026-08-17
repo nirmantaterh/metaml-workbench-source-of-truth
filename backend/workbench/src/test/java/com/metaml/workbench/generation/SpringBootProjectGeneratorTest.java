@@ -13,6 +13,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.metaml.workbench.bpmn.TwinModelGenerator;
+import com.metaml.workbench.codegen.DelegateClassGenerator;
 import com.metaml.workbench.codegen.GeneratedDelegate;
 
 class SpringBootProjectGeneratorTest {
@@ -33,7 +35,7 @@ class SpringBootProjectGeneratorTest {
 
         write(templateDir.resolve("pom.xml"), "<project>fake pom</project>");
         write(templateDir.resolve("src/main/resources/processes/loanApproval.bpmn"), "<bpmn>placeholder demo</bpmn>");
-        write(templateDir.resolve("src/main/java/com/example/camundademo/delegates/CalculateInterestService.java"),
+        write(templateDir.resolve("src/main/java/com/example/camundademo/delegate/CalculateInterestService.java"),
                 "placeholder delegate");
         write(templateDir.resolve("src/main/java/com/example/camundademo/controller/Camundacontroller.java"),
                 "placeholder controller, hardcoded to loanApproval");
@@ -46,8 +48,20 @@ class SpringBootProjectGeneratorTest {
                 "unrelated file that must survive the copy untouched");
     }
 
+    // both real @Component beans, stateless, trivially constructible directly - see their own
+    // classes for why (TwinModelGenerator.generate() is a pure transform, DelegateClassGenerator
+    // needs no collaborators)
     private SpringBootProjectGenerator generator() {
-        return new SpringBootProjectGenerator(templateDir.toString(), outputDir.toString());
+        return new SpringBootProjectGenerator(templateDir.toString(), outputDir.toString(),
+                new TwinModelGenerator(), new DelegateClassGenerator());
+    }
+
+    // Manufacturing controller/delegates now live under a project-specific package
+    // (com.metaml.targetplatform.<slug>) rather than the template's own com.example.camundademo -
+    // this mirrors what SpringBootProjectGenerator.packageSlugFor derives from each test's process
+    // key, so assertions below can locate the generated files without hardcoding the old path.
+    private static String manufacturingPackagePath(String processKey) {
+        return "src/main/java/com/metaml/targetplatform/" + processKey.toLowerCase().replaceAll("[^a-z0-9]", "");
     }
 
     @Test
@@ -65,7 +79,7 @@ class SpringBootProjectGeneratorTest {
         GeneratedProject project = generator().generate(loanApprovalBpmn(), List.of());
 
         assertThat(project.directory().resolve(
-                "src/main/java/com/example/camundademo/delegates/CalculateInterestService.java")).doesNotExist();
+                "src/main/java/com/example/camundademo/delegate/CalculateInterestService.java")).doesNotExist();
         assertThat(project.directory().resolve(
                 "src/main/java/com/example/camundademo/controller/Camundacontroller.java")).doesNotExist();
         assertThat(project.directory().resolve(
@@ -122,7 +136,9 @@ class SpringBootProjectGeneratorTest {
         assertThat(source).contains("""
                     @PostMapping("/{processInstanceId}/credit-check/complete")
                     public ResponseEntity<Map<String, List<String>>> completeCreditCheck(@PathVariable String processInstanceId) {
-                        return completeUserTask(processInstanceId, "Task_CreditCheck");
+                        ResponseEntity<Map<String, List<String>>> response = completeUserTask(processInstanceId, "Task_CreditCheck");
+                        notificationBridge.notifyTwin(processInstanceId, "Task_CreditCheck");
+                        return response;
                     }
                 """);
         assertThat(source).contains(".taskDefinitionKey(activityId)");
@@ -137,7 +153,7 @@ class SpringBootProjectGeneratorTest {
 
         String source = readString(controllerOf(project));
         assertThat(source).contains("@PostMapping(\"/{processInstanceId}/charge-card/complete\")");
-        assertThat(source).contains("return completeExternalTask(processInstanceId, \"Task_Charge\");");
+        assertThat(source).contains("completeExternalTask(processInstanceId, \"Task_Charge\");");
         assertThat(source).doesNotContain("calculate-interest");
         assertThat(countOccurrences(source, "/complete\")")).isEqualTo(1);
     }
@@ -150,7 +166,7 @@ class SpringBootProjectGeneratorTest {
 
         String source = readString(controllerOf(project));
         assertThat(source).contains("@PostMapping(\"/{processInstanceId}/await-settlement/complete\")");
-        assertThat(source).contains("return signalReceiveTask(processInstanceId, \"Task_Await\");");
+        assertThat(source).contains("signalReceiveTask(processInstanceId, \"Task_Await\");");
         assertThat(source).contains("runtimeService.signal(execution.getId())");
         assertThat(source).doesNotContain("taskDefinitionKey");
     }
@@ -175,9 +191,9 @@ class SpringBootProjectGeneratorTest {
 
         String source = readString(controllerOf(project));
         assertThat(countOccurrences(source, "/complete\")")).isEqualTo(3);
-        assertThat(source).contains("return completeUserTask(processInstanceId, \"Task_Human\");");
-        assertThat(source).contains("return signalReceiveTask(processInstanceId, \"Task_Await\");");
-        assertThat(source).contains("return completeExternalTask(processInstanceId, \"Task_Charge\");");
+        assertThat(source).contains("completeUserTask(processInstanceId, \"Task_Human\");");
+        assertThat(source).contains("signalReceiveTask(processInstanceId, \"Task_Await\");");
+        assertThat(source).contains("completeExternalTask(processInstanceId, \"Task_Charge\");");
         // only the helpers that are actually reachable
         assertThat(source).contains("private ResponseEntity<Map<String, List<String>>> respond(");
     }
@@ -214,8 +230,8 @@ class SpringBootProjectGeneratorTest {
         String source = readString(controllerOf(project));
         assertThat(source).contains("@PostMapping(\"/{processInstanceId}/review/complete\")");
         assertThat(source).contains("@PostMapping(\"/{processInstanceId}/review-2/complete\")");
-        assertThat(source).contains("return completeUserTask(processInstanceId, \"Task_First\");");
-        assertThat(source).contains("return completeUserTask(processInstanceId, \"Task_Second\");");
+        assertThat(source).contains("completeUserTask(processInstanceId, \"Task_First\");");
+        assertThat(source).contains("completeUserTask(processInstanceId, \"Task_Second\");");
     }
 
     // a model with nothing completable still has to produce a controller that compiles - the
@@ -230,9 +246,12 @@ class SpringBootProjectGeneratorTest {
         assertThat(source).doesNotContain("respond(");
     }
 
+    // manufacturing controller only - the one every existing assertion in this file cares about
+    // (endpoint shape, trigger dispatch, deterministic generation). The twin controller reuses the
+    // exact same writeController() logic against the twin BPMN and is covered separately.
     private static Path controllerOf(GeneratedProject project) {
-        return project.directory().resolve(
-                "src/main/java/com/example/camundademo/controller/GeneratedProcessController.java");
+        return project.directory().resolve(manufacturingPackagePath(project.processKey())
+                + "/controller/manufacturing/GeneratedManufacturingController.java");
     }
 
     private static int countOccurrences(String haystack, String needle) {
@@ -245,32 +264,42 @@ class SpringBootProjectGeneratorTest {
         return count;
     }
 
+    // the delegate's own source is pre-rendered against DELEGATE_PACKAGE (the fixed placeholder
+    // WorkbenchServiceImpl always renders against - see that constant's own comment); generate()
+    // rewrites that placeholder to the real, project-specific manufacturing package as it writes
+    // the file, so the written content is not byte-identical to what was passed in
     @Test
     void writesEveryGeneratedDelegateClassIntoTheDelegatesPackage() {
         GeneratedDelegate delegate = new GeneratedDelegate("calculateInterestService", "CalculateInterestService",
                 "Calculate Interest", com.metaml.workbench.codegen.DelegateKind.SERVICE_TASK,
-                "package com.example.camundademo.delegates;\npublic class CalculateInterestService {}");
+                "package " + SpringBootProjectGenerator.DELEGATE_PACKAGE + ";\npublic class CalculateInterestService {}");
 
         GeneratedProject project = generator().generate(loanApprovalBpmn(), List.of(delegate));
 
-        Path written = project.directory().resolve(
-                "src/main/java/com/example/camundademo/delegates/CalculateInterestService.java");
+        Path written = project.directory().resolve(manufacturingPackagePath(project.processKey())
+                + "/delegate/manufacturing/CalculateInterestService.java");
         assertThat(written).exists();
-        assertThat(readString(written)).isEqualTo(delegate.sourceCode());
+        assertThat(readString(written)).contains("public class CalculateInterestService {}");
+        assertThat(readString(written)).doesNotContain(SpringBootProjectGenerator.DELEGATE_PACKAGE);
     }
 
     // Phase 3C: proves DelegateWriteException actually carries which BPMN element a failed
     // delegate write was for, using a deterministic, OS-permission-free trigger - a directory
     // already sitting where the delegate's own file needs to go, copied in from the template, so
     // Files.writeString fails every time with no reliance on filesystem ACLs
+    // rewritePackage() carries the template's own tree (including this poison file) over to the
+    // project-specific package before writeManufacturingDelegates runs, so a plain file placed at
+    // .../delegates/manufacturing in the fake template becomes a plain file at that same relative
+    // spot under the rewritten package - exactly where the delegate write needs a directory
+    // instead, deterministically, without needing to know the random projectId in advance.
     @Test
     void aDelegateThatFailsToWriteCarriesWhichBpmnElementItWasFor() throws IOException {
-        write(templateDir.resolve(
-                        "src/main/java/com/example/camundademo/delegates/BrokenDelegate.java/placeholder.txt"),
-                "pre-existing directory where the delegate's own file needs to go");
         GeneratedDelegate delegate = new GeneratedDelegate("brokenService", "BrokenDelegate", "Broken Task",
-                com.metaml.workbench.codegen.DelegateKind.SERVICE_TASK, "package x; public class BrokenDelegate {}",
+                com.metaml.workbench.codegen.DelegateKind.SERVICE_TASK,
+                "package " + SpringBootProjectGenerator.DELEGATE_PACKAGE + "; public class BrokenDelegate {}",
                 "ServiceTask_Broken");
+        write(templateDir.resolve("src/main/java/com/example/camundademo/delegate/manufacturing"),
+                "poison: a plain file here forces Files.createDirectories to fail for the delegate write");
 
         assertThatThrownBy(() -> generator().generate(loanApprovalBpmn(), List.of(delegate)))
                 .isInstanceOf(DelegateWriteException.class)
@@ -285,8 +314,8 @@ class SpringBootProjectGeneratorTest {
     void unrelatedTemplateFilesSurviveTheCopyUntouched() {
         GeneratedProject project = generator().generate(loanApprovalBpmn(), List.of());
 
-        Path securityConfig = project.directory().resolve(
-                "src/main/java/com/example/camundademo/security/WebSecurityConfig.java");
+        Path securityConfig = project.directory().resolve(manufacturingPackagePath(project.processKey())
+                + "/security/WebSecurityConfig.java");
         assertThat(securityConfig).exists();
         assertThat(readString(securityConfig)).isEqualTo("unrelated file that must survive the copy untouched");
         assertThat(project.directory().resolve("pom.xml")).exists();

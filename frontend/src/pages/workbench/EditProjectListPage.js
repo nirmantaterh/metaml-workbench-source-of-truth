@@ -78,9 +78,7 @@ const EditProjectListPage = () => {
                     dismissible
                 >
                     {deleteError}
-                    {/* the backend's own message for the 409 case says to stop the app first, and
-                        this is the page that stops it - saying so without a way to get there left
-                        the user to find it themselves */}
+                    {/* the 409 message says to stop the app first - this page is where to do that */}
                     {deleteBlockedByRunningApp && (
                         <>
                             {" "}

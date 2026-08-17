@@ -10,7 +10,7 @@
 MetaML Workbench: a Camunda/Spring Boot BPMN platform. Core pipeline:
 
 ```
-Model (BPMN)  →  Generate (delegates + Spring Boot project)  →  Launch (real child JVM)
+Model (BPMN)  →  Generate (delegates + Target Harness Platform)  →  Launch (real child JVM)
      ↓
    Twin (shadow process instance, mirrors the original)
      ↓

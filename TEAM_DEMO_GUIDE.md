@@ -9,7 +9,7 @@ this is a transcript of what actually happens, not a description of what should 
 ## 1. What this system does
 
 ```
-Model (BPMN)  →  Generate (Java delegates + Spring Boot project)  →  Launch (real child JVM)
+Model (BPMN)  →  Generate (Java delegates + Target Harness Platform)  →  Launch (real child JVM)
      ↓
    Twin (shadow process instance)
      ↓
@@ -83,7 +83,7 @@ accepts the model — Camunda validation still happens at Save.
 2. The wire-transfer diagram renders. Click **Verify Customer Identity (KYC)** — the right panel
    switches to `USER TASK`
 3. Name it `Wire Demo` → **Save** → green banner with a new model id
-4. **Generate** → green: *"Generated Spring Boot project for process "wireTransferReview" (id …)"*
+4. **Generate** → green: *"Generated Target Harness Platform for process "wireTransferReview" (id …)"*
 5. **Launch** → green with a port number (takes 30–60s; it compiles and boots a real JVM)
 6. **Evolve ▸ Deployed Applications** → the app is listed with a green `running` badge → **Stop**
 7. **Ctrl+F5**, then Transmute ▸ Edit Existing Project ▸ Open `Wire Demo` — the diagram and the

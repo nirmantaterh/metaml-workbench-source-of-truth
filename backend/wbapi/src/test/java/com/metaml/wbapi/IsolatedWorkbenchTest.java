@@ -10,23 +10,10 @@ import java.lang.annotation.Target;
 import org.springframework.boot.test.context.SpringBootTest;
 
 /**
- * A full-context wbapi test that cannot write to the real development data directory.
+ * Isolates full-context tests from the development data directory.
  *
- * <p>Every workbench store carries its own persist flag and its own path, and each one that gets
- * left at its production default writes into {@code ./data/}. That was found the hard way three
- * separate times - {@code WorkflowEventStore}, then {@code ApprovalStore}, then
- * {@code TenantPolicyStore} - each time because the isolation properties were copied per test class
- * and one store was missed. The properties below are the complete set, declared once, so a new test
- * gets all of them by annotating with this instead of {@code @SpringBootTest} and cannot
- * reintroduce the defect by forgetting a line.
- *
- * <p>Add per-test settings (its own in-memory datasource name, Camunda job-executor timings, and so
- * on) with {@code @TestPropertySource} on the test class - those take precedence over these, so a
- * test can still override any of them deliberately.
- *
- * <p>This does not affect tests that construct a store directly against a {@code @TempDir} to
- * exercise real persistence: those bypass the Spring beans entirely and keep their own controlled
- * file.
+ * <p>All file-backed stores must use test paths; {@code @TestPropertySource} can override them.
+ * Tests using {@code @TempDir} stores are already isolated.
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)

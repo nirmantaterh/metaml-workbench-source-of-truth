@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SYNTHETIC END-TO-END FIXTURE - NOT RedCollar, not a real manufacturing process.
+
+  Exists only to exercise the Target Harness architecture end to end:
+
+    Start
+      -> UserTask_Stitch          (manufacturing activity; its complete-listener delegate is generated)
+      -> ReceiveTask_AwaitTwin    (process PARKS here, waiting for BPMN message "TwinStageResponse")
+      -> ServiceTask_Finalize     (only reachable once the twin's answer resumed the process)
+      -> End
+
+  Completing UserTask_Stitch makes the generated manufacturing controller publish to RabbitMQ.
+  The twin asks the gateway for QC, the gateway answers, the twin reports back, and
+  ManufacturingMessageListener correlates "TwinStageResponse" into THIS process instance -
+  which is the only thing that can move the token past ReceiveTask_AwaitTwin.
+
+  Replace this wholesale with the professor's RedCollar BPMN when it arrives. Nothing in the
+  generator, messaging layer or runtime is specific to this file.
+
+  The bpmndi:BPMNDiagram section is required for bpmn-js to render the diagram in the Workbench
+  editor. Without it bpmn-js cannot construct proper shape objects on the canvas, and the
+  properties panel crashes with "businessObject.get is not a function". The BPMN process section
+  is unchanged - Camunda only reads that, not the DI.
+-->
+<bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+    id="Definitions_SyntheticE2E" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn2:message id="Message_TwinStageResponse" name="TwinStageResponse" />
+  <bpmn2:process id="syntheticE2E" name="Synthetic E2E" isExecutable="true">
+    <bpmn2:startEvent id="Start">
+      <bpmn2:outgoing>Flow_1</bpmn2:outgoing>
+    </bpmn2:startEvent>
+    <bpmn2:userTask id="UserTask_Stitch" name="Stitch">
+      <bpmn2:extensionElements>
+        <camunda:taskListener event="complete" delegateExpression="${stitchService}" />
+      </bpmn2:extensionElements>
+      <bpmn2:incoming>Flow_1</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_2</bpmn2:outgoing>
+    </bpmn2:userTask>
+    <bpmn2:receiveTask id="ReceiveTask_AwaitTwin" name="Await Twin Result"
+        messageRef="Message_TwinStageResponse">
+      <bpmn2:incoming>Flow_2</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_3</bpmn2:outgoing>
+    </bpmn2:receiveTask>
+    <bpmn2:serviceTask id="ServiceTask_Finalize" name="Finalize"
+        camunda:delegateExpression="${finalizeService}">
+      <bpmn2:incoming>Flow_3</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_4</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+    <bpmn2:endEvent id="End">
+      <bpmn2:incoming>Flow_4</bpmn2:incoming>
+    </bpmn2:endEvent>
+    <bpmn2:sequenceFlow id="Flow_1" sourceRef="Start" targetRef="UserTask_Stitch" />
+    <bpmn2:sequenceFlow id="Flow_2" sourceRef="UserTask_Stitch" targetRef="ReceiveTask_AwaitTwin" />
+    <bpmn2:sequenceFlow id="Flow_3" sourceRef="ReceiveTask_AwaitTwin" targetRef="ServiceTask_Finalize" />
+    <bpmn2:sequenceFlow id="Flow_4" sourceRef="ServiceTask_Finalize" targetRef="End" />
+  </bpmn2:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_SyntheticE2E">
+    <bpmndi:BPMNPlane id="BPMNPlane_SyntheticE2E" bpmnElement="syntheticE2E">
+      <bpmndi:BPMNShape id="Shape_Start" bpmnElement="Start">
+        <dc:Bounds x="152" y="232" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_UserTask_Stitch" bpmnElement="UserTask_Stitch">
+        <dc:Bounds x="250" y="210" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_ReceiveTask_AwaitTwin" bpmnElement="ReceiveTask_AwaitTwin">
+        <dc:Bounds x="420" y="210" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_ServiceTask_Finalize" bpmnElement="ServiceTask_Finalize">
+        <dc:Bounds x="590" y="210" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_End" bpmnElement="End">
+        <dc:Bounds x="762" y="232" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_Flow_1" bpmnElement="Flow_1">
+        <di:waypoint x="188" y="250" />
+        <di:waypoint x="250" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_2" bpmnElement="Flow_2">
+        <di:waypoint x="350" y="250" />
+        <di:waypoint x="420" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_3" bpmnElement="Flow_3">
+        <di:waypoint x="520" y="250" />
+        <di:waypoint x="590" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_4" bpmnElement="Flow_4">
+        <di:waypoint x="690" y="250" />
+        <di:waypoint x="762" y="250" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn2:definitions>

@@ -36,7 +36,8 @@ export async function generateDelegates(payload) {
     return result.data;
 }
 
-// assembles the real Spring Boot project on the server; doesn't launch it
+// assembles the real Target Harness Platform (a Spring Boot app under the hood) on the server;
+// doesn't launch it
 export async function generateProject(payload) {
     const result = await api.post(`/wb/transmute/generate-project`, payload);
     return result.data;

@@ -1,31 +1,18 @@
 package com.metaml.workbench.codegen;
 
 /**
- * One BPMN element declares a delegateExpression that cannot name a delegate bean.
+ * Reports a BPMN {@code delegateExpression} that names no delegate bean.
  *
- * <p>This is the one generation failure that is genuinely attributable to a single BPMN element,
- * which is what lets the workflow error carry a real bpmnElementId and the editor's "Go to error"
- * select the offending task. Everything else that can go wrong during generation (no process
- * element, missing template directory, a failed file write for reasons of its own) is a failure of
- * the operation as a whole and stays generic - see WorkbenchServiceImpl.generateErrorFrom.
- *
- * <p>Why this is a real defect rather than a tolerable oddity: Camunda accepts
- * {@code camunda:delegateExpression=""} at deploy time, so the model saves cleanly. MetaML then
- * skipped it, generated no delegate class for that task, and produced a project that compiles and
- * launches but fails at runtime the moment the token reaches the task, because the bean the BPMN
- * refers to was never written. Failing at generation, pointing at the task, is the honest outcome.
- *
- * <p>Deliberately NOT thrown when the attribute is absent entirely: that is a different model
- * (Camunda rejects it at save time for having no implementation), and the generator's existing
- * behaviour of skipping such a task is relied on elsewhere.
+ * <p>Carries the BPMN element ID so the UI can locate the exact error.
+ * Blank expressions can pass model save but fail only when the task executes,
+ * so generation fails earlier. An absent attribute is left to Camunda validation.
  */
 public class InvalidDelegateExpressionException extends IllegalArgumentException {
 
     private static final long serialVersionUID = 1L;
 
-    // shown as the "Delegate" field in the workflow details panel. The raw attribute text, except
-    // when that text is empty - the panel only renders "Go to error" when it has something to
-    // print there, and "" would hide the very button this exception exists to surface.
+    // "" would hide the details panel's "Go to error" button, which only renders when this field
+    // is non-blank.
     private static final String BLANK_LABEL = "(blank)";
 
     private final String bpmnElementId;
@@ -43,9 +30,8 @@ public class InvalidDelegateExpressionException extends IllegalArgumentException
         this.rawExpression = rawExpression == null || rawExpression.isBlank() ? BLANK_LABEL : rawExpression;
     }
 
-    // second entry point: two distinct delegateExpressions that sanitize to the same Java class
-    // name. Only one class can be written, so the other element's bean silently never exists at
-    // runtime - the element named here is the one that loses.
+    // Two expressions sanitize to the same class name; only one can be written, so the element
+    // named here is the one that loses its bean.
     public static InvalidDelegateExpressionException collision(String bpmnElementId, String taskName,
             String rawExpression, String otherExpression, String className) {
         return new InvalidDelegateExpressionException(bpmnElementId, taskName, rawExpression,

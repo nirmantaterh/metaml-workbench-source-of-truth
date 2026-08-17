@@ -8,6 +8,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import com.metaml.workbench.bpmn.TwinModelGenerator;
+import com.metaml.workbench.codegen.DelegateClassGenerator;
 import com.metaml.workbench.codegen.GeneratedDelegate;
 
 import java.io.ByteArrayInputStream;
@@ -26,40 +28,45 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-// New scope item 4 (Spring Boot Generation), the file-assembly half of it. Copies Joanna's
-// camundademo template, drops the saved model's BPMN into its processes folder (the template's
-// own CamundaConfig already auto-deploys anything matching classpath*:/processes/*.bpmn - no code
-// change needed for that part), writes every generated delegate class in next to the template's
-// own, and replaces the template's hardcoded loanApproval controller with one built around
-// whatever process key the saved model actually declares.
-//
-// Deliberately does NOT launch anything - that's SpringBootProjectLauncher, kept separate so this
-// class stays trivially testable (assemble files, assert they're right) without needing to spin
-// up a real child JVM in a unit test.
+// Generates the Target Harness Platform from the camundademo template.
+// Generation assembles files; SpringBootProjectLauncher handles execution.
+// Manufacturing and Twin run as separate modules within one Spring Boot application.
+// Package rewriting and Twin generation are project-specific additions.
 @Component
 public class SpringBootProjectGenerator {
 
     private static final Logger logger = LoggerFactory.getLogger(SpringBootProjectGenerator.class);
 
-    // the delegates this generator writes into a project MUST already be rendered with this exact
-    // package name (see DelegateClassGenerator.generate(bpmnXml, packageName)) - it has to match
-    // DELEGATE_PACKAGE_PATH below or the class compiles fine but Spring's default component scan
-    // (rooted at com.example.camundademo, the template's @SpringBootApplication package) never
-    // finds it, and the generated app fails at runtime instead of at build time
-    public static final String DELEGATE_PACKAGE = "com.example.camundademo.delegates";
+    // Callers pre-render against this placeholder; generate() rewrites it to the real project package.
+    public static final String DELEGATE_PACKAGE = "com.example.camundademo.delegate";
 
-    private static final String DELEGATE_PACKAGE_PATH = "src/main/java/com/example/camundademo/delegates";
+    // The template's own package; rewritePackage() replaces all occurrences with the project-specific base package.
+    private static final String TEMPLATE_BASE_PACKAGE = "com.example.camundademo";
+    private static final String TEMPLATE_BASE_PACKAGE_PATH = "com/example/camundademo";
+
+    // Professor: "it should not be Spring Boot project, it should be target harness platform" -
+    // and "javacom target platform redcollar" as his own example of the per-project package he
+    // wants. Never Red Collar itself: the slug is derived from whatever process key the saved
+    // model actually declares (see packageSlugFor), so this stays generic across every project.
+    private static final String TARGET_PLATFORM_BASE_PACKAGE = "com.metaml.targetplatform";
+
+    private static final String DELEGATE_PACKAGE_PATH = "src/main/java/com/example/camundademo/delegate";
     private static final String CONTROLLER_PACKAGE_PATH = "src/main/java/com/example/camundademo/controller";
     private static final String PROCESSES_PATH = "src/main/resources/processes";
 
     private final Path templateDirectory;
     private final Path outputDirectory;
+    private final TwinModelGenerator twinModelGenerator;
+    private final DelegateClassGenerator delegateClassGenerator;
 
     public SpringBootProjectGenerator(
             @Value("${workbench.generation.template-directory:./templates/camundademo}") String templateDirectory,
-            @Value("${workbench.generation.output-directory:./data/generated-projects}") String outputDirectory) {
+            @Value("${workbench.generation.output-directory:./data/generated-projects}") String outputDirectory,
+            TwinModelGenerator twinModelGenerator, DelegateClassGenerator delegateClassGenerator) {
         this.templateDirectory = Path.of(templateDirectory);
         this.outputDirectory = Path.of(outputDirectory);
+        this.twinModelGenerator = twinModelGenerator;
+        this.delegateClassGenerator = delegateClassGenerator;
     }
 
     public GeneratedProject generate(String bpmnXml, List<GeneratedDelegate> delegates) {
@@ -67,41 +74,107 @@ public class SpringBootProjectGenerator {
             throw new IllegalStateException("No template project at " + templateDirectory.toAbsolutePath()
                     + " - workbench.generation.template-directory must point at the camundademo template");
         }
-        // parsed once and reused - the controller now needs the activity list as well as the
-        // process key, and re-reading the same XML a second time just to ask a second question
-        // about it would leave two parses that could drift apart
+        // Parse once; both the process key and activity list read from the same instance.
         BpmnModelInstance model = Bpmn.readModelFromStream(
                 new ByteArrayInputStream(bpmnXml.getBytes(StandardCharsets.UTF_8)));
         String processKey = extractProcessKey(model);
         List<BpmnActivities.Activity> activities = BpmnActivities.eligible(model);
         String projectId = UUID.randomUUID().toString();
         Path projectDir = outputDirectory.resolve(projectId);
+        String basePackage = TARGET_PLATFORM_BASE_PACKAGE + "." + packageSlugFor(processKey);
 
         copyTemplate(projectDir);
         removeTemplatePlaceholders(projectDir);
+        rewritePackage(projectDir, basePackage);
         writeProcessFile(projectDir, processKey, bpmnXml);
-        writeDelegates(projectDir, delegates);
-        writeController(projectDir, processKey, activities);
+        writeManufacturingDelegates(projectDir, basePackage, delegates);
+        writeController(projectDir, basePackage, "controller.manufacturing", "GeneratedManufacturingController",
+                "/api/v1/manufacturing", processKey, activities, "notifyTwin");
+        generateTwinResources(projectDir, basePackage, model, processKey);
 
-        logger.info("Generated Spring Boot project {} for process key '{}' with {} activity endpoint(s) at {}",
-                projectId, processKey, activities.size(), projectDir.toAbsolutePath());
+        logger.info(
+                "Generated Target Harness Platform {} for process key '{}' with {} manufacturing activity "
+                        + "endpoint(s), package {}, at {}",
+                projectId, processKey, activities.size(), basePackage, projectDir.toAbsolutePath());
         return new GeneratedProject(projectId, projectDir, processKey);
     }
 
-    // Restart persistence: rebuilds the projectId -> GeneratedProject registry from the
-    // generated-projects directory itself instead of from anything WorkbenchServiceImpl would
-    // otherwise have to persist separately. Both fields a GeneratedProject actually carries
-    // beyond its id are already implied by this class's own fixed layout - the directory is
-    // exactly outputDirectory/{projectId} (generate() above never places it anywhere else), and
-    // the process key is the basename of whatever single .bpmn file writeProcessFile() put under
-    // PROCESSES_PATH. Nothing here is new information; it is only ever re-deriving what generate()
-    // already committed to disk, which is why this is a scan rather than a second store that could
-    // drift out of sync with the directory it is describing.
-    //
-    // A project directory that does not resolve to exactly one .bpmn file is skipped, not guessed
-    // at - a caller later asking for that projectId gets the same clear "not found" it would have
-    // gotten if the project never existed, rather than this method fabricating a process key for a
-    // directory that cannot actually be launched.
+    // Reuses TwinModelGenerator's stateless transform (same as WorkbenchServiceImpl.deployTwinDefinition,
+    // ADR-002/ADR-005) without touching the Workbench's engine, RepositoryService, or Evolve.
+    // Twin delegates render directly against basePackage, so no placeholder rewriting is needed.
+    private void generateTwinResources(Path projectDir, String basePackage, BpmnModelInstance originalModel,
+            String processKey) {
+        BpmnModelInstance twinModel = twinModelGenerator.generate(originalModel);
+        String twinBpmnXml = Bpmn.convertToString(twinModel);
+        String twinProcessKey = processKey + "_twin";
+        writeFile(projectDir.resolve(PROCESSES_PATH).resolve(twinProcessKey + ".bpmn"), twinBpmnXml);
+
+        List<GeneratedDelegate> twinDelegates =
+                delegateClassGenerator.generate(twinBpmnXml, basePackage + ".delegate.twin");
+        writeTwinDelegates(projectDir, basePackage, twinDelegates);
+
+        List<BpmnActivities.Activity> twinActivities = BpmnActivities.eligible(twinModel);
+        writeController(projectDir, basePackage, "controller.twin", "GeneratedTwinController", "/api/v1/twin",
+                twinProcessKey, twinActivities, "notifyManufacturing");
+    }
+
+    // Lowercase processKey with non-alpha stripped; digit-leading or empty keys fall back to "generated<slug>".
+    private static String packageSlugFor(String processKey) {
+        String slug = processKey == null ? "" : processKey.toLowerCase().replaceAll("[^a-z0-9]", "");
+        if (slug.isEmpty() || Character.isDigit(slug.charAt(0))) {
+            slug = "generated" + slug;
+        }
+        return slug;
+    }
+
+    // Rewrites the template's com/example/camundademo tree to the project-specific package; non-Java resources unchanged.
+    private void rewritePackage(Path projectDir, String basePackage) {
+        // Both source roots: copied test sources reference template classes; rewriting main only breaks test-compile.
+        rewritePackageUnder(projectDir.resolve("src/main/java"), basePackage);
+        rewritePackageUnder(projectDir.resolve("src/test/java"), basePackage);
+    }
+
+    private void rewritePackageUnder(Path sourceRoot, String basePackage) {
+        Path oldRoot = sourceRoot.resolve(TEMPLATE_BASE_PACKAGE_PATH);
+        if (!Files.isDirectory(oldRoot)) {
+            return;
+        }
+        Path newRoot = sourceRoot.resolve(basePackage.replace('.', '/'));
+        try (Stream<Path> walk = Files.walk(oldRoot)) {
+            List<Path> files = walk.filter(Files::isRegularFile).toList();
+            for (Path source : files) {
+                Path relative = oldRoot.relativize(source);
+                Path target = newRoot.resolve(relative);
+                Files.createDirectories(target.getParent());
+                String content = Files.readString(source, StandardCharsets.UTF_8);
+                String rewritten = content.replace(TEMPLATE_BASE_PACKAGE, basePackage);
+                Files.writeString(target, rewritten, StandardCharsets.UTF_8);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("Could not rewrite template package under " + oldRoot.toAbsolutePath(),
+                    e);
+        }
+        deleteTree(oldRoot);
+    }
+
+    private static void deleteTree(Path root) {
+        try (Stream<Path> walk = Files.walk(root)) {
+            for (Path path : (Iterable<Path>) walk.sorted(Comparator.reverseOrder())::iterator) {
+                Files.deleteIfExists(path);
+            }
+        } catch (IOException e) {
+            logger.warn("Could not fully remove pre-rewrite package tree {}: {}", root.toAbsolutePath(),
+                    e.toString());
+        }
+    }
+
+    // NotificationBridge ships with the template alongside the messaging package - where the
+    // professor said RabbitMQ belongs: "we'll add the rabbit in Q to the template repository. And
+    // then that becomes your updated generated set."
+    // copyTemplate() + rewritePackage() handle the rest; nothing is generated here.
+
+    // Reconstructs the in-memory registry from disk rather than a separate store that could drift.
+    // Directories without exactly one non-twin .bpmn file are skipped, not guessed at.
     public List<GeneratedProject> scanExisting() {
         if (!Files.isDirectory(outputDirectory)) {
             // nothing has ever been generated against this output directory - a fresh install, or
@@ -128,18 +201,8 @@ public class SpringBootProjectGenerator {
         return found;
     }
 
-    // Retention (latest generation only): removes one generated project's directory. Deliberately
-    // takes a projectId rather than a Path - this class is the only thing that decides where a
-    // generated project lives (generate() resolves outputDirectory/{projectId} and nothing else
-    // ever does), so it's also the only thing that can safely turn an id back into a directory to
-    // remove. A caller passing a Path would be asserting a layout it doesn't own.
-    //
-    // WHICH project is disposable is not decided here - that's a workflow-history question
-    // (WorkbenchServiceImpl.cleanupSupersededProjects), and this class has no idea which model a
-    // project belongs to or which generation is current. This only does the removal it's told to,
-    // and only after proving the id resolves to a direct child of the output directory: projectId
-    // reaches this from a persisted workflow event, so an id like "../../data" would otherwise
-    // recursively delete something well outside the generated-projects tree.
+    // Takes projectId, not Path - validates direct-child relationship before deletion to prevent
+    // path traversal (id comes from a persisted event; "../../data" would otherwise escape the tree).
     public boolean delete(String projectId) {
         if (projectId == null || projectId.isBlank()) {
             return false;
@@ -162,10 +225,9 @@ public class SpringBootProjectGenerator {
                 Files.deleteIfExists(path);
             }
         } catch (IOException e) {
-            // A generated project holds no state anything else depends on, so a partial delete is
-            // not worth failing the operation that triggered it (a regenerate, a stop, a restart).
-            // scanExisting() above already skips a directory it can't resolve a single process key
-            // from, which is exactly the shape a half-deleted directory has.
+            // A generated project holds no state anything depends on, so a partial delete doesn't
+            // fail the triggering operation - scanExisting() above already skips directories with
+            // no resolvable process key, which is exactly the shape a half-deleted one has.
             logger.warn("Could not fully delete generated project {} at {}: {}", projectId, projectDir, e.toString());
             return false;
         }
@@ -173,13 +235,16 @@ public class SpringBootProjectGenerator {
         return true;
     }
 
+    // Filter the twin file first; generate() writes two BPMN files but only one (non-twin) identifies the process key.
     private static String findProcessKey(Path projectDir) {
         Path processesDir = projectDir.resolve(PROCESSES_PATH);
         if (!Files.isDirectory(processesDir)) {
             return null;
         }
         try (Stream<Path> entries = Files.list(processesDir)) {
-            List<Path> bpmnFiles = entries.filter(p -> p.getFileName().toString().endsWith(".bpmn")).toList();
+            List<Path> bpmnFiles = entries.filter(p -> p.getFileName().toString().endsWith(".bpmn"))
+                    .filter(p -> !p.getFileName().toString().endsWith("_twin.bpmn"))
+                    .toList();
             // zero means this directory was never finished (or was cleared out); more than one is
             // a shape generate() itself never produces - either way, no safe single answer
             if (bpmnFiles.size() != 1) {
@@ -217,16 +282,8 @@ public class SpringBootProjectGenerator {
         }
     }
 
-    // the template ships with its own worked example (loanApproval.bpmn,
-    // CalculateInterestService, and a Camundacontroller hardcoded to
-    // startProcessInstanceByKey("loanApproval")) so it's runnable standing alone. A generated
-    // project shouldn't carry any of that: the BPMN would deploy alongside whatever the user
-    // actually modeled under the classpath*:/processes/*.bpmn pattern, and the old controller
-    // would throw the moment it's called against a project whose process key isn't literally
-    // "loanApproval" - writeController() replaces it, this just clears the way first.
-    // LoanApplicationContext and BPMNProcessRESTMappings go too: both exist only to support the
-    // controller/delegate pair being removed, and the former was already inert in the template
-    // itself (no @Configuration annotation, so Spring never picked up its @Bean method anyway).
+    // Remove the template's loanApproval worked example; writeController() replaces the controller.
+    // LoanApplicationContext and BPMNProcessRESTMappings exist only to support the removed pair.
     private void removeTemplatePlaceholders(Path projectDir) {
         deleteIfExists(projectDir.resolve(PROCESSES_PATH).resolve("loanApproval.bpmn"));
         deleteIfExists(projectDir.resolve(DELEGATE_PACKAGE_PATH).resolve("CalculateInterestService.java"));
@@ -240,41 +297,56 @@ public class SpringBootProjectGenerator {
         writeFile(projectDir.resolve(PROCESSES_PATH).resolve(processKey + ".bpmn"), bpmnXml);
     }
 
-    private void writeDelegates(Path projectDir, List<GeneratedDelegate> delegates) {
+    // Pre-rendered delegates still reference DELEGATE_PACKAGE; rewrite to the manufacturing subpackage at write time.
+    private void writeManufacturingDelegates(Path projectDir, String basePackage, List<GeneratedDelegate> delegates) {
+        String manufacturingPackage = basePackage + ".delegate.manufacturing";
+        Path packageDir = projectDir.resolve("src/main/java").resolve(manufacturingPackage.replace('.', '/'));
         for (GeneratedDelegate delegate : delegates) {
-            Path target = projectDir.resolve(DELEGATE_PACKAGE_PATH).resolve(delegate.className() + ".java");
-            // not the shared writeFile() helper below - a failure here is attributable to this one
-            // delegate specifically, which writeFile's own generic UncheckedIOException has no way
-            // to say (see DelegateWriteException's own comment)
-            try {
-                Files.createDirectories(target.getParent());
-                Files.writeString(target, delegate.sourceCode(), StandardCharsets.UTF_8);
-            } catch (IOException e) {
-                throw new DelegateWriteException("Could not write " + target.toAbsolutePath(), e,
-                        delegate.beanName(), delegate.bpmnElementId());
-            }
+            String rewrittenSource = delegate.sourceCode().replace(DELEGATE_PACKAGE, manufacturingPackage);
+            writeDelegateFile(packageDir, delegate.className(), rewrittenSource, delegate.beanName(),
+                    delegate.bpmnElementId());
         }
     }
 
-    // Replaces the template's own Camundacontroller.java (hardcoded to
-    // startProcessInstanceByKey("loanApproval")) with one built around whatever process this
-    // project was actually generated for.
-    //
-    // Scope item 4, revised: this used to emit a single generic /{id}/complete-task that every
-    // activity in the model went through. Joanna confirmed the generated app has to expose one
-    // endpoint per BPMN activity instead, so the completion half is now generated per activity -
-    // N activities produce N endpoints. The generic one is gone rather than kept alongside:
-    // leaving it would mean the old "any activity through one door" path still existed, which is
-    // the exact thing being replaced. Nothing outside the generated project ever called it (the
-    // workbench's own /wb/transmute/complete-task is a different endpoint on a different app).
-    private void writeController(Path projectDir, String processKey, List<BpmnActivities.Activity> activities) {
+    private void writeTwinDelegates(Path projectDir, String basePackage, List<GeneratedDelegate> delegates) {
+        Path packageDir = projectDir.resolve("src/main/java")
+                .resolve((basePackage + ".delegate.twin").replace('.', '/'));
+        for (GeneratedDelegate delegate : delegates) {
+            writeDelegateFile(packageDir, delegate.className(), delegate.sourceCode(), delegate.beanName(),
+                    delegate.bpmnElementId());
+        }
+    }
+
+    private void writeDelegateFile(Path packageDir, String className, String sourceCode, String beanName,
+            String bpmnElementId) {
+        Path target = packageDir.resolve(className + ".java");
+        // not the shared writeFile() helper below - a failure here is attributable to this one
+        // delegate specifically, which writeFile's own generic UncheckedIOException has no way
+        // to say (see DelegateWriteException's own comment)
+        try {
+            Files.createDirectories(target.getParent());
+            Files.writeString(target, sourceCode, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new DelegateWriteException("Could not write " + target.toAbsolutePath(), e, beanName,
+                    bpmnElementId);
+        }
+    }
+
+    // Generates one endpoint per BPMN activity (N activities → N endpoints), replacing the
+    // template's loanApproval-hardcoded controller. A single method produces both controllers, as
+    // the professor asked: "controller-twin controller-manuf... right? Um and then the delegates
+    // you can have the the twin side delegates twin delegates manufacturing"
+    // bridgeMethod distinguishes which NotificationBridge side is called after each activity.
+    private void writeController(Path projectDir, String basePackage, String subPackage, String className,
+            String requestMapping, String processKey, List<BpmnActivities.Activity> activities,
+            String bridgeMethod) {
         Set<BpmnActivities.Trigger> triggers = activities.stream()
                 .map(BpmnActivities.Activity::trigger)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
         StringBuilder endpoints = new StringBuilder();
         for (BpmnActivities.Activity activity : activities) {
-            endpoints.append(renderActivityEndpoint(activity));
+            endpoints.append(renderActivityEndpoint(activity, bridgeMethod));
         }
 
         // only the helpers something actually calls, so a generated file never carries a private
@@ -293,11 +365,7 @@ public class SpringBootProjectGenerator {
             helpers.append(RESPOND_HELPER);
         }
 
-        // ExternalTaskService is the one dependency injected conditionally. RuntimeService and
-        // TaskService have been in every generated project since before this change and are known
-        // good; adding a third to every project would put a bean nothing asked for into the
-        // constructor of apps that have no external task at all, and one that fails to resolve
-        // takes down startup rather than the endpoint that needed it.
+        // Inject ExternalTaskService only when needed; an unused unresolvable bean fails startup.
         boolean needsExternalTaskService = triggers.contains(BpmnActivities.Trigger.EXTERNAL_TASK);
         String externalImport = needsExternalTaskService
                 ? """
@@ -320,7 +388,7 @@ public class SpringBootProjectGenerator {
                 : "";
 
         String source = """
-                package com.example.camundademo.controller;
+                package %s.%s;
 
                 import java.util.ArrayList;
                 import java.util.List;
@@ -336,18 +404,24 @@ public class SpringBootProjectGenerator {
                 import org.springframework.web.bind.annotation.RequestMapping;
                 import org.springframework.web.bind.annotation.RestController;
 
+                import %s.bridge.NotificationBridge;
+
                 // Generated for process key "%s" - not hand-written, don't hand-edit; regenerate instead.
                 // One endpoint per externally-triggerable BPMN activity, generated from the model itself.
+                // Calls NotificationBridge.%s after completing each activity (see NotificationBridge).
                 @RestController
-                @RequestMapping("/api/v1/process")
-                public class GeneratedProcessController {
+                @RequestMapping("%s")
+                public class %s {
 
                     private final RuntimeService runtimeService;
                     private final TaskService taskService;
+                    private final NotificationBridge notificationBridge;
                 %s
-                    public GeneratedProcessController(RuntimeService runtimeService, TaskService taskService%s) {
+                    public %s(RuntimeService runtimeService, TaskService taskService,
+                            NotificationBridge notificationBridge%s) {
                         this.runtimeService = runtimeService;
                         this.taskService = taskService;
+                        this.notificationBridge = notificationBridge;
                 %s    }
 
                     @PostMapping("/start")
@@ -356,19 +430,16 @@ public class SpringBootProjectGenerator {
                         return ResponseEntity.ok(Map.of("processInstanceId", instance.getId()));
                     }
                 %s%s}
-                """.formatted(externalImport, executionImport, taskImport, processKey, externalField,
-                externalParam, externalAssignment, processKey, endpoints, helpers);
-        writeFile(projectDir.resolve(CONTROLLER_PACKAGE_PATH).resolve("GeneratedProcessController.java"), source);
+                """.formatted(basePackage, subPackage, externalImport, executionImport, taskImport, basePackage,
+                processKey, bridgeMethod, requestMapping, className, externalField, className, externalParam,
+                externalAssignment, processKey, endpoints, helpers);
+        Path packageDir = projectDir.resolve("src/main/java")
+                .resolve((basePackage + "." + subPackage).replace('.', '/'));
+        writeFile(packageDir.resolve(className + ".java"), source);
     }
 
-    // Every endpoint looks the same from outside - POST /<activity>/complete - and differs only in
-    // which helper it calls, which is what keeps this loop generic while the execution underneath
-    // stays faithful to what the activity actually is.
-    //
-    // The activity id is passed to the helper as a literal, and the slug only ever appears in the
-    // URL - so an endpoint physically cannot reach an activity other than the one it is named for,
-    // however the slug was derived.
-    private static String renderActivityEndpoint(BpmnActivities.Activity activity) {
+    // One endpoint per activity; the activity ID is a literal so a slug mismatch cannot reach the wrong task.
+    private static String renderActivityEndpoint(BpmnActivities.Activity activity, String bridgeMethod) {
         String label = activity.name() == null || activity.name().isBlank()
                 ? "(unnamed activity)"
                 : sanitizeForComment(activity.name());
@@ -377,10 +448,13 @@ public class SpringBootProjectGenerator {
                     // BPMN activity "%s" (id: %s), triggered as %s
                     @PostMapping("/{processInstanceId}/%s/complete")
                     public ResponseEntity<Map<String, List<String>>> complete%s(@PathVariable String processInstanceId) {
-                        return %s(processInstanceId, "%s");
+                        ResponseEntity<Map<String, List<String>>> response = %s(processInstanceId, "%s");
+                        notificationBridge.%s(processInstanceId, "%s");
+                        return response;
                     }
                 """.formatted(label, activity.id(), activity.trigger(), activity.endpointSlug(),
-                activity.methodSuffix(), helperMethodFor(activity.trigger()), activity.id());
+                activity.methodSuffix(), helperMethodFor(activity.trigger()), activity.id(), bridgeMethod,
+                activity.id());
     }
 
     private static String helperMethodFor(BpmnActivities.Trigger trigger) {
@@ -391,18 +465,12 @@ public class SpringBootProjectGenerator {
         };
     }
 
-    // Same lesson DelegateClassGenerator already learned the hard way: a BPMN name attribute can
-    // carry an embedded newline (this repo's own loanApproval.bpmn has "Calculate\nInterest"), and
-    // every use of the label here lands inside a single-line // comment, where an unescaped
-    // newline turns the rest of the label into a syntax error in the generated file.
+    // BPMN names can contain embedded newlines (loanApproval.bpmn: "Calculate\nInterest"); collapse to spaces for inline comments.
     private static String sanitizeForComment(String label) {
         return label.replaceAll("\\s+", " ").trim();
     }
 
-    // Queries by taskDefinitionKey, which is the BPMN element id - the same identity the
-    // workbench's own governance and twin bookkeeping already key on (see AgentExecutionDelegate,
-    // which reads exactly this value as its activityId). A multi-instance activity can have more
-    // than one open task at once, so this completes that activity's set rather than a single task.
+    // Query by BPMN element ID; multi-instance activities may have multiple open tasks.
     private static final String USER_TASK_HELPER = """
 
                 private ResponseEntity<Map<String, List<String>>> completeUserTask(String processInstanceId,
@@ -420,9 +488,7 @@ public class SpringBootProjectGenerator {
                 }
             """;
 
-    // A receive task is a wait state with no Task row behind it, so TaskService cannot see it at
-    // all - the execution itself is what is parked, and signalling that execution is what moves
-    // the token on. Queried by activityId, the same BPMN element id every other trigger uses.
+    // Receive tasks have no Task row; signal the parked execution by activity ID.
     private static final String RECEIVE_TASK_HELPER = """
 
                 private ResponseEntity<Map<String, List<String>>> signalReceiveTask(String processInstanceId,
@@ -440,9 +506,7 @@ public class SpringBootProjectGenerator {
                 }
             """;
 
-    // An external task is the one case where the engine has explicitly handed execution outside
-    // itself, so this endpoint IS the external worker. Camunda will not accept a completion from a
-    // worker that does not hold the lock, hence lock-then-complete rather than a bare complete.
+    // External tasks require the worker to hold the lock before completion.
     private static final String EXTERNAL_TASK_HELPER = """
 
                 // this controller is the worker, so the id only has to be stable and identifiable
@@ -467,9 +531,7 @@ public class SpringBootProjectGenerator {
                 }
             """;
 
-    // An empty set means the token is not sitting at this activity, which is a real distinction
-    // worth reporting - the old generic endpoint could not make it, because it never asked about a
-    // specific activity in the first place.
+    // No matching task means the process is not currently at this activity.
     private static final String RESPOND_HELPER = """
 
                 private ResponseEntity<Map<String, List<String>>> respond(List<String> touched) {

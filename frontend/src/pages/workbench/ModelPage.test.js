@@ -197,7 +197,36 @@ describe("ModelPage - save / generate / launch", () => {
 
             await waitFor(() => expect(generateProject).toHaveBeenCalledWith({ modelId: "m-1" }));
             expect(generateDelegates).not.toHaveBeenCalled();
-            expect(await screen.findByText(/Generated Spring Boot project/)).toBeInTheDocument();
+        });
+
+        // explicit requirement: "Automatically launch the generated Spring Boot application after
+        // generation" - a successful Generate must not require a separate manual Launch click.
+        test("automatically launches the generated project without a separate Launch click", async () => {
+            renderPage();
+            backendWorkflowState = SAVED;
+            await saveTheModel();
+            await waitFor(() => expect(button("Generate")).toBeEnabled());
+
+            userEvent.click(button("Generate"));
+
+            await waitFor(() => expect(generateProject).toHaveBeenCalledWith({ modelId: "m-1" }));
+            // launch fired on its own off the id Generate produced - no second click
+            await waitFor(() => expect(launchProject).toHaveBeenCalledWith({ projectId: "p-9" }));
+            expect(await screen.findByText(/Launched on port 8091/)).toBeInTheDocument();
+        });
+
+        test("does not launch when a failed generate produced no project id", async () => {
+            generateProject.mockRejectedValue(new Error("Kaboom"));
+
+            renderPage();
+            backendWorkflowState = SAVED;
+            await saveTheModel();
+            await waitFor(() => expect(button("Generate")).toBeEnabled());
+
+            userEvent.click(button("Generate"));
+
+            expect(await screen.findByText(/Generate failed: Kaboom/)).toBeInTheDocument();
+            expect(launchProject).not.toHaveBeenCalled();
         });
     });
 
@@ -216,15 +245,19 @@ describe("ModelPage - save / generate / launch", () => {
             expect(launchProject).not.toHaveBeenCalled();
         });
 
-        test("launches the project id that Generate produced", async () => {
+        // after the automatic launch, the Launch button stays usable to re-launch the same project id
+        test("re-launches the project id that Generate produced", async () => {
             renderPage();
             backendWorkflowState = SAVED;
             await saveTheModel();
             await waitFor(() => expect(button("Generate")).toBeEnabled());
 
             userEvent.click(button("Generate"));
+            // automatic launch first
+            await waitFor(() => expect(launchProject).toHaveBeenCalledWith({ projectId: "p-9" }));
             await waitFor(() => expect(button("Launch")).toBeEnabled());
 
+            launchProject.mockClear();
             userEvent.click(button("Launch"));
 
             await waitFor(() => expect(launchProject).toHaveBeenCalledWith({ projectId: "p-9" }));
