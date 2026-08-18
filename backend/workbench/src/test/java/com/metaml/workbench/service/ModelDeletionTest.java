@@ -98,7 +98,8 @@ class ModelDeletionTest {
         write(templateDir.resolve("src/main/resources/processes/loanApproval.bpmn"), "<bpmn>placeholder</bpmn>");
 
         generator = new SpringBootProjectGenerator(templateDir.toString(), outputDir.toString(),
-                new TwinModelGenerator(), new DelegateClassGenerator());
+                new TwinModelGenerator(), new DelegateClassGenerator(),
+                new com.metaml.workbench.codegen.ExternalTaskWorkerGenerator());
         launcher = new SpringBootProjectLauncher();
         modelFileStore = new ProcessModelFileStore(modelsDir.toString());
         service = newService(newTracker(), List.of(), List.of());

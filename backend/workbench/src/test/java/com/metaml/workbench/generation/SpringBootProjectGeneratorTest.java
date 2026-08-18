@@ -53,7 +53,8 @@ class SpringBootProjectGeneratorTest {
     // needs no collaborators)
     private SpringBootProjectGenerator generator() {
         return new SpringBootProjectGenerator(templateDir.toString(), outputDir.toString(),
-                new TwinModelGenerator(), new DelegateClassGenerator());
+                new TwinModelGenerator(), new DelegateClassGenerator(),
+                new com.metaml.workbench.codegen.ExternalTaskWorkerGenerator());
     }
 
     // Manufacturing controller/delegates now live under a project-specific package
@@ -537,14 +538,18 @@ class SpringBootProjectGeneratorTest {
         assertThat(generator().scanExisting()).isEmpty();
     }
 
-    // same "no safe single answer" reasoning as the no-file case above - two candidates is exactly
-    // as unresolvable as zero, not a coin flip
+    // Superseded by the project's own declared identity (PROJECT_METADATA_FILE, see
+    // SpringBootProjectGenerator.findProcessKey's own comment): an unrelated extra .bpmn file
+    // sitting alongside the declared one is no longer an unresolvable ambiguity, because the
+    // metadata already says which file is the project's real identity - exactly the shape
+    // generateWithAuthoredTwin's own two authored BPMNs produce, which this used to wrongly skip.
     @Test
-    void scanExistingSkipsAProjectDirectoryWithAmbiguousBpmnFiles() throws IOException {
+    void scanExistingResolvesViaDeclaredIdentityEvenWithAnExtraBpmnFilePresent() throws IOException {
         GeneratedProject project = generator().generate(loanApprovalBpmn(), List.of());
         write(project.directory().resolve("src/main/resources/processes/extra.bpmn"), "<bpmn>unexpected</bpmn>");
 
-        assertThat(generator().scanExisting()).isEmpty();
+        assertThat(generator().scanExisting()).extracting(GeneratedProject::processKey)
+                .containsExactly("loanApproval");
     }
 
     @Test

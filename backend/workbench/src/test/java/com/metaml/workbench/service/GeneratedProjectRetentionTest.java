@@ -87,7 +87,8 @@ class GeneratedProjectRetentionTest {
         write(templateDir.resolve("src/main/resources/processes/loanApproval.bpmn"), "<bpmn>placeholder</bpmn>");
 
         generator = new SpringBootProjectGenerator(templateDir.toString(), outputDir.toString(),
-                new TwinModelGenerator(), new DelegateClassGenerator());
+                new TwinModelGenerator(), new DelegateClassGenerator(),
+                new com.metaml.workbench.codegen.ExternalTaskWorkerGenerator());
         launcher = new SpringBootProjectLauncher();
         service = newService(newTracker());
     }

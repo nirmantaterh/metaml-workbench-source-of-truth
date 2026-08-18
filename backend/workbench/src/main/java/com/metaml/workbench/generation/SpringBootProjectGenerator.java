@@ -3,6 +3,7 @@ package com.metaml.workbench.generation;
 import org.camunda.bpm.model.bpmn.Bpmn;
 import org.camunda.bpm.model.bpmn.BpmnModelInstance;
 import org.camunda.bpm.model.bpmn.instance.Process;
+import org.camunda.bpm.model.bpmn.instance.Signal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,7 +11,9 @@ import org.springframework.stereotype.Component;
 
 import com.metaml.workbench.bpmn.TwinModelGenerator;
 import com.metaml.workbench.codegen.DelegateClassGenerator;
+import com.metaml.workbench.codegen.ExternalTaskWorkerGenerator;
 import com.metaml.workbench.codegen.GeneratedDelegate;
+import com.metaml.workbench.codegen.GeneratedWorker;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -21,8 +24,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -54,19 +59,33 @@ public class SpringBootProjectGenerator {
     private static final String CONTROLLER_PACKAGE_PATH = "src/main/java/com/example/camundademo/controller";
     private static final String PROCESSES_PATH = "src/main/resources/processes";
 
+    // Generic, mode-independent project identity, written by every generation path and read by
+    // scanExisting()/findProcessKey() in preference to inferring identity from the .bpmn files a
+    // particular mode happens to write. Guessing from filenames only works for the shapes the
+    // guesser was written for - "one bpmn" or "one bpmn plus a _twin-suffixed one" - and silently
+    // stops working the moment a generation mode writes a different number of files under a
+    // different naming convention (exactly what generateWithAuthoredTwin's two equally-named,
+    // non-suffixed BPMNs do). A project's own declaration of its process key has no such limit:
+    // it works the same for one BPMN, two authored BPMNs, or any future shape, without this class
+    // needing to special-case any of them.
+    private static final String PROJECT_METADATA_FILE = ".metaml-project.properties";
+
     private final Path templateDirectory;
     private final Path outputDirectory;
     private final TwinModelGenerator twinModelGenerator;
     private final DelegateClassGenerator delegateClassGenerator;
+    private final ExternalTaskWorkerGenerator externalTaskWorkerGenerator;
 
     public SpringBootProjectGenerator(
             @Value("${workbench.generation.template-directory:./templates/camundademo}") String templateDirectory,
             @Value("${workbench.generation.output-directory:./data/generated-projects}") String outputDirectory,
-            TwinModelGenerator twinModelGenerator, DelegateClassGenerator delegateClassGenerator) {
+            TwinModelGenerator twinModelGenerator, DelegateClassGenerator delegateClassGenerator,
+            ExternalTaskWorkerGenerator externalTaskWorkerGenerator) {
         this.templateDirectory = Path.of(templateDirectory);
         this.outputDirectory = Path.of(outputDirectory);
         this.twinModelGenerator = twinModelGenerator;
         this.delegateClassGenerator = delegateClassGenerator;
+        this.externalTaskWorkerGenerator = externalTaskWorkerGenerator;
     }
 
     public GeneratedProject generate(String bpmnXml, List<GeneratedDelegate> delegates) {
@@ -87,16 +106,105 @@ public class SpringBootProjectGenerator {
         removeTemplatePlaceholders(projectDir);
         rewritePackage(projectDir, basePackage);
         writeProcessFile(projectDir, processKey, bpmnXml);
+        writePairRegistry(projectDir, basePackage);
         writeManufacturingDelegates(projectDir, basePackage, delegates);
         writeController(projectDir, basePackage, "controller.manufacturing", "GeneratedManufacturingController",
                 "/api/v1/manufacturing", processKey, activities, "notifyTwin");
         generateTwinResources(projectDir, basePackage, model, processKey);
+        writeProcessStatusController(projectDir, basePackage);
+        writeProjectMetadata(projectDir, processKey);
 
         logger.info(
                 "Generated Target Harness Platform {} for process key '{}' with {} manufacturing activity "
                         + "endpoint(s), package {}, at {}",
                 projectId, processKey, activities.size(), basePackage, projectDir.toAbsolutePath());
         return new GeneratedProject(projectId, projectDir, processKey);
+    }
+
+    // Generates a Target Harness Platform from two independently authored BPMNs (Manufacturing +
+    // Twin). Unlike generate(), which derives the Twin from Manufacturing via TwinModelGenerator,
+    // this method uses the actual authored Twin BPMN. Both BPMNs are deployed as-is, and
+    // external-task workers are generated for both (Twin workers with ML-agent simulation).
+    // Signal catch events shared between the two processes are synchronized via a generated
+    // SignalBroadcaster that periodically broadcasts all BPMN-defined signals.
+    public GeneratedProject generateWithAuthoredTwin(String manufBpmnXml, String twinBpmnXml) {
+        if (!Files.isDirectory(templateDirectory)) {
+            throw new IllegalStateException("No template project at " + templateDirectory.toAbsolutePath()
+                    + " - workbench.generation.template-directory must point at the camundademo template");
+        }
+
+        BpmnModelInstance manufModel = Bpmn.readModelFromStream(
+                new ByteArrayInputStream(manufBpmnXml.getBytes(StandardCharsets.UTF_8)));
+        BpmnModelInstance twinModel = Bpmn.readModelFromStream(
+                new ByteArrayInputStream(twinBpmnXml.getBytes(StandardCharsets.UTF_8)));
+
+        String manufProcessKey = extractProcessKey(manufModel);
+        String twinProcessKey = extractProcessKey(twinModel);
+        String projectId = UUID.randomUUID().toString();
+        Path projectDir = outputDirectory.resolve(projectId);
+        String basePackage = TARGET_PLATFORM_BASE_PACKAGE + "." + packageSlugFor(manufProcessKey);
+
+        copyTemplate(projectDir);
+        removeTemplatePlaceholders(projectDir);
+        rewritePackage(projectDir, basePackage);
+        writePairRegistry(projectDir, basePackage);
+
+        // Write both authored BPMNs as-is (no Twin derivation)
+        writeProcessFile(projectDir, manufProcessKey, manufBpmnXml);
+        writeProcessFile(projectDir, twinProcessKey, twinBpmnXml);
+
+        // Generate and write external-task workers
+        List<GeneratedWorker> manufWorkers = externalTaskWorkerGenerator.generate(
+                manufBpmnXml, basePackage + ".worker.manufacturing", false);
+        writeWorkers(projectDir, manufWorkers);
+
+        List<GeneratedWorker> twinWorkers = externalTaskWorkerGenerator.generate(
+                twinBpmnXml, basePackage + ".worker.twin", true);
+        writeWorkers(projectDir, twinWorkers);
+
+        // Generate controllers for both processes
+        List<BpmnActivities.Activity> manufActivities = BpmnActivities.eligible(manufModel);
+        writeController(projectDir, basePackage, "controller.manufacturing", "GeneratedManufacturingController",
+                "/api/v1/manufacturing", manufProcessKey, manufActivities, "notifyTwin");
+
+        List<BpmnActivities.Activity> twinActivities = BpmnActivities.eligible(twinModel);
+        writeController(projectDir, basePackage, "controller.twin", "GeneratedTwinController",
+                "/api/v1/twin", twinProcessKey, twinActivities, "notifyManufacturing");
+
+        // Signal broadcaster for cross-process synchronization
+        Set<String> allSignals = new LinkedHashSet<>();
+        allSignals.addAll(extractSignalNames(manufModel));
+        allSignals.addAll(extractSignalNames(twinModel));
+        if (!allSignals.isEmpty()) {
+            writeSignalBroadcaster(projectDir, basePackage, allSignals);
+        }
+
+        // Generate stub execution listeners referenced by the BPMNs (e.g. manufTaskCompletionListener).
+        // These are delegateExpression references that Camunda resolves as Spring beans — without
+        // them the engine throws PropertyNotFoundException when external tasks complete.
+        Set<String> listenerBeanNames = new LinkedHashSet<>();
+        listenerBeanNames.addAll(extractExecutionListenerBeanNames(manufBpmnXml));
+        listenerBeanNames.addAll(extractExecutionListenerBeanNames(twinBpmnXml));
+        for (String beanName : listenerBeanNames) {
+            writeExecutionListenerStub(projectDir, basePackage, beanName);
+        }
+
+        // Generate the worker interface and poller that drive all external-task workers, plus the
+        // scheduling infrastructure they (and SignalBroadcaster, when present) run on. Written
+        // unconditionally here - not left for SignalBroadcaster to accidentally provide - so a BPMN
+        // pair with external tasks but no signals still gets a working poller.
+        writeWorkerInterface(projectDir, basePackage);
+        writeExternalTaskPoller(projectDir, basePackage);
+        writeSchedulingConfig(projectDir, basePackage);
+        writeProcessStatusController(projectDir, basePackage);
+        writeProjectMetadata(projectDir, manufProcessKey);
+
+        logger.info("Generated Target Harness Platform {} with authored Twin for process keys '{}' + '{}', "
+                + "{} manufacturing workers, {} twin workers, {} shared signals, package {}, at {}",
+                projectId, manufProcessKey, twinProcessKey, manufWorkers.size(), twinWorkers.size(),
+                allSignals.size(), basePackage, projectDir.toAbsolutePath());
+
+        return new GeneratedProject(projectId, projectDir, manufProcessKey);
     }
 
     // Reuses TwinModelGenerator's stateless transform (same as WorkbenchServiceImpl.deployTwinDefinition,
@@ -235,8 +343,42 @@ public class SpringBootProjectGenerator {
         return true;
     }
 
-    // Filter the twin file first; generate() writes two BPMN files but only one (non-twin) identifies the process key.
+    // Writes this project's own declared identity, generic across every generation mode. See
+    // PROJECT_METADATA_FILE's own comment for why this exists instead of inferring identity from
+    // the .bpmn files a mode happens to write. Root of the project, not under src/, so it is never
+    // touched by rewritePackage() and never ships as part of the generated application itself.
+    private void writeProjectMetadata(Path projectDir, String processKey) {
+        java.util.Properties properties = new java.util.Properties();
+        properties.setProperty("processKey", processKey);
+        Path target = projectDir.resolve(PROJECT_METADATA_FILE);
+        try (java.io.Writer writer = Files.newBufferedWriter(target, StandardCharsets.UTF_8)) {
+            properties.store(writer, "Generated by SpringBootProjectGenerator - do not hand-edit");
+        } catch (IOException e) {
+            throw new UncheckedIOException("Could not write project metadata to " + target.toAbsolutePath(), e);
+        }
+    }
+
+    // Prefers the project's own declared identity (PROJECT_METADATA_FILE) over guessing from the
+    // .bpmn files under processes/, so this works the same for one BPMN, two authored BPMNs, or any
+    // future generation mode without a mode-specific filename rule here. A declared key is only
+    // trusted when its own processes/<key>.bpmn file is actually still there - a directory whose
+    // real artifact was deleted or corrupted out from under it must still read as unrecoverable, not
+    // be taken on the metadata's word alone. This also means a second (or third) .bpmn file sitting
+    // alongside the declared one - exactly what generateWithAuthoredTwin produces - is no longer an
+    // "ambiguous" shape the way it was for the old file-counting heuristic: the metadata already
+    // resolves which file is the project's own identity, so an additional file is just not a
+    // question this method needs to answer. Falls back to the older "exactly one non-twin .bpmn
+    // file" heuristic only for a project directory generated before this metadata file existed -
+    // preserving discoverability for already-generated projects rather than orphaning them.
     private static String findProcessKey(Path projectDir) {
+        String declared = readDeclaredProcessKey(projectDir);
+        if (declared != null) {
+            Path declaredBpmnFile = projectDir.resolve(PROCESSES_PATH).resolve(declared + ".bpmn");
+            if (Files.isRegularFile(declaredBpmnFile)) {
+                return declared;
+            }
+            return null;
+        }
         Path processesDir = projectDir.resolve(PROCESSES_PATH);
         if (!Files.isDirectory(processesDir)) {
             return null;
@@ -245,8 +387,9 @@ public class SpringBootProjectGenerator {
             List<Path> bpmnFiles = entries.filter(p -> p.getFileName().toString().endsWith(".bpmn"))
                     .filter(p -> !p.getFileName().toString().endsWith("_twin.bpmn"))
                     .toList();
-            // zero means this directory was never finished (or was cleared out); more than one is
-            // a shape generate() itself never produces - either way, no safe single answer
+            // zero means this directory was never finished (or was cleared out); more than one is a
+            // shape the pre-metadata generate() itself never produced - either way, no safe single
+            // answer without the metadata file this project predates
             if (bpmnFiles.size() != 1) {
                 return null;
             }
@@ -255,6 +398,22 @@ public class SpringBootProjectGenerator {
         } catch (IOException e) {
             return null;
         }
+    }
+
+    private static String readDeclaredProcessKey(Path projectDir) {
+        Path metadataFile = projectDir.resolve(PROJECT_METADATA_FILE);
+        if (!Files.isRegularFile(metadataFile)) {
+            return null;
+        }
+        java.util.Properties properties = new java.util.Properties();
+        try (java.io.Reader reader = Files.newBufferedReader(metadataFile, StandardCharsets.UTF_8)) {
+            properties.load(reader);
+        } catch (IOException e) {
+            logger.warn("Could not read project metadata at {}: {}", metadataFile.toAbsolutePath(), e.toString());
+            return null;
+        }
+        String processKey = properties.getProperty("processKey");
+        return (processKey == null || processKey.isBlank()) ? null : processKey;
     }
 
     private static String extractProcessKey(BpmnModelInstance model) {
@@ -315,6 +474,603 @@ public class SpringBootProjectGenerator {
             writeDelegateFile(packageDir, delegate.className(), delegate.sourceCode(), delegate.beanName(),
                     delegate.bpmnElementId());
         }
+    }
+
+    private void writeWorkers(Path projectDir, List<GeneratedWorker> workers) {
+        for (GeneratedWorker worker : workers) {
+            // Each worker's sourceCode contains a package declaration whose path we derive here
+            String packageLine = worker.sourceCode().lines()
+                    .filter(l -> l.startsWith("package ")).findFirst().orElse("");
+            String packageName = packageLine.replace("package ", "").replace(";", "").trim();
+            Path packageDir = projectDir.resolve("src/main/java").resolve(packageName.replace('.', '/'));
+            writeFile(packageDir.resolve(worker.className() + ".java"), worker.sourceCode());
+        }
+    }
+
+    private static Set<String> extractSignalNames(BpmnModelInstance model) {
+        Set<String> names = new LinkedHashSet<>();
+        for (Signal signal : model.getModelElementsByType(Signal.class)) {
+            String name = signal.getName();
+            if (name != null && !name.isBlank()) {
+                names.add(name);
+            }
+        }
+        return names;
+    }
+
+    // Generates a Spring component that periodically broadcasts all BPMN-defined signals so that
+    // intermediate signal catch events in both processes can advance. Both Manufacturing and Twin
+    // use catch events with shared signal names; neither throws, so signals must be broadcast
+    // externally. Signal names are extracted from the actual BPMNs, not hard-coded.
+    private void writeSignalBroadcaster(Path projectDir, String basePackage, Set<String> signalNames) {
+        String subPackage = basePackage + ".signal";
+        String coordinationPackage = basePackage + ".coordination";
+        String signalList = signalNames.stream()
+                .map(s -> "\"" + s + "\"")
+                .collect(Collectors.joining(", "));
+
+        String source = """
+                package %s;
+
+                import java.util.List;
+                import java.util.Map;
+                import java.util.Set;
+                import java.util.concurrent.ConcurrentHashMap;
+
+                import org.camunda.bpm.engine.RuntimeService;
+                import org.camunda.bpm.engine.runtime.EventSubscription;
+                import org.camunda.bpm.engine.runtime.ProcessInstance;
+                import org.slf4j.Logger;
+                import org.slf4j.LoggerFactory;
+                import org.springframework.stereotype.Component;
+                import org.springframework.scheduling.annotation.Scheduled;
+
+                import %s.PairRegistry;
+
+                // Delivers BPMN-defined signals to the specific executions currently waiting on each one,
+                // so intermediate signal catch events in both processes can advance. Both Manufacturing and
+                // Twin use catch events with shared signal names; neither throws, so signals must be
+                // delivered externally. Signal names are derived from the actual BPMN signal definitions,
+                // not hard-coded.
+                //
+                // For a paired Main+Twin (same business key - see PairRegistry and the generated /start
+                // endpoints), each shared signal becomes a genuine two-step, targeted handoff instead of
+                // an undifferentiated broadcast:
+                //   1. REQUEST (Main -> Twin): once the initiator ("Main") and responder ("Twin") side of a
+                //      pair are simultaneously waiting on the same signal, only the responder's execution
+                //      is released. What runs next in its own BPMN - the Twin's delegate/external-task
+                //      worker - is the simulated agent invocation.
+                //   2. RESPONSE (Twin -> Main): the initiator's execution is deliberately left waiting
+                //      until the responder is observed to have moved on - subscribed to a different
+                //      signal, or completed entirely - proving its gated task actually ran, not merely
+                //      that the signal arrived. Only then is the initiator's execution released.
+                // This uses only generic runtime state (event subscriptions, business keys, process
+                // instance activity), never a process-specific name - the same class handles any BPMN
+                // pair, not just this one. Neither supplied process model has a signal throw event, so
+                // this stays the only way either direction can be delivered at all.
+                //
+                // An execution with no business key, or whose partner is not currently waiting on the
+                // same signal (unpaired, or a rework loop revisiting a signal its partner already passed
+                // for good), is delivered to immediately - exactly the prior, pre-pairing behavior. This
+                // is additive: nothing changes for a caller that never uses business keys.
+                //
+                // Scheduling itself (@EnableScheduling + the thread pool) is enabled by the always-generated
+                // SchedulingConfig, not here - this class must not be the thing that turns @Scheduled on:
+                // a BPMN pair with external tasks but no signals still needs its ExternalTaskPoller to run,
+                // and that must not depend on whether this class happens to exist.
+                @Component
+                public class SignalBroadcaster {
+
+                    private static final Logger logger = LoggerFactory.getLogger(SignalBroadcaster.class);
+                    private static final List<String> SIGNAL_NAMES = List.of(%s);
+
+                    private final RuntimeService runtimeService;
+                    private final PairRegistry pairRegistry;
+                    // (businessKey + "|" + signalName) currently past step 1, awaiting proof of step 2
+                    // before the initiator is released. Only this scheduled method ever touches these
+                    // fields (Spring never overlaps two runs of the same @Scheduled method), but they
+                    // stay concurrent collections defensively rather than relying on that alone.
+                    private final Set<String> awaitingResponse = ConcurrentHashMap.newKeySet();
+                    // (processInstanceId + "|" + signalName) that this broadcaster has ever actually
+                    // delivered signalName to, by any path. Distinguishes "partner has not reached this
+                    // signal YET" (may still arrive) from "partner already received this signal and
+                    // moved on" (a rework-loop revisit, or the partner's earlier unpaired delivery before
+                    // the other side ever registered - either way it is not coming back to this exact
+                    // signal). Never cleared - this is a short-lived generated harness, not a long-running
+                    // service, so unbounded growth for the process's lifetime is fine.
+                    private final Set<String> everDelivered = ConcurrentHashMap.newKeySet();
+                    // (waiting execution's processInstanceId + "|" + signalName) -> how many ticks it has
+                    // been seen waiting here with its partner neither co-waiting nor already past this
+                    // signal (see MAX_PARTNER_ARRIVAL_TICKS). Bounds the "the partner may just not have
+                    // arrived yet" wait: a pair's shared signals resolve this way within one or two ticks
+                    // in practice, but a signal that exists in only ONE side's BPMN (e.g. RedCollar's own
+                    // Manuf-only orderVerifySignal) has a real, registered partner that will structurally
+                    // never co-wait on it - everDelivered can never record that in advance, so without a
+                    // bound this execution would wait forever. Cleared once resolved either way.
+                    private final Map<String, Integer> partnerArrivalTicks = new ConcurrentHashMap<>();
+                    private static final int MAX_PARTNER_ARRIVAL_TICKS = 5;
+
+                    public SignalBroadcaster(RuntimeService runtimeService, PairRegistry pairRegistry) {
+                        this.runtimeService = runtimeService;
+                        this.pairRegistry = pairRegistry;
+                    }
+
+                    @Scheduled(fixedDelay = 1000)
+                    public void broadcastSignals() {
+                        for (String signalName : SIGNAL_NAMES) {
+                            List<EventSubscription> waiting = runtimeService.createEventSubscriptionQuery()
+                                    .eventType("signal")
+                                    .eventName(signalName)
+                                    .list();
+                            for (EventSubscription subscription : waiting) {
+                                handle(signalName, subscription, waiting);
+                            }
+                        }
+                    }
+
+                    private void handle(String signalName, EventSubscription subscription,
+                            List<EventSubscription> waitingForSameSignal) {
+                        ProcessInstance instance = runtimeService.createProcessInstanceQuery()
+                                .processInstanceId(subscription.getProcessInstanceId())
+                                .singleResult();
+                        String businessKey = instance == null ? null : instance.getBusinessKey();
+                        String role = pairRegistry.roleOf(businessKey, subscription.getProcessInstanceId());
+                        String partnerInstanceId = pairRegistry.partnerOf(businessKey, subscription.getProcessInstanceId());
+
+                        if (role == null || partnerInstanceId == null) {
+                            deliverTo(signalName, subscription, businessKey, "DELIVERED");
+                            return;
+                        }
+                        boolean partnerWaitingNow = waitingForSameSignal.stream()
+                                .anyMatch(s -> s.getProcessInstanceId().equals(partnerInstanceId));
+
+                        String waitKey = subscription.getProcessInstanceId() + "|" + signalName;
+
+                        if ("responder".equals(role)) {
+                            // Normally never self-releases - the initiator's own turn through this
+                            // method (below) performs the actual handoff. If the initiator is not
+                            // co-waiting yet, fall back to immediate delivery once partnerNotComing
+                            // below says so; otherwise wait for a later tick instead of racing ahead.
+                            if (partnerWaitingNow) {
+                                partnerArrivalTicks.remove(waitKey);
+                            } else if (partnerNotComing(waitKey, partnerInstanceId, signalName)) {
+                                deliverTo(signalName, subscription, businessKey, "DELIVERED");
+                            }
+                            return;
+                        }
+
+                        String handoffKey = businessKey + "|" + signalName;
+                        if (awaitingResponse.contains(handoffKey)) {
+                            if (responderHasAdvancedPast(signalName, partnerInstanceId)) {
+                                awaitingResponse.remove(handoffKey);
+                                deliverTo(signalName, subscription, businessKey, "RESPONSE");
+                            }
+                            return;
+                        }
+
+                        if (partnerWaitingNow) {
+                            partnerArrivalTicks.remove(waitKey);
+                            EventSubscription responderSubscription = waitingForSameSignal.stream()
+                                    .filter(s -> s.getProcessInstanceId().equals(partnerInstanceId))
+                                    .findFirst()
+                                    .orElse(null);
+                            if (responderSubscription != null) {
+                                deliverTo(signalName, responderSubscription, businessKey, "REQUEST");
+                                awaitingResponse.add(handoffKey);
+                            }
+                            return;
+                        }
+
+                        // Partner (the responder) is not currently waiting on this exact signal and no
+                        // handoff is in flight for it. Same distinction as the responder branch above:
+                        // fall back to immediate delivery once partnerNotComing says so - a rework-loop
+                        // revisit, or a signal that exists in only this side's BPMN at all (the responder
+                        // is a real, registered partner that will simply never co-wait on it). Otherwise
+                        // the responder may simply not have reached this signal yet - wait rather than
+                        // race ahead of it.
+                        if (partnerNotComing(waitKey, partnerInstanceId, signalName)) {
+                            deliverTo(signalName, subscription, businessKey, "DELIVERED");
+                        }
+                    }
+
+                    // True once waiting for the partner has gone on long enough to conclude it is not
+                    // coming to THIS exact signal - either because it already has (everDelivered), or
+                    // because MAX_PARTNER_ARRIVAL_TICKS consecutive ticks have passed without it showing
+                    // up (see partnerArrivalTicks's own field comment for why a bound is needed at all).
+                    // waitKey identifies the WAITING execution+signal, not the partner, so concurrent
+                    // pairs and different signals never share a counter.
+                    private boolean partnerNotComing(String waitKey, String partnerInstanceId, String signalName) {
+                        if (everDelivered.contains(partnerInstanceId + "|" + signalName)) {
+                            partnerArrivalTicks.remove(waitKey);
+                            return true;
+                        }
+                        int ticks = partnerArrivalTicks.merge(waitKey, 1, Integer::sum);
+                        if (ticks >= MAX_PARTNER_ARRIVAL_TICKS) {
+                            partnerArrivalTicks.remove(waitKey);
+                            return true;
+                        }
+                        return false;
+                    }
+
+                    // True once the responder has provably moved past the gated task behind signalName -
+                    // subscribed to a different signal, or completed entirely - rather than merely having
+                    // received the signal itself, which happens before its gated task ever runs.
+                    private boolean responderHasAdvancedPast(String signalName, String responderInstanceId) {
+                        ProcessInstance stillActive = runtimeService.createProcessInstanceQuery()
+                                .processInstanceId(responderInstanceId)
+                                .singleResult();
+                        if (stillActive == null) {
+                            return true;
+                        }
+                        List<EventSubscription> responderSignals = runtimeService.createEventSubscriptionQuery()
+                                .processInstanceId(responderInstanceId)
+                                .eventType("signal")
+                                .list();
+                        boolean stillOnSameSignal = responderSignals.stream()
+                                .anyMatch(s -> s.getEventName().equals(signalName));
+                        if (stillOnSameSignal) {
+                            return false;
+                        }
+                        return !responderSignals.isEmpty();
+                    }
+
+                    // A failure here (the execution stopped waiting between the query above and this call
+                    // - e.g. another delivery already reached it and it moved on) is expected during
+                    // normal operation, not an error.
+                    private void deliverTo(String signalName, EventSubscription subscription, String businessKey,
+                            String phase) {
+                        try {
+                            runtimeService.signalEventReceived(signalName, subscription.getExecutionId());
+                            everDelivered.add(subscription.getProcessInstanceId() + "|" + signalName);
+                            logger.info("{}: delivered signal '{}' to execution {} (processInstanceId={}, "
+                                    + "businessKey={})", phase, signalName, subscription.getExecutionId(),
+                                    subscription.getProcessInstanceId(), businessKey);
+                        } catch (Exception e) {
+                            // Expected during normal operation - see this method's own comment.
+                        }
+                    }
+                }
+                """.formatted(subPackage, coordinationPackage, signalList);
+
+        Path packageDir = projectDir.resolve("src/main/java").resolve(subPackage.replace('.', '/'));
+        writeFile(packageDir.resolve("SignalBroadcaster.java"), source);
+    }
+
+    // Generic Main/Twin pairing metadata, keyed only by the caller-supplied business key every
+    // generated /start endpoint already accepts - no BPMN- or process-specific knowledge. The first
+    // process instance to register a given business key is classified "initiator" (the caller-facing
+    // sense of "Main" in this generated platform); the next instance to register the SAME key is
+    // classified "responder" ("Twin"). A business key is pairing/correlation data only - it is not
+    // itself the communication mechanism. See SignalBroadcaster for how these roles turn each shared
+    // signal into a real, targeted Main -> Twin -> Main handoff rather than an undifferentiated
+    // broadcast. Generated unconditionally (every controller depends on it), even for a single-process
+    // project where pairing never actually happens.
+    private void writePairRegistry(Path projectDir, String basePackage) {
+        String subPackage = basePackage + ".coordination";
+        String source = """
+                package %s;
+
+                import java.util.concurrent.ConcurrentHashMap;
+                import java.util.concurrent.ConcurrentMap;
+
+                import org.springframework.stereotype.Component;
+
+                // See SpringBootProjectGenerator.writePairRegistry for the rationale behind this class.
+                @Component
+                public class PairRegistry {
+
+                    private final ConcurrentMap<String, String> initiators = new ConcurrentHashMap<>();
+                    private final ConcurrentMap<String, String> responders = new ConcurrentHashMap<>();
+
+                    // Returns "initiator" for the first instance registered under businessKey,
+                    // "responder" for the second, and null for a blank key or a third-or-later instance
+                    // sharing an already-claimed key (outside what this registry pairs; callers should
+                    // treat that as unpaired and fall back to their own default behavior).
+                    public String registerAndClassify(String businessKey, String processInstanceId) {
+                        if (businessKey == null || businessKey.isBlank()) {
+                            return null;
+                        }
+                        String initiator = initiators.putIfAbsent(businessKey, processInstanceId);
+                        if (initiator == null || initiator.equals(processInstanceId)) {
+                            return "initiator";
+                        }
+                        String responder = responders.putIfAbsent(businessKey, processInstanceId);
+                        if (responder == null || responder.equals(processInstanceId)) {
+                            return "responder";
+                        }
+                        return null;
+                    }
+
+                    // The other half of the pair for this business key, or null if unpaired (only one
+                    // instance has registered so far, or this instance/key isn't tracked at all).
+                    public String partnerOf(String businessKey, String processInstanceId) {
+                        if (businessKey == null || businessKey.isBlank()) {
+                            return null;
+                        }
+                        String initiator = initiators.get(businessKey);
+                        String responder = responders.get(businessKey);
+                        if (processInstanceId.equals(initiator)) {
+                            return responder;
+                        }
+                        if (processInstanceId.equals(responder)) {
+                            return initiator;
+                        }
+                        return null;
+                    }
+
+                    public String roleOf(String businessKey, String processInstanceId) {
+                        if (businessKey == null || businessKey.isBlank()) {
+                            return null;
+                        }
+                        if (processInstanceId.equals(initiators.get(businessKey))) {
+                            return "initiator";
+                        }
+                        if (processInstanceId.equals(responders.get(businessKey))) {
+                            return "responder";
+                        }
+                        return null;
+                    }
+                }
+                """.formatted(subPackage);
+
+        Path packageDir = projectDir.resolve("src/main/java").resolve(subPackage.replace('.', '/'));
+        writeFile(packageDir.resolve("PairRegistry.java"), source);
+    }
+
+    // Generates the GeneratedExternalTaskWorker interface that all generated workers implement.
+    // This replaces the external-task client's ExternalTaskHandler — workers use the embedded
+    // engine's ExternalTaskService directly, avoiding the REST/Jersey incompatibility with SB 4.x.
+    private void writeWorkerInterface(Path projectDir, String basePackage) {
+        String workerPackage = basePackage + ".worker";
+        String source = """
+                package %s;
+
+                import org.camunda.bpm.engine.ExternalTaskService;
+                import org.camunda.bpm.engine.externaltask.LockedExternalTask;
+
+                // Contract for generated external-task workers. Each worker handles one topic via the
+                // embedded engine's ExternalTaskService API (not the HTTP-based external-task client,
+                // which requires Jersey and is incompatible with Spring Boot 4.x).
+                public interface GeneratedExternalTaskWorker {
+
+                    String topic();
+
+                    void execute(LockedExternalTask task, ExternalTaskService externalTaskService);
+                }
+                """.formatted(workerPackage);
+        Path packageDir = projectDir.resolve("src/main/java").resolve(workerPackage.replace('.', '/'));
+        writeFile(packageDir.resolve("GeneratedExternalTaskWorker.java"), source);
+    }
+
+    // Generates a scheduled poller that drives all GeneratedExternalTaskWorker beans. On each tick
+    // it calls fetchAndLock for every registered topic, dispatches locked tasks to the matching
+    // worker, and catches per-task exceptions so one failure doesn't stall the others.
+    private void writeExternalTaskPoller(Path projectDir, String basePackage) {
+        String workerPackage = basePackage + ".worker";
+        String source = """
+                package %s;
+
+                import java.util.List;
+
+                import org.camunda.bpm.engine.ExternalTaskService;
+                import org.camunda.bpm.engine.externaltask.LockedExternalTask;
+                import org.slf4j.Logger;
+                import org.slf4j.LoggerFactory;
+                import org.springframework.scheduling.annotation.Scheduled;
+                import org.springframework.stereotype.Component;
+
+                // Polls all registered external-task topics and dispatches locked tasks to the matching
+                // GeneratedExternalTaskWorker. Uses the embedded engine's ExternalTaskService directly
+                // (fetchAndLock + complete) instead of the HTTP-based external-task client starter,
+                // which depends on Jersey — incompatible with Spring Boot 4.x.
+                @Component
+                public class ExternalTaskPoller {
+
+                    private static final Logger logger = LoggerFactory.getLogger(ExternalTaskPoller.class);
+                    private static final String WORKER_ID = "generated-worker";
+                    private static final long LOCK_DURATION_MS = 10_000L;
+                    // Backoff between retries of one task, and the delay before the poller's own next tick
+                    // picks it back up - no job executor is running, so this poller's own polling cadence
+                    // IS the retry mechanism (see handleWorkerFailure below).
+                    private static final long RETRY_BACKOFF_MS = 2_000L;
+
+                    private final ExternalTaskService externalTaskService;
+                    private final List<GeneratedExternalTaskWorker> workers;
+                    private final int maxRetries;
+
+                    public ExternalTaskPoller(ExternalTaskService externalTaskService,
+                            List<GeneratedExternalTaskWorker> workers,
+                            @org.springframework.beans.factory.annotation.Value(
+                                    "${metaml.worker.max-retries:3}") int maxRetries) {
+                        this.externalTaskService = externalTaskService;
+                        this.workers = workers;
+                        this.maxRetries = maxRetries;
+                        logger.info("ExternalTaskPoller initialized with {} worker(s): {} (maxRetries={})",
+                                workers.size(), workers.stream().map(GeneratedExternalTaskWorker::topic).toList(),
+                                maxRetries);
+                    }
+
+                    @Scheduled(fixedDelay = 500)
+                    public void poll() {
+                        for (GeneratedExternalTaskWorker worker : workers) {
+                            try {
+                                List<LockedExternalTask> tasks = externalTaskService.fetchAndLock(10, WORKER_ID)
+                                        .topic(worker.topic(), LOCK_DURATION_MS)
+                                        .execute();
+                                for (LockedExternalTask task : tasks) {
+                                    try {
+                                        worker.execute(task, externalTaskService);
+                                    } catch (Exception e) {
+                                        handleWorkerFailure(worker, task, e);
+                                    }
+                                }
+                            } catch (Exception e) {
+                                // Topic may not have any pending tasks — expected during normal operation
+                            }
+                        }
+                    }
+
+                    // A task's current remaining retries is null until its first failure (Camunda's own
+                    // convention), at which point maxRetries is the starting budget. Each subsequent
+                    // failure decrements it by one. At zero, Camunda marks the task an incident and this
+                    // poller's own fetchAndLock naturally stops returning it - the same "no job executor"
+                    // reasoning that lets a positive retry count self-heal (its lockExpirationTime is
+                    // pushed out by RETRY_BACKOFF_MS, and this poller's next tick past that point re-fetches
+                    // it on its own, with no separate retry-timer infrastructure needed) also makes zero
+                    // retries a real, generic dead-letter state rather than a silent stall: it is visible
+                    // via ExternalTaskService/ExternalTaskQuery, not merely logged.
+                    private void handleWorkerFailure(GeneratedExternalTaskWorker worker, LockedExternalTask task,
+                            Exception e) {
+                        Integer currentRetries = task.getRetries();
+                        int remaining = (currentRetries == null ? maxRetries : currentRetries) - 1;
+                        if (remaining > 0) {
+                            logger.warn("Worker {} failed on task {} ({} retries remaining): {}",
+                                    worker.topic(), task.getId(), remaining, e.getMessage(), e);
+                        } else {
+                            logger.error("Worker {} failed on task {} - no retries remaining, task now has an "
+                                    + "incident: {}", worker.topic(), task.getId(), e.getMessage(), e);
+                        }
+                        externalTaskService.handleFailure(task.getId(), WORKER_ID, e.getMessage(),
+                                Math.max(remaining, 0), RETRY_BACKOFF_MS);
+                    }
+                }
+                """.formatted(workerPackage);
+        Path packageDir = projectDir.resolve("src/main/java").resolve(workerPackage.replace('.', '/'));
+        writeFile(packageDir.resolve("ExternalTaskPoller.java"), source);
+    }
+
+    // Enables Spring scheduling generically for the whole generated platform, and gives it a small
+    // configurable thread pool instead of Spring Boot's default single-thread scheduler. With one
+    // thread, ExternalTaskPoller (polling N topics) and SignalBroadcaster (when present) serialize
+    // on the same background thread, so a slow or blocked worker for one topic can delay every
+    // other topic's polling and all signal broadcasting. Pool size is small and configurable
+    // (metaml.scheduling.pool-size, default 4) - this is not a distributed task framework, just
+    // enough headroom that unrelated scheduled work does not queue behind one slow worker.
+    //
+    // Deliberately generated unconditionally (see generateWithAuthoredTwin) rather than folded into
+    // SignalBroadcaster: a BPMN pair with external tasks but no signals must still get a working
+    // ExternalTaskPoller, and @EnableScheduling must not depend on whether signals happen to exist.
+    //
+    // This does not reorder a single process instance's own BPMN sequence flow - Camunda's command
+    // executor, not this thread pool, enforces that a process instance's own steps run in order.
+    // What this pool parallelizes is unrelated scheduled work: different topics, different process
+    // instances, and signal broadcasting all become independent units of work instead of one queue.
+    private void writeSchedulingConfig(Path projectDir, String basePackage) {
+        String workerPackage = basePackage + ".worker";
+        String source = """
+                package %s;
+
+                import java.util.concurrent.Executors;
+
+                import org.springframework.beans.factory.annotation.Value;
+                import org.springframework.context.annotation.Bean;
+                import org.springframework.context.annotation.Configuration;
+                import org.springframework.scheduling.TaskScheduler;
+                import org.springframework.scheduling.annotation.EnableScheduling;
+                import org.springframework.scheduling.concurrent.ConcurrentTaskScheduler;
+
+                // Turns on @Scheduled generically for the whole generated platform (ExternalTaskPoller,
+                // SignalBroadcaster when present, and any future scheduled component), with a small
+                // configurable thread pool rather than Spring Boot's single-thread scheduler default.
+                @Configuration
+                @EnableScheduling
+                public class SchedulingConfig {
+
+                    @Bean
+                    public TaskScheduler taskScheduler(
+                            @Value("${metaml.scheduling.pool-size:4}") int poolSize) {
+                        return new ConcurrentTaskScheduler(Executors.newScheduledThreadPool(poolSize));
+                    }
+                }
+                """.formatted(workerPackage);
+        Path packageDir = projectDir.resolve("src/main/java").resolve(workerPackage.replace('.', '/'));
+        writeFile(packageDir.resolve("SchedulingConfig.java"), source);
+    }
+
+    // Generic, read-only introspection endpoint for ANY process instance in the generated platform's
+    // engine - not tied to Manufacturing, Twin, or any particular BPMN shape. Exists so tests (and
+    // any real caller) can assert against the engine's own actual runtime state - active activity
+    // ids and process variables straight from RuntimeService - instead of only ever having log text
+    // to check. Generated once per project (not once per authored BPMN), since it takes a
+    // processInstanceId at call time and works the same regardless of which deployed process that
+    // instance belongs to.
+    private void writeProcessStatusController(Path projectDir, String basePackage) {
+        String source = """
+                package %1$s.status;
+
+                import java.util.HashMap;
+                import java.util.List;
+                import java.util.Map;
+
+                import org.camunda.bpm.engine.HistoryService;
+                import org.camunda.bpm.engine.RuntimeService;
+                import org.camunda.bpm.engine.runtime.ProcessInstance;
+                import org.springframework.http.ResponseEntity;
+                import org.springframework.web.bind.annotation.GetMapping;
+                import org.springframework.web.bind.annotation.PathVariable;
+                import org.springframework.web.bind.annotation.RequestMapping;
+                import org.springframework.web.bind.annotation.RestController;
+
+                // Generic, read-only process-instance introspection - works for any deployed process,
+                // not just one this project's own generated controllers know about. Backs causal test
+                // assertions against real engine state (active activities, process variables, business
+                // key) rather than log text.
+                @RestController
+                @RequestMapping("/api/v1/process")
+                public class GeneratedProcessStatusController {
+
+                    private final RuntimeService runtimeService;
+                    private final HistoryService historyService;
+
+                    public GeneratedProcessStatusController(RuntimeService runtimeService,
+                            HistoryService historyService) {
+                        this.runtimeService = runtimeService;
+                        this.historyService = historyService;
+                    }
+
+                    @GetMapping("/{processInstanceId}/status")
+                    public ResponseEntity<Map<String, Object>> status(@PathVariable String processInstanceId) {
+                        ProcessInstance instance = runtimeService.createProcessInstanceQuery()
+                                .processInstanceId(processInstanceId)
+                                .singleResult();
+                        if (instance == null) {
+                            Map<String, Object> inactive = new HashMap<>();
+                            inactive.put("active", false);
+                            return ResponseEntity.ok(inactive);
+                        }
+                        List<String> activeActivityIds = runtimeService.getActiveActivityIds(processInstanceId);
+                        Map<String, Object> variables = runtimeService.getVariables(processInstanceId);
+                        Map<String, Object> body = new HashMap<>();
+                        body.put("active", true);
+                        body.put("activeActivityIds", activeActivityIds);
+                        body.put("variables", variables);
+                        body.put("businessKey", instance.getBusinessKey());
+                        return ResponseEntity.ok(body);
+                    }
+
+                    // How many times this process instance has ever entered the given BPMN activity,
+                    // whether still active or long since completed - authoritative proof of a rework
+                    // loop (or any other repeat visit), independent of process definition or activity
+                    // shape. Uses HistoryService (camunda.bpm.history-level=full by default), not the
+                    // in-memory active-activity view, precisely because a repeat visit's earlier
+                    // instances are no longer "active" by the time anyone asks.
+                    @GetMapping("/{processInstanceId}/activity-history/{activityId}/count")
+                    public ResponseEntity<Map<String, Object>> activityVisitCount(
+                            @PathVariable String processInstanceId, @PathVariable String activityId) {
+                        long count = historyService.createHistoricActivityInstanceQuery()
+                                .processInstanceId(processInstanceId)
+                                .activityId(activityId)
+                                .count();
+                        Map<String, Object> body = new HashMap<>();
+                        body.put("processInstanceId", processInstanceId);
+                        body.put("activityId", activityId);
+                        body.put("visitCount", count);
+                        return ResponseEntity.ok(body);
+                    }
+                }
+                """.formatted(basePackage);
+        Path packageDir = projectDir.resolve("src/main/java").resolve((basePackage + ".status").replace('.', '/'));
+        writeFile(packageDir.resolve("GeneratedProcessStatusController.java"), source);
     }
 
     private void writeDelegateFile(Path packageDir, String className, String sourceCode, String beanName,
@@ -391,6 +1147,7 @@ public class SpringBootProjectGenerator {
                 package %s.%s;
 
                 import java.util.ArrayList;
+                import java.util.HashMap;
                 import java.util.List;
                 import java.util.Map;
 
@@ -402,9 +1159,11 @@ public class SpringBootProjectGenerator {
                 import org.springframework.web.bind.annotation.PathVariable;
                 import org.springframework.web.bind.annotation.PostMapping;
                 import org.springframework.web.bind.annotation.RequestMapping;
+                import org.springframework.web.bind.annotation.RequestParam;
                 import org.springframework.web.bind.annotation.RestController;
 
                 import %s.bridge.NotificationBridge;
+                import %s.coordination.PairRegistry;
 
                 // Generated for process key "%s" - not hand-written, don't hand-edit; regenerate instead.
                 // One endpoint per externally-triggerable BPMN activity, generated from the model itself.
@@ -416,23 +1175,46 @@ public class SpringBootProjectGenerator {
                     private final RuntimeService runtimeService;
                     private final TaskService taskService;
                     private final NotificationBridge notificationBridge;
+                    private final PairRegistry pairRegistry;
                 %s
                     public %s(RuntimeService runtimeService, TaskService taskService,
-                            NotificationBridge notificationBridge%s) {
+                            NotificationBridge notificationBridge, PairRegistry pairRegistry%s) {
                         this.runtimeService = runtimeService;
                         this.taskService = taskService;
                         this.notificationBridge = notificationBridge;
+                        this.pairRegistry = pairRegistry;
                 %s    }
 
+                    // businessKey is optional and generic - it is not a BPMN concept, it is how a caller
+                    // that is starting a Main+Twin PAIR can make that pairing explicit and queryable
+                    // (start Main, then start Twin with the same key). Omitting it preserves the exact
+                    // previous behavior (an unkeyed instance) for callers that only need one instance.
+                    //
+                    // "role" in the response comes from PairRegistry, derived purely from arrival order
+                    // under a shared business key - the first instance to register a key is "initiator",
+                    // the next is "responder". It is omitted when no business key is supplied. This is
+                    // pairing/observability metadata only, not the communication mechanism itself - see
+                    // PairRegistry and SignalBroadcaster for how initiator/responder roles turn each
+                    // shared signal into a real, targeted Main -> Twin -> Main handoff.
                     @PostMapping("/start")
-                    public ResponseEntity<Map<String, String>> start() {
-                        ProcessInstance instance = runtimeService.startProcessInstanceByKey("%s");
-                        return ResponseEntity.ok(Map.of("processInstanceId", instance.getId()));
+                    public ResponseEntity<Map<String, String>> start(
+                            @RequestParam(required = false) String businessKey) {
+                        ProcessInstance instance = (businessKey == null || businessKey.isBlank())
+                                ? runtimeService.startProcessInstanceByKey("%s")
+                                : runtimeService.startProcessInstanceByKey("%s", businessKey);
+                        Map<String, String> body = new HashMap<>();
+                        body.put("processInstanceId", instance.getId());
+                        body.put("businessKey", instance.getBusinessKey());
+                        String role = pairRegistry.registerAndClassify(instance.getBusinessKey(), instance.getId());
+                        if (role != null) {
+                            body.put("role", role);
+                        }
+                        return ResponseEntity.ok(body);
                     }
                 %s%s}
                 """.formatted(basePackage, subPackage, externalImport, executionImport, taskImport, basePackage,
-                processKey, bridgeMethod, requestMapping, className, externalField, className, externalParam,
-                externalAssignment, processKey, endpoints, helpers);
+                basePackage, processKey, bridgeMethod, requestMapping, className, externalField, className,
+                externalParam, externalAssignment, processKey, processKey, endpoints, helpers);
         Path packageDir = projectDir.resolve("src/main/java")
                 .resolve((basePackage + "." + subPackage).replace('.', '/'));
         writeFile(packageDir.resolve(className + ".java"), source);
@@ -541,6 +1323,54 @@ public class SpringBootProjectGenerator {
                     return ResponseEntity.ok(Map.of("completed", touched));
                 }
             """;
+
+    // Extracts bean names from delegateExpression execution listeners in a BPMN. These are
+    // references like ${manufTaskCompletionListener} on service tasks — Camunda resolves them as
+    // Spring beans at runtime, and the engine throws PropertyNotFoundException if they're missing.
+    private static Set<String> extractExecutionListenerBeanNames(String bpmnXml) {
+        Set<String> beanNames = new LinkedHashSet<>();
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                "delegateExpression=\"\\$\\{(\\w+)\\}\"");
+        java.util.regex.Matcher matcher = pattern.matcher(bpmnXml);
+        while (matcher.find()) {
+            beanNames.add(matcher.group(1));
+        }
+        return beanNames;
+    }
+
+    // Generates a stub ExecutionListener bean for a delegateExpression reference found in the BPMN.
+    // The professor's BPMNs must not be modified, so the generated platform must provide any beans
+    // they reference. The stub logs execution; the real implementation is the professor's concern.
+    private void writeExecutionListenerStub(Path projectDir, String basePackage, String beanName) {
+        String listenerPackage = basePackage + ".listener";
+        String className = Character.toUpperCase(beanName.charAt(0)) + beanName.substring(1);
+        String source = """
+                package %s;
+
+                import org.camunda.bpm.engine.delegate.DelegateExecution;
+                import org.camunda.bpm.engine.delegate.ExecutionListener;
+                import org.slf4j.Logger;
+                import org.slf4j.LoggerFactory;
+                import org.springframework.stereotype.Component;
+
+                // Generated stub for BPMN delegateExpression "${%s}". The professor's BPMN references
+                // this bean as an execution listener on service tasks. Without it the engine throws
+                // PropertyNotFoundException. Replace with real implementation when ready.
+                @Component("%s")
+                public class %s implements ExecutionListener {
+
+                    private static final Logger logger = LoggerFactory.getLogger(%s.class);
+
+                    @Override
+                    public void notify(DelegateExecution execution) throws Exception {
+                        logger.info("Execution listener '%s' fired for activity '{}' in process instance {}",
+                                execution.getCurrentActivityName(), execution.getProcessInstanceId());
+                    }
+                }
+                """.formatted(listenerPackage, beanName, beanName, className, className, beanName);
+        Path packageDir = projectDir.resolve("src/main/java").resolve(listenerPackage.replace('.', '/'));
+        writeFile(packageDir.resolve(className + ".java"), source);
+    }
 
     private static void writeFile(Path target, String content) {
         try {
