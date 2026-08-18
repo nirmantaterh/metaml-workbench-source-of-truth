@@ -7,10 +7,12 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -206,6 +208,192 @@ class RedCollarEndToEndTest {
         } finally {
             launcher.stop(project.projectId());
         }
+    }
+
+    // Requires a real RabbitMQ broker reachable at localhost:5672 (docker run -d -p 5672:5672
+    // -p 15672:15672 rabbitmq:3-management, or equivalent) - skips itself, rather than failing,
+    // when none is reachable, since standing up a broker is an environment concern this test
+    // cannot and should not do on its own.
+    //
+    // Proves the actual RedCollar Main<->Twin signal handoff travels over a REAL RabbitMQ broker,
+    // not merely the in-process SignalBroadcaster path every other RedCollar test exercises (that
+    // path is unchanged and still the default - see deliverTo's own comment). Launches the real
+    // generated app with metaml.messaging.enabled=true, giving SignalDeliveryPublisher a live
+    // broker to publish to and SignalDeliveryListener - the one that actually calls
+    // RuntimeService.signalEventReceived - a live queue to consume from. ONE Main, ONE Twin, per
+    // this pass's explicit scope; evidence is both application-log (publish/consume pairs) and
+    // broker-level (RabbitMQ's own management API: exchange, queue, and rising publish/deliver
+    // counts on signal.delivery.queue).
+    @Test
+    void realRedCollarMainAndTwinCommunicateOverARealRabbitMqBroker() throws Exception {
+        HttpClient rabbitAdmin = HttpClient.newHttpClient();
+        if (!rabbitMqReachable(rabbitAdmin)) {
+            System.out.println("SKIPPED realRedCollarMainAndTwinCommunicateOverARealRabbitMqBroker: "
+                    + "no RabbitMQ broker reachable at localhost:15672 (management API). Start one with "
+                    + "'docker run -d -p 5672:5672 -p 15672:15672 rabbitmq:3-management' to run this test.");
+            return;
+        }
+
+        String manufBpmnXml = Files.readString(REPO_ROOT.resolve("Manuf-camunda.bpmn"));
+        String twinBpmnXml = Files.readString(REPO_ROOT.resolve("Twin-camunda.bpmn"));
+
+        Path outputDir = tempDir.resolve("generated-projects");
+        SpringBootProjectGenerator generator = new SpringBootProjectGenerator(REAL_TEMPLATE.toString(),
+                outputDir.toString(), new TwinModelGenerator(), new DelegateClassGenerator(),
+                new ExternalTaskWorkerGenerator());
+        GeneratedProject project = generator.generateWithAuthoredTwin(manufBpmnXml, twinBpmnXml);
+
+        // The RabbitMQ signal-delivery channel must actually be generated when there are shared
+        // signals (it always is for the real RedCollar pair).
+        String basePackagePath = "src/main/java/com/metaml/targetplatform/redcollarmanuf";
+        assertThat(project.directory().resolve(basePackagePath + "/signal/SignalMessagingConfig.java")).exists();
+        assertThat(project.directory().resolve(basePackagePath + "/signal/SignalDeliveryPublisher.java")).exists();
+        assertThat(project.directory().resolve(basePackagePath + "/signal/SignalDeliveryListener.java")).exists();
+
+        Process build = new ProcessBuilder(mvnw(project.directory()), "-q", "package", "-DskipTests")
+                .directory(project.directory().toFile())
+                .redirectErrorStream(true)
+                .start();
+        String buildOutput = new String(build.getInputStream().readAllBytes());
+        assertThat(build.waitFor(5, java.util.concurrent.TimeUnit.MINUTES)).isTrue();
+        assertThat(build.exitValue()).as("generated project failed to build:%n%s", buildOutput).isZero();
+
+        SpringBootProjectLauncher launcher = new SpringBootProjectLauncher();
+        try {
+            LaunchedProject launched = launcher.launch(project, Map.of(
+                    "METAML_MESSAGING_ENABLED", "true",
+                    "SPRING_RABBITMQ_HOST", "localhost",
+                    "SPRING_RABBITMQ_PORT", "5672"));
+            HttpClient http = HttpClient.newHttpClient();
+            String manufBase = "http://localhost:" + launched.port() + "/api/v1/manufacturing";
+            String twinBase = "http://localhost:" + launched.port() + "/api/v1/twin";
+            String statusBase = "http://localhost:" + launched.port() + "/api/v1/process";
+
+            String pairKey = "rabbitmq-pair-" + java.util.UUID.randomUUID();
+            HttpResponse<String> manufStart = http.send(
+                    HttpRequest.newBuilder(URI.create(manufBase + "/start?businessKey=" + pairKey))
+                            .POST(HttpRequest.BodyPublishers.noBody()).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(manufStart.statusCode()).as("manufacturing start failed: %s", manufStart.body())
+                    .isEqualTo(200);
+            String manufInstanceId = extractProcessInstanceId(manufStart.body());
+
+            HttpResponse<String> twinStart = http.send(
+                    HttpRequest.newBuilder(URI.create(twinBase + "/start?businessKey=" + pairKey))
+                            .POST(HttpRequest.BodyPublishers.noBody()).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(twinStart.statusCode()).as("twin start failed: %s", twinStart.body()).isEqualTo(200);
+            String twinInstanceId = extractProcessInstanceId(twinStart.body());
+
+            // --- Application-log evidence: real publish, over the real exchange/queue/routing key ---
+            // Main's path to its first SHARED signal (samplingSignal) runs through the Manuf-only
+            // orderVerifySignal + VerifyOrder + a gateway first, while Twin reaches samplingSignal
+            // almost immediately - so the very first shared-signal barrier can occasionally resolve
+            // via the grace-period DELIVERED fallback (see SignalBroadcaster's own comment) rather
+            // than a clean REQUEST/RESPONSE pair, purely on timing. A generous timeout lets the flow
+            // reach a later, better-synchronized shared signal where genuine co-waiting - and
+            // therefore a real REQUEST/RESPONSE handoff - is the expected case.
+            String publishLog = awaitLogContaining(project.directory(),
+                    "REQUEST: published signal", Duration.ofSeconds(90));
+            assertThat(publishLog)
+                    .as("Main->Twin REQUEST must be published to the real signal-delivery exchange")
+                    .contains("REQUEST: published signal")
+                    .contains("to RabbitMQ exchange 'signal.delivery.exchange' key 'signal.delivery'");
+
+            String responseLog = awaitLogContaining(project.directory(),
+                    "RESPONSE: published signal", Duration.ofSeconds(90));
+            assertThat(responseLog)
+                    .as("Twin->Main RESPONSE must also be published to the real signal-delivery exchange")
+                    .contains("RESPONSE: published signal")
+                    .contains("to RabbitMQ exchange 'signal.delivery.exchange' key 'signal.delivery'");
+
+            // --- Application-log evidence: real consumption, causing the actual Camunda delivery ---
+            String consumeLog = awaitLogContaining(project.directory(),
+                    "delivered signal", Duration.ofSeconds(30));
+            assertThat(consumeLog)
+                    .as("SignalDeliveryListener must have consumed at least one message and delivered the "
+                            + "real Camunda signal because of it")
+                    .contains("via RabbitMQ");
+
+            // --- Twin delegate genuinely executed (simulated invocation only - print/log + id) ---
+            String twinLog = awaitLogContaining(project.directory(),
+                    "[Twin] Invoking simulated ML agent", Duration.ofSeconds(30));
+            assertThat(twinLog).contains("[Twin] Invoking simulated ML agent");
+            String twinVariables = awaitVariableContaining(http, statusBase, twinInstanceId, "agentInvocationId",
+                    Duration.ofSeconds(20));
+            assertThat(twinVariables).as("Twin's simulated invocation must be a real process variable")
+                    .contains("agentInvocationId");
+
+            // --- Main actually continued past its first RabbitMQ-mediated wait, proven via real
+            // Camunda runtime state, not merely "a response log line appeared somewhere" ---
+            boolean manufAdvanced = awaitInstanceInactive(http, statusBase, manufInstanceId, Duration.ofSeconds(120))
+                    || activityVisitCount(http, statusBase, manufInstanceId, "_FB42C5F3-6B4A-49A0-BCFD-BE2666946C16")
+                            >= 1;
+            assertThat(manufAdvanced).as("Main must have advanced past its request barrier").isTrue();
+
+            // --- Broker-level evidence, independent of the application's own logs: RabbitMQ's own
+            // management API confirms the exchange/queue exist and real publish+deliver activity
+            // happened on them. ---
+            String queueStats = getRabbitQueueInfo(rabbitAdmin, "signal.delivery.queue");
+            assertThat(queueStats).as("broker must report the real signal-delivery queue exists")
+                    .contains("\"name\":\"signal.delivery.queue\"");
+            long publishCount = extractLongField(queueStats, "publish");
+            long deliverCount = extractLongField(queueStats, "deliver_get");
+            assertThat(publishCount).as("broker-reported publish count on signal.delivery.queue")
+                    .isGreaterThan(0);
+            assertThat(deliverCount).as("broker-reported deliver count on signal.delivery.queue")
+                    .isGreaterThan(0);
+        } finally {
+            launcher.stop(project.projectId());
+        }
+    }
+
+    private static boolean rabbitMqReachable(HttpClient http) {
+        try {
+            HttpResponse<String> response = http.send(
+                    HttpRequest.newBuilder(URI.create("http://localhost:15672/api/overview"))
+                            .header("Authorization", "Basic " + java.util.Base64.getEncoder()
+                                    .encodeToString("guest:guest".getBytes(StandardCharsets.UTF_8)))
+                            .GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            return response.statusCode() == 200;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static String getRabbitQueueInfo(HttpClient http, String queueName)
+            throws IOException, InterruptedException {
+        HttpResponse<String> response = http.send(
+                HttpRequest.newBuilder(URI.create("http://localhost:15672/api/queues/%2f/" + queueName))
+                        .header("Authorization", "Basic " + java.util.Base64.getEncoder()
+                                .encodeToString("guest:guest".getBytes(StandardCharsets.UTF_8)))
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).as("RabbitMQ management API queue lookup for %s", queueName)
+                .isEqualTo(200);
+        return response.body();
+    }
+
+    // Extracts a numeric field from RabbitMQ's own message_stats JSON block, e.g. "publish":42 or
+    // (nested) "deliver_get":7 - both appear as top-level-ish keys inside message_stats in the
+    // management API's queue response. Returns 0 if the field is absent (e.g. zero activity so far,
+    // which the management API omits rather than reporting as 0).
+    private static long extractLongField(String json, String fieldName) {
+        String marker = "\"" + fieldName + "\":";
+        int key = json.indexOf(marker);
+        if (key < 0) {
+            return 0;
+        }
+        int start = key + marker.length();
+        int end = start;
+        while (end < json.length() && (Character.isDigit(json.charAt(end)))) {
+            end++;
+        }
+        if (end == start) {
+            return 0;
+        }
+        return Long.parseLong(json.substring(start, end));
     }
 
     // Manuf's own real rework loop: Checking's worker sets "qualityPassed" via Math.random() > 0.5

@@ -171,11 +171,15 @@ public class SpringBootProjectGenerator {
         writeController(projectDir, basePackage, "controller.twin", "GeneratedTwinController",
                 "/api/v1/twin", twinProcessKey, twinActivities, "notifyManufacturing");
 
-        // Signal broadcaster for cross-process synchronization
+        // Signal broadcaster for cross-process synchronization. writeSignalDeliveryChannel gives it
+        // a real RabbitMQ transport for the same REQUEST/RESPONSE handoff (see that method's own
+        // comment) - additive, gated behind metaml.messaging.enabled exactly like the pre-existing
+        // messaging package, so a caller who never sets that property sees no behavior change.
         Set<String> allSignals = new LinkedHashSet<>();
         allSignals.addAll(extractSignalNames(manufModel));
         allSignals.addAll(extractSignalNames(twinModel));
         if (!allSignals.isEmpty()) {
+            writeSignalDeliveryChannel(projectDir, basePackage);
             writeSignalBroadcaster(projectDir, basePackage, allSignals);
         }
 
@@ -498,6 +502,168 @@ public class SpringBootProjectGenerator {
         return names;
     }
 
+    // Generates the three-piece RabbitMQ signal-delivery channel that replaces SignalBroadcaster's
+    // direct signalEventReceived call with a real broker-mediated transport when messaging is
+    // enabled. Signal names are message fields (not one queue per signal - names are BPMN-derived,
+    // unknown in advance here). The three pieces:
+    //   - SignalMessagingConfig: exchange/queue/binding, gated on metaml.messaging.enabled=true.
+    //   - SignalDeliveryPublisher: unconditional bean; SignalBroadcaster calls it when enabled.
+    //   - SignalDeliveryListener: the real consumer - calls RuntimeService.signalEventReceived on
+    //     message receipt, making RabbitMQ the actual transport rather than an audit log.
+    private void writeSignalDeliveryChannel(Path projectDir, String basePackage) {
+        String subPackage = basePackage + ".signal";
+
+        String configSource = """
+                package %s;
+
+                import org.springframework.amqp.core.Binding;
+                import org.springframework.amqp.core.BindingBuilder;
+                import org.springframework.amqp.core.DirectExchange;
+                import org.springframework.amqp.core.Queue;
+                import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+                import org.springframework.context.annotation.Bean;
+                import org.springframework.context.annotation.Configuration;
+
+                // Declares the RabbitMQ exchange/queue/binding SignalDeliveryPublisher and
+                // SignalDeliveryListener use to carry each Main<->Twin signal handoff as a real
+                // message. Enabled only with metaml.messaging.enabled=true, matching every other
+                // messaging component in this platform - disabled by default so generated platforms
+                // can run without a broker present.
+                @Configuration
+                @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
+                public class SignalMessagingConfig {
+
+                    public static final String SIGNAL_EXCHANGE = "signal.delivery.exchange";
+                    public static final String SIGNAL_QUEUE = "signal.delivery.queue";
+                    public static final String SIGNAL_ROUTING_KEY = "signal.delivery";
+
+                    @Bean
+                    public DirectExchange signalDeliveryExchange() {
+                        return new DirectExchange(SIGNAL_EXCHANGE);
+                    }
+
+                    @Bean
+                    public Queue signalDeliveryQueue() {
+                        return new Queue(SIGNAL_QUEUE);
+                    }
+
+                    @Bean
+                    public Binding signalDeliveryBinding() {
+                        return BindingBuilder.bind(signalDeliveryQueue()).to(signalDeliveryExchange())
+                                .with(SIGNAL_ROUTING_KEY);
+                    }
+                }
+                """.formatted(subPackage);
+
+        String publisherSource = """
+                package %s;
+
+                import org.slf4j.Logger;
+                import org.slf4j.LoggerFactory;
+                import org.springframework.amqp.rabbit.core.RabbitTemplate;
+                import org.springframework.beans.factory.annotation.Value;
+                import org.springframework.stereotype.Component;
+
+                // Publishes Main<->Twin signal handoffs to RabbitMQ; SignalDeliveryListener performs
+                // the actual Camunda delivery on consume. Always present as a bean, but isEnabled()
+                // returns false unless metaml.messaging.enabled=true (no broker required by default,
+                // matching HarnessMessagePublisher's own pattern). Payload is pipe-delimited
+                // (phase|signalName|executionId|processInstanceId|businessKey), not JSON, to stay
+                // independent of the pre-existing messaging package's Jackson configuration.
+                @Component
+                public class SignalDeliveryPublisher {
+
+                    private static final Logger logger = LoggerFactory.getLogger(SignalDeliveryPublisher.class);
+
+                    private final RabbitTemplate rabbitTemplate;
+                    private final boolean enabled;
+
+                    public SignalDeliveryPublisher(RabbitTemplate rabbitTemplate,
+                            @Value("${metaml.messaging.enabled:false}") boolean enabled) {
+                        this.rabbitTemplate = rabbitTemplate;
+                        this.enabled = enabled;
+                    }
+
+                    public boolean isEnabled() {
+                        return enabled;
+                    }
+
+                    public void publish(String phase, String signalName, String executionId,
+                            String processInstanceId, String businessKey) {
+                        String payload = phase + "|" + signalName + "|" + executionId + "|" + processInstanceId
+                                + "|" + (businessKey == null ? "" : businessKey);
+                        rabbitTemplate.convertAndSend(SignalMessagingConfig.SIGNAL_EXCHANGE,
+                                SignalMessagingConfig.SIGNAL_ROUTING_KEY, payload);
+                        logger.info("{}: published signal '{}' delivery for execution {} (processInstanceId={}, "
+                                + "businessKey={}) to RabbitMQ exchange '{}' key '{}'", phase, signalName,
+                                executionId, processInstanceId, businessKey, SignalMessagingConfig.SIGNAL_EXCHANGE,
+                                SignalMessagingConfig.SIGNAL_ROUTING_KEY);
+                    }
+                }
+                """.formatted(subPackage);
+
+        String listenerSource = """
+                package %s;
+
+                import org.camunda.bpm.engine.RuntimeService;
+                import org.slf4j.Logger;
+                import org.slf4j.LoggerFactory;
+                import org.springframework.amqp.rabbit.annotation.RabbitListener;
+                import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+                import org.springframework.stereotype.Component;
+
+                // The real consumer for signal-delivery messages published over RabbitMQ (see
+                // SignalDeliveryPublisher and SignalMessagingConfig). This is what makes RabbitMQ
+                // the actual Main<->Twin transport rather than an audit log next to a direct
+                // in-process call: the Camunda signal delivery itself happens here, triggered by
+                // consuming the message, not by SignalBroadcaster's own scheduled tick. Enabled only
+                // with metaml.messaging.enabled=true; when disabled, SignalBroadcaster delivers
+                // signals directly instead (see its own class comment).
+                @Component
+                @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
+                public class SignalDeliveryListener {
+
+                    private static final Logger logger = LoggerFactory.getLogger(SignalDeliveryListener.class);
+
+                    private final RuntimeService runtimeService;
+
+                    public SignalDeliveryListener(RuntimeService runtimeService) {
+                        this.runtimeService = runtimeService;
+                    }
+
+                    @RabbitListener(queues = SignalMessagingConfig.SIGNAL_QUEUE)
+                    public void onSignalDelivery(String payload) {
+                        String[] parts = payload.split("\\\\|", -1);
+                        if (parts.length != 5) {
+                            logger.error("[signal-delivery] discarding malformed message: {}", payload);
+                            return;
+                        }
+                        String phase = parts[0];
+                        String signalName = parts[1];
+                        String executionId = parts[2];
+                        String processInstanceId = parts[3];
+                        String businessKey = parts[4];
+                        try {
+                            runtimeService.signalEventReceived(signalName, executionId);
+                            logger.info("{}: delivered signal '{}' to execution {} (processInstanceId={}, "
+                                    + "businessKey={}) via RabbitMQ", phase, signalName, executionId,
+                                    processInstanceId, businessKey);
+                        } catch (Exception e) {
+                            // Expected during normal operation - the execution may already have moved on
+                            // (e.g. another delivery reached it first).
+                            logger.info("{}: signal '{}' delivery to execution {} skipped (already advanced?): {}",
+                                    phase, signalName, executionId, e.toString());
+                        }
+                    }
+                }
+                """.formatted(subPackage);
+
+        Path packageDir = projectDir.resolve("src/main/java").resolve(subPackage.replace('.', '/'));
+        writeFile(packageDir.resolve("SignalMessagingConfig.java"), configSource);
+        writeFile(packageDir.resolve("SignalDeliveryPublisher.java"), publisherSource);
+        writeFile(packageDir.resolve("SignalDeliveryListener.java"), listenerSource);
+    }
+
     // Generates a Spring component that periodically broadcasts all BPMN-defined signals so that
     // intermediate signal catch events in both processes can advance. Both Manufacturing and Twin
     // use catch events with shared signal names; neither throws, so signals must be broadcast
@@ -566,6 +732,7 @@ public class SpringBootProjectGenerator {
 
                     private final RuntimeService runtimeService;
                     private final PairRegistry pairRegistry;
+                    private final SignalDeliveryPublisher signalDeliveryPublisher;
                     // (businessKey + "|" + signalName) currently past step 1, awaiting proof of step 2
                     // before the initiator is released. Only this scheduled method ever touches these
                     // fields (Spring never overlaps two runs of the same @Scheduled method), but they
@@ -590,9 +757,11 @@ public class SpringBootProjectGenerator {
                     private final Map<String, Integer> partnerArrivalTicks = new ConcurrentHashMap<>();
                     private static final int MAX_PARTNER_ARRIVAL_TICKS = 5;
 
-                    public SignalBroadcaster(RuntimeService runtimeService, PairRegistry pairRegistry) {
+                    public SignalBroadcaster(RuntimeService runtimeService, PairRegistry pairRegistry,
+                            SignalDeliveryPublisher signalDeliveryPublisher) {
                         this.runtimeService = runtimeService;
                         this.pairRegistry = pairRegistry;
+                        this.signalDeliveryPublisher = signalDeliveryPublisher;
                     }
 
                     @Scheduled(fixedDelay = 1000)
@@ -714,11 +883,17 @@ public class SpringBootProjectGenerator {
                         return !responderSignals.isEmpty();
                     }
 
-                    // A failure here (the execution stopped waiting between the query above and this call
-                    // - e.g. another delivery already reached it and it moved on) is expected during
-                    // normal operation, not an error.
+                    // When messaging is enabled, publishes to RabbitMQ (SignalDeliveryListener calls
+                    // signalEventReceived on consume). When not, calls signalEventReceived directly.
+                    // A missed delivery because the execution already moved on is normal - not an error.
                     private void deliverTo(String signalName, EventSubscription subscription, String businessKey,
                             String phase) {
+                        if (signalDeliveryPublisher.isEnabled()) {
+                            signalDeliveryPublisher.publish(phase, signalName, subscription.getExecutionId(),
+                                    subscription.getProcessInstanceId(), businessKey);
+                            everDelivered.add(subscription.getProcessInstanceId() + "|" + signalName);
+                            return;
+                        }
                         try {
                             runtimeService.signalEventReceived(signalName, subscription.getExecutionId());
                             everDelivered.add(subscription.getProcessInstanceId() + "|" + signalName);
@@ -950,11 +1125,6 @@ public class SpringBootProjectGenerator {
     // Deliberately generated unconditionally (see generateWithAuthoredTwin) rather than folded into
     // SignalBroadcaster: a BPMN pair with external tasks but no signals must still get a working
     // ExternalTaskPoller, and @EnableScheduling must not depend on whether signals happen to exist.
-    //
-    // This does not reorder a single process instance's own BPMN sequence flow - Camunda's command
-    // executor, not this thread pool, enforces that a process instance's own steps run in order.
-    // What this pool parallelizes is unrelated scheduled work: different topics, different process
-    // instances, and signal broadcasting all become independent units of work instead of one queue.
     private void writeSchedulingConfig(Path projectDir, String basePackage) {
         String workerPackage = basePackage + ".worker";
         String source = """

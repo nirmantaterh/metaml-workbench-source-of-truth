@@ -91,6 +91,16 @@ public class SpringBootProjectLauncher {
     // itself dies. The whole sequence is now atomic per projectId; see launchLocks above for why
     // it's a per-key lock rather than a compute() on the running map.
     public LaunchedProject launch(GeneratedProject project) {
+        return launch(project, Map.of());
+    }
+
+    // extraEnv is additive, on top of the SERVER_PORT/SERVER_ADDRESS this method always sets - for
+    // a caller that needs the launched app started with a property the generated project's own
+    // application.properties leaves at its default, e.g. METAML_MESSAGING_ENABLED=true (Spring's
+    // relaxed env-var binding maps that to metaml.messaging.enabled) to demonstrate the real
+    // RabbitMQ path against a broker the caller has separately made available. The single-arg
+    // overload above is unchanged behavior for every existing caller.
+    public LaunchedProject launch(GeneratedProject project, Map<String, String> extraEnv) {
         ReentrantLock lock = lockFor(project.projectId());
         lock.lock();
         try {
@@ -101,7 +111,7 @@ public class SpringBootProjectLauncher {
             int port = findFreePort();
             Process process;
             try {
-                process = startProcess(project.directory(), port);
+                process = startProcess(project.directory(), port, extraEnv);
             } catch (RuntimeException e) {
                 throw attachPort(e, port);
             }
@@ -356,7 +366,7 @@ public class SpringBootProjectLauncher {
     // not recognized" even though `dir` in that same process proved the file was right there. An
     // absolute path sidesteps the lookup question entirely rather than depending on a machine-
     // specific cmd.exe policy nobody would think to check.
-    private Process startProcess(Path projectDir, int port) {
+    private Process startProcess(Path projectDir, int port, Map<String, String> extraEnv) {
         boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
         String wrapper = projectDir.resolve(windows ? "mvnw.cmd" : "mvnw").toAbsolutePath().toString();
         List<String> command = windows
@@ -369,6 +379,7 @@ public class SpringBootProjectLauncher {
                     .redirectOutput(ProcessBuilder.Redirect.to(logFile.toFile()))
                     .redirectErrorStream(true);
             builder.environment().put("SERVER_PORT", String.valueOf(port));
+            builder.environment().putAll(extraEnv);
             // Same relaxed-binding mechanism as SERVER_PORT above, and set for a security reason
             // rather than a functional one: Spring Boot binds every interface by default, so a
             // generated project - which ships with the template's permissive dev security config
