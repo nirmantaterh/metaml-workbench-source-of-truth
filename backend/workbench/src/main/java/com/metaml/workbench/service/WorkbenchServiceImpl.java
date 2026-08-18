@@ -14,7 +14,9 @@ import org.camunda.bpm.engine.runtime.EventSubscription;
 import org.camunda.bpm.engine.runtime.Execution;
 import org.camunda.bpm.engine.runtime.ProcessInstance;
 import org.camunda.bpm.engine.task.Task;
+import org.camunda.bpm.model.bpmn.Bpmn;
 import org.camunda.bpm.model.bpmn.BpmnModelInstance;
+import org.camunda.bpm.model.bpmn.instance.Process;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -443,6 +445,20 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
     @Override
     public ProcessModel saveProcessModel(String id, String name, String bpmnXml, String tenantId) {
+        return doSaveProcessModelEntry(id, name, bpmnXml, null, tenantId);
+    }
+
+    @Override
+    public ProcessModel saveProcessModelWithAuthoredTwin(String id, String name, String bpmnXml,
+            String twinBpmnXml, String tenantId) {
+        if (twinBpmnXml == null || twinBpmnXml.isBlank()) {
+            throw new IllegalArgumentException("Authored twin bpmnXml must not be blank");
+        }
+        return doSaveProcessModelEntry(id, name, bpmnXml, twinBpmnXml, tenantId);
+    }
+
+    private ProcessModel doSaveProcessModelEntry(String id, String name, String bpmnXml, String twinBpmnXml,
+            String tenantId) {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("Process model name must not be blank");
         }
@@ -488,7 +504,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         // next write to this model, not silently left as a stage stuck IN_PROGRESS forever.
         workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.IN_PROGRESS, null);
         try {
-            return doSaveProcessModel(modelId, name, bpmnXml, tenantId);
+            return doSaveProcessModel(modelId, name, bpmnXml, twinBpmnXml, tenantId);
         } catch (RuntimeException e) {
             // doSaveProcessModel has several distinct throw sites (bad XML, more than one process,
             // not executable, id already exists, file-store failure) behind one outer catch - all
@@ -501,7 +517,17 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         }
     }
 
-    private ProcessModel doSaveProcessModel(String modelId, String name, String bpmnXml, String tenantId) {
+    // twinBpmnXml is null for the ordinary single-BPMN path. When present, only bpmnXml (the
+    // primary/Manufacturing-side process) is deployed to the Workbench's own engine below - exactly
+    // as the single-BPMN path always has, so ProcessModel.processDefinitionId keeps meaning what it
+    // already means, and this model can still use every existing Twin-evolution/governance feature
+    // that reads that field. twinBpmnXml is validated structurally (one executable process, same
+    // rule bpmnXml itself must satisfy) but deliberately NOT deployed here: it plays no part in the
+    // Workbench's own TwinProcess/evolution machinery, only in the generated Target Platform, which
+    // gets its own separate Camunda engine at generation time (SpringBootProjectGenerator.
+    // generateWithAuthoredTwin).
+    private ProcessModel doSaveProcessModel(String modelId, String name, String bpmnXml, String twinBpmnXml,
+            String tenantId) {
         Deployment deployment;
         try {
             deployment = repositoryService.createDeployment()
@@ -531,8 +557,17 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             throw new IllegalArgumentException(
                     "BPMN process must have isExecutable=\"true\" on the bpmn:process element");
         }
+        if (twinBpmnXml != null) {
+            try {
+                requireExactlyOneExecutableProcess(twinBpmnXml);
+            } catch (RuntimeException e) {
+                discardDeployment(deployment.getId());
+                throw e;
+            }
+        }
 
-        ProcessModel model = new ProcessModel(modelId, name, bpmnXml, Instant.now(), definition.getId(), tenantId);
+        ProcessModel model = new ProcessModel(modelId, name, bpmnXml, twinBpmnXml, Instant.now(),
+                definition.getId(), tenantId);
         // the containsKey above isn't enough on its own - two saves of the same id can both clear
         // it and both deploy, and the loser would silently replace the winner's definition
         ProcessModel existing = processModels.putIfAbsent(modelId, model);
@@ -546,6 +581,9 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             // its own shared workbench-state.json - that file is a restart-recovery cache, not
             // something meant to be opened or copied on its own
             modelFileStore.save(modelId, bpmnXml);
+            if (twinBpmnXml != null) {
+                modelFileStore.saveTwin(modelId, twinBpmnXml);
+            }
         } catch (RuntimeException e) {
             // don't leave a model that's deployed and in memory but has no matching file - roll
             // both back rather than leave a half-saved model the Generate step would silently
@@ -558,6 +596,28 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.COMPLETED, null);
         logger.info("Saved process model {} and deployed process definition {}", modelId, definition.getId());
         return model;
+    }
+
+    // Structural validation only - deliberately does NOT deploy to repositoryService. An authored
+    // twin BPMN (see doSaveProcessModel) never runs on the Workbench's own engine; it is only ever
+    // deployed inside the generated Target Platform, which gets its own separate engine at
+    // generation time. This mirrors the same "exactly one executable process" rule bpmnXml itself
+    // is held to via the real deployment above, without giving the twin XML a deployment/governance
+    // footprint on the Workbench engine it will never actually run on.
+    private static void requireExactlyOneExecutableProcess(String bpmnXml) {
+        BpmnModelInstance model;
+        try {
+            model = Bpmn.readModelFromStream(new ByteArrayInputStream(bpmnXml.getBytes(StandardCharsets.UTF_8)));
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("Invalid BPMN XML: " + e.getMessage());
+        }
+        long executableCount = model.getModelElementsByType(Process.class).stream()
+                .filter(Process::isExecutable)
+                .count();
+        if (executableCount != 1) {
+            throw new IllegalArgumentException(
+                    "BPMN must declare exactly one executable bpmn:process element (found " + executableCount + ")");
+        }
     }
 
     // we deploy before we can check any of this, so a rejected model would otherwise leave its
@@ -690,14 +750,26 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         ProcessModel model = getProcessModel(modelId);
         workflowStateTracker.record(modelId, WorkflowStage.GENERATE, StageStatus.IN_PROGRESS, null);
         try {
-            // regenerated here rather than reusing generateDelegates' output - that method renders
-            // against DelegateClassGenerator's own default package, which is fine for previewing
-            // source but not where SpringBootProjectGenerator is about to place the file. Has to be
-            // SpringBootProjectGenerator.DELEGATE_PACKAGE specifically, or the class compiles but
-            // Spring's component scan never finds it (see that constant's own comment).
-            List<GeneratedDelegate> delegates = delegateClassGenerator.generate(model.getBpmnXml(),
-                    SpringBootProjectGenerator.DELEGATE_PACKAGE);
-            GeneratedProject project = springBootProjectGenerator.generate(model.getBpmnXml(), delegates);
+            GeneratedProject project;
+            if (model.hasAuthoredTwin()) {
+                // First-class generation mode for a model saved via saveProcessModelWithAuthoredTwin:
+                // both BPMNs are deployed into the generated Target Platform as-is (external-task
+                // workers, signal broadcaster, execution-listener stubs - see
+                // SpringBootProjectGenerator.generateWithAuthoredTwin's own header). Everything
+                // else below this branch - bookkeeping, workflow-stage recording, retention - is
+                // identical to the single-BPMN path; only which generator method runs differs.
+                project = springBootProjectGenerator.generateWithAuthoredTwin(model.getBpmnXml(),
+                        model.getAuthoredTwinBpmnXml());
+            } else {
+                // regenerated here rather than reusing generateDelegates' output - that method renders
+                // against DelegateClassGenerator's own default package, which is fine for previewing
+                // source but not where SpringBootProjectGenerator is about to place the file. Has to be
+                // SpringBootProjectGenerator.DELEGATE_PACKAGE specifically, or the class compiles but
+                // Spring's component scan never finds it (see that constant's own comment).
+                List<GeneratedDelegate> delegates = delegateClassGenerator.generate(model.getBpmnXml(),
+                        SpringBootProjectGenerator.DELEGATE_PACKAGE);
+                project = springBootProjectGenerator.generate(model.getBpmnXml(), delegates);
+            }
             generatedProjects.put(project.projectId(), project);
             modelIdByProjectId.put(project.projectId(), modelId);
             // projectId as the detail, not just a bare COMPLETED - stopGeneratedProject/

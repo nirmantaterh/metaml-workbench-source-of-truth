@@ -237,6 +237,142 @@ class WireTransferWalkthroughTest {
         assertThat(project.directory().resolve("src/main/resources/processes/loanApproval.bpmn")).exists();
     }
 
+    // Proves the authored-twin path is reachable through the real product entry point
+    // (WorkbenchService, backing WorkbenchController.saveModelWithAuthoredTwin), not merely through
+    // a direct SpringBootProjectGenerator call the way com.metaml.workbench's own
+    // AuthoredTwinLifecycleTest exercises it. This is also the first place the authored-twin save
+    // path runs against a REAL embedded Camunda engine (that test class mocks RepositoryService) -
+    // proves the primary BPMN's real deployment succeeds through this specific code path.
+    @Test
+    void savingWithAnAuthoredTwinAndGeneratingProducesTheTwoBpmnTargetPlatformThroughTheRealService()
+            throws IOException {
+        ProcessModel model = workbenchService.saveProcessModelWithAuthoredTwin(null, "authored twin test",
+                authoredTwinManufBpmn(), authoredTwinTwinBpmn(), null);
+
+        assertThat(model.hasAuthoredTwin()).isTrue();
+        assertThat(modelFileStore.exists(model.getId())).isTrue();
+        assertThat(modelFileStore.pathForTwin(model.getId())).exists();
+
+        com.metaml.workbench.generation.GeneratedProject project =
+                workbenchService.generateSpringBootProject(model.getId());
+
+        assertThat(project.directory().resolve("src/main/resources/processes/AcmeApiManuf.bpmn")).exists();
+        assertThat(project.directory().resolve("src/main/resources/processes/AcmeApiTwin.bpmn")).exists();
+        assertThat(project.directory().resolve(
+                "src/main/java/com/metaml/targetplatform/acmeapimanuf/worker/ExternalTaskPoller.java")).exists();
+    }
+
+    // Closes the remaining Workbench product-path validation gap: the actual professor-supplied
+    // RedCollar BPMNs, through the actual Workbench service (what WorkbenchController's
+    // saveModelWithAuthoredTwin/generate-project/launch-project endpoints call), producing a real
+    // launched Target Platform whose Main and Twin processes actually run - not a synthetic fixture,
+    // and not a direct SpringBootProjectGenerator call bypassing the service layer.
+    @Test
+    void theActualRedCollarBpmnsDeployAndRunThroughTheRealWorkbenchServicePath() throws Exception {
+        java.nio.file.Path repoRoot = java.nio.file.Path.of("../..");
+        String manufBpmn = Files.readString(repoRoot.resolve("Manuf-camunda.bpmn"));
+        String twinBpmn = Files.readString(repoRoot.resolve("Twin-camunda.bpmn"));
+
+        ProcessModel model = workbenchService.saveProcessModelWithAuthoredTwin(null, "RedCollar via wbapi",
+                manufBpmn, twinBpmn, null);
+        assertThat(model.hasAuthoredTwin()).isTrue();
+
+        com.metaml.workbench.generation.GeneratedProject project =
+                workbenchService.generateSpringBootProject(model.getId());
+        assertThat(project.directory().resolve("src/main/resources/processes/RedCollar.Manuf.bpmn")).exists();
+        assertThat(project.directory().resolve("src/main/resources/processes/RedCollar.Twin.bpmn")).exists();
+
+        com.metaml.workbench.generation.LaunchedProject launched;
+        try {
+            launched = workbenchService.launchGeneratedProject(project.projectId());
+
+            java.net.http.HttpClient http = java.net.http.HttpClient.newHttpClient();
+            String manufBase = "http://localhost:" + launched.port() + "/api/v1/manufacturing";
+            String twinBase = "http://localhost:" + launched.port() + "/api/v1/twin";
+            String statusBase = "http://localhost:" + launched.port() + "/api/v1/process";
+
+            java.net.http.HttpResponse<String> manufStart = http.send(
+                    java.net.http.HttpRequest.newBuilder(java.net.URI.create(manufBase + "/start"))
+                            .POST(java.net.http.HttpRequest.BodyPublishers.noBody()).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            assertThat(manufStart.statusCode()).as("manufacturing start failed: %s", manufStart.body())
+                    .isEqualTo(200);
+            String manufInstanceId = jsonField(manufStart.body(), "processInstanceId");
+
+            java.net.http.HttpResponse<String> twinStart = http.send(
+                    java.net.http.HttpRequest.newBuilder(java.net.URI.create(twinBase + "/start"))
+                            .POST(java.net.http.HttpRequest.BodyPublishers.noBody()).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            assertThat(twinStart.statusCode()).as("twin start failed: %s", twinStart.body()).isEqualTo(200);
+            String twinInstanceId = jsonField(twinStart.body(), "processInstanceId");
+
+            // Real Camunda runtime state, reached through the endpoint this pass added - proves the
+            // actual RedCollar Twin's simulated-invocation output is real process data, deployed and
+            // running via the real Workbench service path, not a synthetic fixture.
+            java.time.Instant deadline = java.time.Instant.now().plus(java.time.Duration.ofSeconds(30));
+            String twinStatus = "";
+            while (java.time.Instant.now().isBefore(deadline)) {
+                twinStatus = http.send(java.net.http.HttpRequest.newBuilder(
+                                java.net.URI.create(statusBase + "/" + twinInstanceId + "/status")).GET().build(),
+                        java.net.http.HttpResponse.BodyHandlers.ofString()).body();
+                if (twinStatus.contains("agentInvocationId")) {
+                    break;
+                }
+                Thread.sleep(300);
+            }
+            assertThat(twinStatus).as("the real RedCollar Twin instance must produce real simulated-agent "
+                    + "process data, reached via the Workbench service path").contains("agentInvocationId");
+            assertThat(manufInstanceId).isNotBlank();
+        } finally {
+            springBootProjectLauncher.stop(project.projectId());
+        }
+    }
+
+    private static String jsonField(String json, String fieldName) {
+        int key = json.indexOf("\"" + fieldName + "\"");
+        int firstQuote = json.indexOf('"', key + fieldName.length() + 3);
+        int secondQuote = json.indexOf('"', firstQuote + 1);
+        return json.substring(firstQuote + 1, secondQuote);
+    }
+
+    // start -> external task -> end, no signals - deliberately minimal and named nothing like
+    // RedCollar, proving the product-path wiring is generic rather than RedCollar-specific.
+    private static String authoredTwinManufBpmn() {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_AcmeApiManuf" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="AcmeApiManuf" name="Acme Api Manuf" isExecutable="true">
+                    <bpmn2:startEvent id="ApiManufStart" />
+                    <bpmn2:serviceTask id="ApiManufStep" name="Step" camunda:type="external"
+                        camunda:topic="AcmeApiManufStep" />
+                    <bpmn2:endEvent id="ApiManufEnd" />
+                    <bpmn2:sequenceFlow id="ApiManufFlow1" sourceRef="ApiManufStart" targetRef="ApiManufStep" />
+                    <bpmn2:sequenceFlow id="ApiManufFlow2" sourceRef="ApiManufStep" targetRef="ApiManufEnd" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+    }
+
+    private static String authoredTwinTwinBpmn() {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_AcmeApiTwin" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="AcmeApiTwin" name="Acme Api Twin" isExecutable="true">
+                    <bpmn2:startEvent id="ApiTwinStart" />
+                    <bpmn2:serviceTask id="ApiTwinStep" name="Twin Step" camunda:type="external"
+                        camunda:topic="AcmeApiTwinStep" />
+                    <bpmn2:endEvent id="ApiTwinEnd" />
+                    <bpmn2:sequenceFlow id="ApiTwinFlow1" sourceRef="ApiTwinStart" targetRef="ApiTwinStep" />
+                    <bpmn2:sequenceFlow id="ApiTwinFlow2" sourceRef="ApiTwinStep" targetRef="ApiTwinEnd" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+    }
+
     // Proves the breadcrumb is real, not a UI-side guess - every stage recorded through the actual
     // service methods, not against WorkflowStateTracker in isolation (that's covered separately in
     // com.metaml.workbench.workflow.WorkflowStateTrackerTest). Each stage's real detail (the actual
@@ -551,7 +687,7 @@ class WireTransferWalkthroughTest {
     void aRealGenerateFailureIsRecordedAsFailedWithTheRealErrorNotSilentlySwallowed() throws Exception {
         var brokenGenerator = new com.metaml.workbench.generation.SpringBootProjectGenerator(
                 "./no-such-template-directory-anywhere", "target/test-data/generated-projects",
-                twinModelGenerator, delegateClassGenerator);
+                twinModelGenerator, delegateClassGenerator, new com.metaml.workbench.codegen.ExternalTaskWorkerGenerator());
         WorkbenchServiceImpl serviceWithBrokenTemplate = new WorkbenchServiceImpl(nodeManagerClient,
                 governanceService, policyDecisionEngine, approvalService, runtimeService, repositoryService,
                 historyService, taskService, twinModelGenerator, stateStore, modelFileStore, delegateClassGenerator,

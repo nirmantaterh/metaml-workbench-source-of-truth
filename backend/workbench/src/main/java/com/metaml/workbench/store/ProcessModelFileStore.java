@@ -35,10 +35,21 @@ public class ProcessModelFileStore {
     }
 
     public Path save(String modelId, String bpmnXml) {
+        return save(pathFor(modelId), modelId, bpmnXml);
+    }
+
+    // Same file-per-model convention as save(), for a model's independently authored second BPMN
+    // (see ProcessModel.authoredTwinBpmnXml). Kept as a distinct method/file rather than folding
+    // into save() - callers that only ever deal in single-BPMN models (the common case) should
+    // never need to pass a null twin XML through this class's main entry point.
+    public Path saveTwin(String modelId, String twinBpmnXml) {
+        return save(pathForTwin(modelId), modelId, twinBpmnXml);
+    }
+
+    private Path save(Path target, String modelId, String bpmnXml) {
         if (modelId == null || modelId.isBlank()) {
             throw new IllegalArgumentException("modelId must not be blank");
         }
-        Path target = pathFor(modelId);
         try {
             Files.createDirectories(directory.toAbsolutePath());
             Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
@@ -76,18 +87,43 @@ public class ProcessModelFileStore {
         return resolved;
     }
 
+    // Same containment guarantee as pathFor(), for the authored-twin file.
+    public Path pathForTwin(String modelId) {
+        if (modelId == null || modelId.isBlank()) {
+            throw new IllegalArgumentException("modelId must not be blank");
+        }
+        Path root = directory.toAbsolutePath().normalize();
+        Path resolved = root.resolve(modelId + ".twin.bpmn").normalize();
+        if (!resolved.startsWith(root)) {
+            throw new IllegalArgumentException(
+                    "modelId must not resolve outside the models directory: " + modelId);
+        }
+        return resolved;
+    }
+
     public boolean exists(String modelId) {
         return Files.isRegularFile(pathFor(modelId));
     }
 
-    // Deleting a model's BPMN artifact. Unlike save() above, a failure here is logged rather than
+    public boolean existsTwin(String modelId) {
+        return Files.isRegularFile(pathForTwin(modelId));
+    }
+
+    // Deleting a model's BPMN artifact(s). Unlike save() above, a failure here is logged rather than
     // thrown, and that asymmetry is deliberate: save()'s caller genuinely cannot continue without
     // the file (the generation step reads it), whereas delete()'s caller is removing the model
     // outright - a .bpmn file left behind is inert, referenced by nothing, and not worth failing a
     // deletion that has otherwise fully succeeded. pathFor() supplies the same containment check
     // every other method here relies on, so a hostile id cannot reach outside the models directory.
+    // The twin file's own deleteIfExists is a no-op for a model that never had one, so this stays
+    // safe to call unconditionally regardless of which kind of model modelId names.
     public boolean delete(String modelId) {
-        Path target = pathFor(modelId);
+        boolean deleted = deleteIfExists(pathFor(modelId), modelId);
+        deleteIfExists(pathForTwin(modelId), modelId);
+        return deleted;
+    }
+
+    private boolean deleteIfExists(Path target, String modelId) {
         try {
             boolean deleted = Files.deleteIfExists(target);
             if (deleted) {
