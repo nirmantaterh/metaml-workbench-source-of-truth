@@ -1,0 +1,311 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+    id="Definitions_Stress30Manuf" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn2:signal id="Signal_Activity01Ready" name="activity01ReadySignal" />
+  <bpmn2:signal id="Signal_Activity02Ready" name="activity02ReadySignal" />
+  <bpmn2:signal id="Signal_Activity03Ready" name="activity03ReadySignal" />
+  <bpmn2:signal id="Signal_Activity04Ready" name="activity04ReadySignal" />
+  <bpmn2:signal id="Signal_Activity05Ready" name="activity05ReadySignal" />
+  <bpmn2:signal id="Signal_Activity06Ready" name="activity06ReadySignal" />
+  <bpmn2:signal id="Signal_Activity07Ready" name="activity07ReadySignal" />
+  <bpmn2:signal id="Signal_Activity08Ready" name="activity08ReadySignal" />
+  <bpmn2:signal id="Signal_Activity09Ready" name="activity09ReadySignal" />
+  <bpmn2:signal id="Signal_Activity10Ready" name="activity10ReadySignal" />
+  <bpmn2:signal id="Signal_Activity11Ready" name="activity11ReadySignal" />
+  <bpmn2:signal id="Signal_Activity12Ready" name="activity12ReadySignal" />
+  <bpmn2:signal id="Signal_Activity13Ready" name="activity13ReadySignal" />
+  <bpmn2:signal id="Signal_Activity14Ready" name="activity14ReadySignal" />
+  <bpmn2:signal id="Signal_Activity15Ready" name="activity15ReadySignal" />
+  <bpmn2:signal id="Signal_Activity16Ready" name="activity16ReadySignal" />
+  <bpmn2:signal id="Signal_Activity17Ready" name="activity17ReadySignal" />
+  <bpmn2:signal id="Signal_Activity18Ready" name="activity18ReadySignal" />
+  <bpmn2:signal id="Signal_Activity19Ready" name="activity19ReadySignal" />
+  <bpmn2:signal id="Signal_Activity20Ready" name="activity20ReadySignal" />
+  <bpmn2:signal id="Signal_Activity21Ready" name="activity21ReadySignal" />
+  <bpmn2:signal id="Signal_Activity22Ready" name="activity22ReadySignal" />
+  <bpmn2:signal id="Signal_Activity23Ready" name="activity23ReadySignal" />
+  <bpmn2:signal id="Signal_Activity24Ready" name="activity24ReadySignal" />
+  <bpmn2:signal id="Signal_Activity25Ready" name="activity25ReadySignal" />
+  <bpmn2:signal id="Signal_Activity26Ready" name="activity26ReadySignal" />
+  <bpmn2:signal id="Signal_Activity27Ready" name="activity27ReadySignal" />
+  <bpmn2:signal id="Signal_Activity28Ready" name="activity28ReadySignal" />
+  <bpmn2:signal id="Signal_Activity29Ready" name="activity29ReadySignal" />
+  <bpmn2:signal id="Signal_Activity30Ready" name="activity30ReadySignal" />
+  <bpmn2:process id="Stress30.Manuf" name="Stress30 Manuf" isExecutable="true">
+    <bpmn2:startEvent id="Stress30ManufStart" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch01" name="Activity 01 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity01Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask01" name="Activity 01 Manuf" camunda:type="external"
+        camunda:topic="activity-01-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch02" name="Activity 02 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity02Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask02" name="Activity 02 Manuf" camunda:type="external"
+        camunda:topic="activity-02-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch03" name="Activity 03 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity03Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask03" name="Activity 03 Manuf" camunda:type="external"
+        camunda:topic="activity-03-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch04" name="Activity 04 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity04Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask04" name="Activity 04 Manuf" camunda:type="external"
+        camunda:topic="activity-04-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch05" name="Activity 05 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity05Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask05" name="Activity 05 Manuf" camunda:type="external"
+        camunda:topic="activity-05-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch06" name="Activity 06 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity06Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask06" name="Activity 06 Manuf" camunda:type="external"
+        camunda:topic="activity-06-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch07" name="Activity 07 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity07Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask07" name="Activity 07 Manuf" camunda:type="external"
+        camunda:topic="activity-07-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch08" name="Activity 08 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity08Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask08" name="Activity 08 Manuf" camunda:type="external"
+        camunda:topic="activity-08-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch09" name="Activity 09 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity09Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask09" name="Activity 09 Manuf" camunda:type="external"
+        camunda:topic="activity-09-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch10" name="Activity 10 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity10Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask10" name="Activity 10 Manuf" camunda:type="external"
+        camunda:topic="activity-10-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch11" name="Activity 11 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity11Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask11" name="Activity 11 Manuf" camunda:type="external"
+        camunda:topic="activity-11-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch12" name="Activity 12 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity12Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask12" name="Activity 12 Manuf" camunda:type="external"
+        camunda:topic="activity-12-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch13" name="Activity 13 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity13Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask13" name="Activity 13 Manuf" camunda:type="external"
+        camunda:topic="activity-13-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch14" name="Activity 14 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity14Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask14" name="Activity 14 Manuf" camunda:type="external"
+        camunda:topic="activity-14-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch15" name="Activity 15 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity15Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask15" name="Activity 15 Manuf" camunda:type="external"
+        camunda:topic="activity-15-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch16" name="Activity 16 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity16Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask16" name="Activity 16 Manuf" camunda:type="external"
+        camunda:topic="activity-16-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch17" name="Activity 17 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity17Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask17" name="Activity 17 Manuf" camunda:type="external"
+        camunda:topic="activity-17-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch18" name="Activity 18 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity18Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask18" name="Activity 18 Manuf" camunda:type="external"
+        camunda:topic="activity-18-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch19" name="Activity 19 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity19Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask19" name="Activity 19 Manuf" camunda:type="external"
+        camunda:topic="activity-19-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch20" name="Activity 20 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity20Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask20" name="Activity 20 Manuf" camunda:type="external"
+        camunda:topic="activity-20-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch21" name="Activity 21 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity21Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask21" name="Activity 21 Manuf" camunda:type="external"
+        camunda:topic="activity-21-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch22" name="Activity 22 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity22Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask22" name="Activity 22 Manuf" camunda:type="external"
+        camunda:topic="activity-22-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch23" name="Activity 23 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity23Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask23" name="Activity 23 Manuf" camunda:type="external"
+        camunda:topic="activity-23-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch24" name="Activity 24 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity24Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask24" name="Activity 24 Manuf" camunda:type="external"
+        camunda:topic="activity-24-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch25" name="Activity 25 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity25Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask25" name="Activity 25 Manuf" camunda:type="external"
+        camunda:topic="activity-25-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch26" name="Activity 26 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity26Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask26" name="Activity 26 Manuf" camunda:type="external"
+        camunda:topic="activity-26-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch27" name="Activity 27 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity27Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask27" name="Activity 27 Manuf" camunda:type="external"
+        camunda:topic="activity-27-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch28" name="Activity 28 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity28Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask28" name="Activity 28 Manuf" camunda:type="external"
+        camunda:topic="activity-28-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch29" name="Activity 29 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity29Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask29" name="Activity 29 Manuf" camunda:type="external"
+        camunda:topic="activity-29-manuf" />
+    <bpmn2:intermediateCatchEvent id="Stress30ManufCatch30" name="Activity 30 Barrier">
+      <bpmn2:signalEventDefinition signalRef="Signal_Activity30Ready" />
+    </bpmn2:intermediateCatchEvent>
+    <bpmn2:serviceTask id="Stress30ManufTask30" name="Activity 30 Manuf" camunda:type="external"
+        camunda:topic="activity-30-manuf" />
+    <bpmn2:endEvent id="Stress30ManufEnd" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow01a" sourceRef="Stress30ManufStart"
+        targetRef="Stress30ManufCatch01" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow01b" sourceRef="Stress30ManufCatch01"
+        targetRef="Stress30ManufTask01" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow02a" sourceRef="Stress30ManufTask01"
+        targetRef="Stress30ManufCatch02" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow02b" sourceRef="Stress30ManufCatch02"
+        targetRef="Stress30ManufTask02" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow03a" sourceRef="Stress30ManufTask02"
+        targetRef="Stress30ManufCatch03" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow03b" sourceRef="Stress30ManufCatch03"
+        targetRef="Stress30ManufTask03" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow04a" sourceRef="Stress30ManufTask03"
+        targetRef="Stress30ManufCatch04" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow04b" sourceRef="Stress30ManufCatch04"
+        targetRef="Stress30ManufTask04" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow05a" sourceRef="Stress30ManufTask04"
+        targetRef="Stress30ManufCatch05" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow05b" sourceRef="Stress30ManufCatch05"
+        targetRef="Stress30ManufTask05" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow06a" sourceRef="Stress30ManufTask05"
+        targetRef="Stress30ManufCatch06" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow06b" sourceRef="Stress30ManufCatch06"
+        targetRef="Stress30ManufTask06" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow07a" sourceRef="Stress30ManufTask06"
+        targetRef="Stress30ManufCatch07" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow07b" sourceRef="Stress30ManufCatch07"
+        targetRef="Stress30ManufTask07" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow08a" sourceRef="Stress30ManufTask07"
+        targetRef="Stress30ManufCatch08" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow08b" sourceRef="Stress30ManufCatch08"
+        targetRef="Stress30ManufTask08" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow09a" sourceRef="Stress30ManufTask08"
+        targetRef="Stress30ManufCatch09" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow09b" sourceRef="Stress30ManufCatch09"
+        targetRef="Stress30ManufTask09" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow10a" sourceRef="Stress30ManufTask09"
+        targetRef="Stress30ManufCatch10" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow10b" sourceRef="Stress30ManufCatch10"
+        targetRef="Stress30ManufTask10" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow11a" sourceRef="Stress30ManufTask10"
+        targetRef="Stress30ManufCatch11" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow11b" sourceRef="Stress30ManufCatch11"
+        targetRef="Stress30ManufTask11" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow12a" sourceRef="Stress30ManufTask11"
+        targetRef="Stress30ManufCatch12" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow12b" sourceRef="Stress30ManufCatch12"
+        targetRef="Stress30ManufTask12" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow13a" sourceRef="Stress30ManufTask12"
+        targetRef="Stress30ManufCatch13" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow13b" sourceRef="Stress30ManufCatch13"
+        targetRef="Stress30ManufTask13" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow14a" sourceRef="Stress30ManufTask13"
+        targetRef="Stress30ManufCatch14" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow14b" sourceRef="Stress30ManufCatch14"
+        targetRef="Stress30ManufTask14" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow15a" sourceRef="Stress30ManufTask14"
+        targetRef="Stress30ManufCatch15" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow15b" sourceRef="Stress30ManufCatch15"
+        targetRef="Stress30ManufTask15" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow16a" sourceRef="Stress30ManufTask15"
+        targetRef="Stress30ManufCatch16" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow16b" sourceRef="Stress30ManufCatch16"
+        targetRef="Stress30ManufTask16" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow17a" sourceRef="Stress30ManufTask16"
+        targetRef="Stress30ManufCatch17" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow17b" sourceRef="Stress30ManufCatch17"
+        targetRef="Stress30ManufTask17" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow18a" sourceRef="Stress30ManufTask17"
+        targetRef="Stress30ManufCatch18" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow18b" sourceRef="Stress30ManufCatch18"
+        targetRef="Stress30ManufTask18" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow19a" sourceRef="Stress30ManufTask18"
+        targetRef="Stress30ManufCatch19" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow19b" sourceRef="Stress30ManufCatch19"
+        targetRef="Stress30ManufTask19" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow20a" sourceRef="Stress30ManufTask19"
+        targetRef="Stress30ManufCatch20" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow20b" sourceRef="Stress30ManufCatch20"
+        targetRef="Stress30ManufTask20" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow21a" sourceRef="Stress30ManufTask20"
+        targetRef="Stress30ManufCatch21" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow21b" sourceRef="Stress30ManufCatch21"
+        targetRef="Stress30ManufTask21" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow22a" sourceRef="Stress30ManufTask21"
+        targetRef="Stress30ManufCatch22" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow22b" sourceRef="Stress30ManufCatch22"
+        targetRef="Stress30ManufTask22" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow23a" sourceRef="Stress30ManufTask22"
+        targetRef="Stress30ManufCatch23" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow23b" sourceRef="Stress30ManufCatch23"
+        targetRef="Stress30ManufTask23" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow24a" sourceRef="Stress30ManufTask23"
+        targetRef="Stress30ManufCatch24" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow24b" sourceRef="Stress30ManufCatch24"
+        targetRef="Stress30ManufTask24" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow25a" sourceRef="Stress30ManufTask24"
+        targetRef="Stress30ManufCatch25" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow25b" sourceRef="Stress30ManufCatch25"
+        targetRef="Stress30ManufTask25" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow26a" sourceRef="Stress30ManufTask25"
+        targetRef="Stress30ManufCatch26" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow26b" sourceRef="Stress30ManufCatch26"
+        targetRef="Stress30ManufTask26" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow27a" sourceRef="Stress30ManufTask26"
+        targetRef="Stress30ManufCatch27" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow27b" sourceRef="Stress30ManufCatch27"
+        targetRef="Stress30ManufTask27" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow28a" sourceRef="Stress30ManufTask27"
+        targetRef="Stress30ManufCatch28" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow28b" sourceRef="Stress30ManufCatch28"
+        targetRef="Stress30ManufTask28" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow29a" sourceRef="Stress30ManufTask28"
+        targetRef="Stress30ManufCatch29" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow29b" sourceRef="Stress30ManufCatch29"
+        targetRef="Stress30ManufTask29" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow30a" sourceRef="Stress30ManufTask29"
+        targetRef="Stress30ManufCatch30" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlow30b" sourceRef="Stress30ManufCatch30"
+        targetRef="Stress30ManufTask30" />
+    <bpmn2:sequenceFlow id="Stress30ManufFlowEnd" sourceRef="Stress30ManufTask30"
+        targetRef="Stress30ManufEnd" />
+  </bpmn2:process>
+</bpmn2:definitions>

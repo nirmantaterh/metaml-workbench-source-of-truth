@@ -2,8 +2,14 @@ package com.metaml.workbench.generation;
 
 import org.camunda.bpm.model.bpmn.Bpmn;
 import org.camunda.bpm.model.bpmn.BpmnModelInstance;
+import org.camunda.bpm.model.bpmn.instance.Activity;
+import org.camunda.bpm.model.bpmn.instance.EventDefinition;
+import org.camunda.bpm.model.bpmn.instance.FlowNode;
+import org.camunda.bpm.model.bpmn.instance.IntermediateCatchEvent;
 import org.camunda.bpm.model.bpmn.instance.Process;
+import org.camunda.bpm.model.bpmn.instance.SequenceFlow;
 import org.camunda.bpm.model.bpmn.instance.Signal;
+import org.camunda.bpm.model.bpmn.instance.SignalEventDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,40 +40,25 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 // Generates the Target Harness Platform from the camundademo template.
-// Generation assembles files; SpringBootProjectLauncher handles execution.
-// Manufacturing and Twin run as separate modules within one Spring Boot application.
-// Package rewriting and Twin generation are project-specific additions.
 @Component
 public class SpringBootProjectGenerator {
 
     private static final Logger logger = LoggerFactory.getLogger(SpringBootProjectGenerator.class);
 
-    // Callers pre-render against this placeholder; generate() rewrites it to the real project package.
+    private static final String CAMUNDA_NS = "http://camunda.org/schema/1.0/bpmn";
+
     public static final String DELEGATE_PACKAGE = "com.example.camundademo.delegate";
 
-    // The template's own package; rewritePackage() replaces all occurrences with the project-specific base package.
     private static final String TEMPLATE_BASE_PACKAGE = "com.example.camundademo";
     private static final String TEMPLATE_BASE_PACKAGE_PATH = "com/example/camundademo";
 
-    // Professor: "it should not be Spring Boot project, it should be target harness platform" -
-    // and "javacom target platform redcollar" as his own example of the per-project package he
-    // wants. Never Red Collar itself: the slug is derived from whatever process key the saved
-    // model actually declares (see packageSlugFor), so this stays generic across every project.
     private static final String TARGET_PLATFORM_BASE_PACKAGE = "com.metaml.targetplatform";
 
     private static final String DELEGATE_PACKAGE_PATH = "src/main/java/com/example/camundademo/delegate";
     private static final String CONTROLLER_PACKAGE_PATH = "src/main/java/com/example/camundademo/controller";
     private static final String PROCESSES_PATH = "src/main/resources/processes";
 
-    // Generic, mode-independent project identity, written by every generation path and read by
-    // scanExisting()/findProcessKey() in preference to inferring identity from the .bpmn files a
-    // particular mode happens to write. Guessing from filenames only works for the shapes the
-    // guesser was written for - "one bpmn" or "one bpmn plus a _twin-suffixed one" - and silently
-    // stops working the moment a generation mode writes a different number of files under a
-    // different naming convention (exactly what generateWithAuthoredTwin's two equally-named,
-    // non-suffixed BPMNs do). A project's own declaration of its process key has no such limit:
-    // it works the same for one BPMN, two authored BPMNs, or any future shape, without this class
-    // needing to special-case any of them.
+    // Canonical process-key source; avoids inferring identity from BPMN filenames.
     private static final String PROJECT_METADATA_FILE = ".metaml-project.properties";
 
     private final Path templateDirectory;
@@ -93,7 +84,6 @@ public class SpringBootProjectGenerator {
             throw new IllegalStateException("No template project at " + templateDirectory.toAbsolutePath()
                     + " - workbench.generation.template-directory must point at the camundademo template");
         }
-        // Parse once; both the process key and activity list read from the same instance.
         BpmnModelInstance model = Bpmn.readModelFromStream(
                 new ByteArrayInputStream(bpmnXml.getBytes(StandardCharsets.UTF_8)));
         String processKey = extractProcessKey(model);
@@ -121,12 +111,7 @@ public class SpringBootProjectGenerator {
         return new GeneratedProject(projectId, projectDir, processKey);
     }
 
-    // Generates a Target Harness Platform from two independently authored BPMNs (Manufacturing +
-    // Twin). Unlike generate(), which derives the Twin from Manufacturing via TwinModelGenerator,
-    // this method uses the actual authored Twin BPMN. Both BPMNs are deployed as-is, and
-    // external-task workers are generated for both (Twin workers with ML-agent simulation).
-    // Signal catch events shared between the two processes are synchronized via a generated
-    // SignalBroadcaster that periodically broadcasts all BPMN-defined signals.
+    // Like generate(), but uses an independently authored Twin BPMN instead of deriving one.
     public GeneratedProject generateWithAuthoredTwin(String manufBpmnXml, String twinBpmnXml) {
         if (!Files.isDirectory(templateDirectory)) {
             throw new IllegalStateException("No template project at " + templateDirectory.toAbsolutePath()
@@ -171,21 +156,19 @@ public class SpringBootProjectGenerator {
         writeController(projectDir, basePackage, "controller.twin", "GeneratedTwinController",
                 "/api/v1/twin", twinProcessKey, twinActivities, "notifyManufacturing");
 
-        // Signal broadcaster for cross-process synchronization. writeSignalDeliveryChannel gives it
-        // a real RabbitMQ transport for the same REQUEST/RESPONSE handoff (see that method's own
-        // comment) - additive, gated behind metaml.messaging.enabled exactly like the pre-existing
-        // messaging package, so a caller who never sets that property sees no behavior change.
-        Set<String> allSignals = new LinkedHashSet<>();
-        allSignals.addAll(extractSignalNames(manufModel));
-        allSignals.addAll(extractSignalNames(twinModel));
+        Set<String> manufSignalNames = extractSignalNames(manufModel);
+        Set<String> twinSignalNames = extractSignalNames(twinModel);
+        Set<String> allSignals = new LinkedHashSet<>(manufSignalNames);
+        allSignals.addAll(twinSignalNames);
+        List<String> twinTopics = twinWorkers.stream().map(GeneratedWorker::topic).distinct().toList();
+        Map<String, String> signalToGatedTwinTopic = mapSignalToGatedTwinTopic(twinModel);
+        String messagingNamespace = namespaceRootFor(manufProcessKey, twinProcessKey) + "." + projectId;
         if (!allSignals.isEmpty()) {
-            writeSignalDeliveryChannel(projectDir, basePackage);
+            writeRabbitMqMessaging(projectDir, basePackage, messagingNamespace, twinTopics, signalToGatedTwinTopic);
             writeSignalBroadcaster(projectDir, basePackage, allSignals);
         }
 
-        // Generate stub execution listeners referenced by the BPMNs (e.g. manufTaskCompletionListener).
-        // These are delegateExpression references that Camunda resolves as Spring beans — without
-        // them the engine throws PropertyNotFoundException when external tasks complete.
+        // Stubs for delegateExpression beans the BPMNs reference.
         Set<String> listenerBeanNames = new LinkedHashSet<>();
         listenerBeanNames.addAll(extractExecutionListenerBeanNames(manufBpmnXml));
         listenerBeanNames.addAll(extractExecutionListenerBeanNames(twinBpmnXml));
@@ -193,10 +176,7 @@ public class SpringBootProjectGenerator {
             writeExecutionListenerStub(projectDir, basePackage, beanName);
         }
 
-        // Generate the worker interface and poller that drive all external-task workers, plus the
-        // scheduling infrastructure they (and SignalBroadcaster, when present) run on. Written
-        // unconditionally here - not left for SignalBroadcaster to accidentally provide - so a BPMN
-        // pair with external tasks but no signals still gets a working poller.
+        // Written unconditionally; a BPMN pair without signals still needs the poller.
         writeWorkerInterface(projectDir, basePackage);
         writeExternalTaskPoller(projectDir, basePackage);
         writeSchedulingConfig(projectDir, basePackage);
@@ -204,16 +184,15 @@ public class SpringBootProjectGenerator {
         writeProjectMetadata(projectDir, manufProcessKey);
 
         logger.info("Generated Target Harness Platform {} with authored Twin for process keys '{}' + '{}', "
-                + "{} manufacturing workers, {} twin workers, {} shared signals, package {}, at {}",
+                + "{} manufacturing workers, {} twin workers, {} total signals, {} Main<->Twin communication "
+                + "activities ({} task queue(s) + {} response queue(s) = {} total), package {}, at {}",
                 projectId, manufProcessKey, twinProcessKey, manufWorkers.size(), twinWorkers.size(),
-                allSignals.size(), basePackage, projectDir.toAbsolutePath());
+                allSignals.size(), twinTopics.size(), twinTopics.size(), twinTopics.size(), twinTopics.size() * 2,
+                basePackage, projectDir.toAbsolutePath());
 
         return new GeneratedProject(projectId, projectDir, manufProcessKey);
     }
 
-    // Reuses TwinModelGenerator's stateless transform (same as WorkbenchServiceImpl.deployTwinDefinition,
-    // ADR-002/ADR-005) without touching the Workbench's engine, RepositoryService, or Evolve.
-    // Twin delegates render directly against basePackage, so no placeholder rewriting is needed.
     private void generateTwinResources(Path projectDir, String basePackage, BpmnModelInstance originalModel,
             String processKey) {
         BpmnModelInstance twinModel = twinModelGenerator.generate(originalModel);
@@ -230,13 +209,32 @@ public class SpringBootProjectGenerator {
                 twinProcessKey, twinActivities, "notifyManufacturing");
     }
 
-    // Lowercase processKey with non-alpha stripped; digit-leading or empty keys fall back to "generated<slug>".
+    // Digit-leading or empty keys fall back to "generated<slug>".
     private static String packageSlugFor(String processKey) {
         String slug = processKey == null ? "" : processKey.toLowerCase().replaceAll("[^a-z0-9]", "");
         if (slug.isEmpty() || Character.isDigit(slug.charAt(0))) {
             slug = "generated" + slug;
         }
         return slug;
+    }
+
+    // Returns the segment before the first dot, or null.
+    private static String dotPrefix(String processKey) {
+        if (processKey == null) {
+            return null;
+        }
+        int dot = processKey.indexOf('.');
+        return dot > 0 ? processKey.substring(0, dot) : null;
+    }
+
+    // Shared dot-prefix of both keys, or packageSlugFor(manufProcessKey) if none.
+    private static String namespaceRootFor(String manufProcessKey, String twinProcessKey) {
+        String manufPrefix = dotPrefix(manufProcessKey);
+        String twinPrefix = dotPrefix(twinProcessKey);
+        if (manufPrefix != null && manufPrefix.equalsIgnoreCase(twinPrefix)) {
+            return packageSlugFor(manufPrefix);
+        }
+        return packageSlugFor(manufProcessKey);
     }
 
     // Rewrites the template's com/example/camundademo tree to the project-specific package; non-Java resources unchanged.
@@ -502,19 +500,194 @@ public class SpringBootProjectGenerator {
         return names;
     }
 
-    // Generates the three-piece RabbitMQ signal-delivery channel that replaces SignalBroadcaster's
-    // direct signalEventReceived call with a real broker-mediated transport when messaging is
-    // enabled. Signal names are message fields (not one queue per signal - names are BPMN-derived,
-    // unknown in advance here). The three pieces:
-    //   - SignalMessagingConfig: exchange/queue/binding, gated on metaml.messaging.enabled=true.
-    //   - SignalDeliveryPublisher: unconditional bean; SignalBroadcaster calls it when enabled.
-    //   - SignalDeliveryListener: the real consumer - calls RuntimeService.signalEventReceived on
-    //     message receipt, making RabbitMQ the actual transport rather than an audit log.
-    private void writeSignalDeliveryChannel(Path projectDir, String basePackage) {
-        String subPackage = basePackage + ".signal";
+    // Escapes a string for safe embedding as a Java string literal in generated source. BPMN
+    // signal names are author-controlled data, not something this generator can constrain - a
+    // name containing a quote or backslash must not corrupt (or inject code into) the file being
+    // generated.
+    private static String escapeJavaStringLiteral(String raw) {
+        return raw.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    // Turns an arbitrary BPMN-authored identifier (a camunda:topic, typically PascalCase, e.g.
+    // "SamplingTwin") into kebab-case ("sampling-twin") - the convention this platform's RabbitMQ
+    // queue names use. Generic word-boundary splitting, not a lookup table: it works the same for
+    // any topic name, RedCollar's or anyone else's.
+    private static String pascalCaseToKebabCase(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        String withHyphens = raw
+                .replaceAll("([a-z0-9])([A-Z])", "$1-$2")
+                .replaceAll("([A-Z]+)([A-Z][a-z])", "$1-$2");
+        return withHyphens.toLowerCase();
+    }
+
+    // Restricts an already-kebab-cased string to safe, valid RabbitMQ identifier characters:
+    // lowercase letters, digits, hyphens. BPMN topic names are author-controlled - a stray
+    // character must not produce an invalid queue name.
+    private static String sanitizeForKebabSegment(String raw) {
+        String slug = raw == null ? "" : raw.toLowerCase()
+                .replaceAll("[^a-z0-9-]+", "-")
+                .replaceAll("-{2,}", "-")
+                .replaceAll("^-+|-+$", "");
+        if (slug.isEmpty()) {
+            slug = "activity";
+        }
+        // one segment of a longer name (see assignActivityQueueIdentities) - capped well under
+        // RabbitMQ's own 255-byte name limit even for a pathologically long topic name
+        return slug.length() > 60 ? slug.substring(0, 60) : slug;
+    }
+
+    // Maps each BPMN signal name to the Twin external-task topic its catch event gates entry
+    // into - which Twin activity a given signal's release is actually permission to run. Neither
+    // supplied process model has a signal throw event (see SignalBroadcaster's own comment), so a
+    // signal catch event's own outgoing sequence flow to an external-task service task is the only
+    // place this relationship is expressed in the BPMN itself. Used only to choose which
+    // activity's task/response queue pair a signal's REQUEST/RESPONSE handoff routes through (see
+    // writeSignalBroadcaster's deliverTo) - the signal remains the mechanism that decides WHEN a
+    // handoff happens, unchanged.
+    //
+    // Scans every SequenceFlow in the model for one whose sourceRef is this catch event, rather
+    // than calling catchEvent.getOutgoing() - that convenience method only returns flows listed in
+    // an explicit <bpmn2:outgoing> child element, which Camunda Modeler always writes but a BPMN
+    // authored (or generated) without that redundant, optional hint - relying only on
+    // sequenceFlow's own sourceRef/targetRef attributes, exactly as the BPMN 2.0 spec allows -
+    // would silently produce zero matches. Reading sourceRef/targetRef directly is what actually
+    // works for any conformant BPMN, not just the shape one particular tool happens to export.
+    private static Map<String, String> mapSignalToGatedTwinTopic(BpmnModelInstance twinModel) {
+        Map<String, String> result = new LinkedHashMap<>();
+        for (IntermediateCatchEvent catchEvent : twinModel.getModelElementsByType(IntermediateCatchEvent.class)) {
+            String signalName = null;
+            for (EventDefinition definition : catchEvent.getEventDefinitions()) {
+                if (definition instanceof SignalEventDefinition signalDefinition
+                        && signalDefinition.getSignal() != null) {
+                    signalName = signalDefinition.getSignal().getName();
+                }
+            }
+            if (signalName == null || signalName.isBlank()) {
+                continue;
+            }
+            for (SequenceFlow flow : twinModel.getModelElementsByType(SequenceFlow.class)) {
+                if (!catchEvent.equals(flow.getSource())) {
+                    continue;
+                }
+                FlowNode target = flow.getTarget();
+                if (target instanceof Activity activity
+                        && "external".equals(activity.getAttributeValueNs(CAMUNDA_NS, "type"))) {
+                    String topic = activity.getAttributeValueNs(CAMUNDA_NS, "topic");
+                    if (topic != null && !topic.isBlank()) {
+                        result.put(signalName, topic);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    // One task queue + one response queue per Main<->Twin communication activity (a Twin
+    // external-task topic) - "N communication activities x 2 queues = 2N total", per Joanna's
+    // explicit requirement. Scoped by messagingNamespace (this generation's own process-key slug
+    // plus its own generated projectId - both already-existing identity concepts, reused rather
+    // than invented) so two independently generated projects can never physically share a queue
+    // even with identically-named BPMN activities.
+    private record ActivityQueueIdentity(String topic, String taskQueueName, String taskRoutingKey,
+            String responseQueueName, String responseRoutingKey, String javaIdentifier) {
+    }
+
+    // Two topics that kebab-case to the same slug (e.g. "Order Ready" and "OrderReady") are
+    // disambiguated with a numeric suffix, assigned in the caller's own iteration order - stable
+    // because callers always pass the topic list in BPMN document order.
+    private static List<ActivityQueueIdentity> assignActivityQueueIdentities(String messagingNamespace,
+            List<String> twinTopics) {
+        List<ActivityQueueIdentity> identities = new ArrayList<>();
+        Set<String> usedSlugs = new java.util.HashSet<>();
+        int index = 0;
+        for (String topic : twinTopics) {
+            String base = sanitizeForKebabSegment(pascalCaseToKebabCase(topic));
+            String slug = base;
+            int suffix = 2;
+            while (!usedSlugs.add(slug)) {
+                slug = base + "-" + suffix++;
+            }
+            String taskQueue = messagingNamespace + ".tasks." + slug;
+            String responseQueue = messagingNamespace + ".tasks.responses." + slug;
+            identities.add(new ActivityQueueIdentity(topic, taskQueue, "tasks." + slug, responseQueue,
+                    "tasks.responses." + slug, "q" + (index++) + "_" + slug.replace('-', '_')));
+        }
+        return identities;
+    }
+
+    // Generates this platform's RabbitMQ messaging layer as separate, readable Java source files
+    // (not embedded string literals a developer has to dig for): one task queue plus one response
+    // queue per Main<->Twin communication activity - a Twin external-task topic. Five pieces,
+    // generated together, one class per responsibility:
+    //   - RabbitMqConfig: connection/topology metadata, exchange, and one queue+binding pair per
+    //     Twin activity, gated on metaml.messaging.enabled=true.
+    //   - TaskQueuePublisher / TaskQueueListener: Main asks Twin to run an activity (publish),
+    //     and the real consumer that performs the actual Camunda signal delivery releasing Twin's
+    //     waiting execution (listen).
+    //   - ResponseQueuePublisher / ResponseQueueListener: Twin reports an activity's completion
+    //     back to Main (publish), and the real consumer that releases Main's waiting execution
+    //     (listen).
+    // SignalBroadcaster (unchanged) still decides WHEN a handoff happens - REQUEST routes through
+    // the gated activity's task queue, RESPONSE through its response queue (see
+    // mapSignalToGatedTwinTopic and deliverTo). Every Twin activity gets a queue pair regardless
+    // of whether a shared signal happens to gate it, so the topology itself is always complete and
+    // inspectable at the broker even where a signal never resolves for a particular activity.
+    private void writeRabbitMqMessaging(Path projectDir, String basePackage, String messagingNamespace,
+            List<String> twinTopics, Map<String, String> signalToGatedTwinTopic) {
+        String subPackage = basePackage + ".messaging";
+        List<ActivityQueueIdentity> queues = assignActivityQueueIdentities(messagingNamespace, twinTopics);
+        String exchangeName = messagingNamespace + ".exchange";
+
+        String taskQueueEntries = queues.stream()
+                .map(q -> "Map.entry(\"" + escapeJavaStringLiteral(q.topic()) + "\", \"" + q.taskQueueName() + "\")")
+                .collect(Collectors.joining(",\n            "));
+        String responseQueueEntries = queues.stream()
+                .map(q -> "Map.entry(\"" + escapeJavaStringLiteral(q.topic()) + "\", \"" + q.responseQueueName()
+                        + "\")")
+                .collect(Collectors.joining(",\n            "));
+        String taskRoutingKeyEntries = queues.stream()
+                .map(q -> "Map.entry(\"" + escapeJavaStringLiteral(q.topic()) + "\", \"" + q.taskRoutingKey() + "\")")
+                .collect(Collectors.joining(",\n            "));
+        String responseRoutingKeyEntries = queues.stream()
+                .map(q -> "Map.entry(\"" + escapeJavaStringLiteral(q.topic()) + "\", \"" + q.responseRoutingKey()
+                        + "\")")
+                .collect(Collectors.joining(",\n            "));
+        String topicBySignalEntries = signalToGatedTwinTopic.entrySet().stream()
+                .map(e -> "Map.entry(\"" + escapeJavaStringLiteral(e.getKey()) + "\", \""
+                        + escapeJavaStringLiteral(e.getValue()) + "\")")
+                .collect(Collectors.joining(",\n            "));
+        String queueBeans = queues.stream()
+                .map(q -> """
+
+                        @Bean
+                        public Queue %1$sTaskQueue() {
+                            return new Queue("%2$s");
+                        }
+
+                        @Bean
+                        public Binding %1$sTaskBinding() {
+                            return BindingBuilder.bind(%1$sTaskQueue()).to(messagingExchange()).with("%3$s");
+                        }
+
+                        @Bean
+                        public Queue %1$sResponseQueue() {
+                            return new Queue("%4$s");
+                        }
+
+                        @Bean
+                        public Binding %1$sResponseBinding() {
+                            return BindingBuilder.bind(%1$sResponseQueue()).to(messagingExchange()).with("%5$s");
+                        }
+                        """.formatted(q.javaIdentifier(), q.taskQueueName(), q.taskRoutingKey(),
+                        q.responseQueueName(), q.responseRoutingKey()))
+                .collect(Collectors.joining());
 
         String configSource = """
                 package %s;
+
+                import java.util.Map;
 
                 import org.springframework.amqp.core.Binding;
                 import org.springframework.amqp.core.BindingBuilder;
@@ -524,38 +697,63 @@ public class SpringBootProjectGenerator {
                 import org.springframework.context.annotation.Bean;
                 import org.springframework.context.annotation.Configuration;
 
-                // Declares the RabbitMQ exchange/queue/binding SignalDeliveryPublisher and
-                // SignalDeliveryListener use to carry each Main<->Twin signal handoff as a real
-                // message. Enabled only with metaml.messaging.enabled=true, matching every other
-                // messaging component in this platform - disabled by default so generated platforms
-                // can run without a broker present.
+                // RabbitMQ topology for this generated platform's Main<->Twin communication: one task
+                // queue and one response queue per Twin external-task activity (see
+                // SpringBootProjectGenerator.assignActivityQueueIdentities), scoped to this generated
+                // project so two independently generated platforms can never physically share a queue.
+                // Queue/exchange names are derived entirely from the Twin BPMN's own external-task
+                // topics and this project's generated id - nothing here is hard-coded to any particular
+                // process. Enabled only with metaml.messaging.enabled=true, matching every other
+                // messaging component in this platform.
                 @Configuration
                 @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
-                public class SignalMessagingConfig {
+                public class RabbitMqConfig {
 
-                    public static final String SIGNAL_EXCHANGE = "signal.delivery.exchange";
-                    public static final String SIGNAL_QUEUE = "signal.delivery.queue";
-                    public static final String SIGNAL_ROUTING_KEY = "signal.delivery";
+                    public static final String EXCHANGE = "%s";
+
+                    // Twin external-task topic -> its dedicated task queue name (Main asks Twin to run
+                    // this activity) - the single source of truth for which activities have RabbitMQ
+                    // queues at all.
+                    public static final Map<String, String> TASK_QUEUE_BY_TOPIC = Map.ofEntries(
+                            %s
+                    );
+
+                    // Twin external-task topic -> its dedicated response queue name (Twin reports the
+                    // activity's completion back to Main).
+                    public static final Map<String, String> RESPONSE_QUEUE_BY_TOPIC = Map.ofEntries(
+                            %s
+                    );
+
+                    // Topic -> the routing key its task queue is bound with. Equal to the queue's own
+                    // unique slug, so publisher and consumer always agree without parsing queue names
+                    // back apart.
+                    public static final Map<String, String> TASK_ROUTING_KEY_BY_TOPIC = Map.ofEntries(
+                            %s
+                    );
+
+                    // Topic -> the routing key its response queue is bound with.
+                    public static final Map<String, String> RESPONSE_ROUTING_KEY_BY_TOPIC = Map.ofEntries(
+                            %s
+                    );
+
+                    // BPMN signal name -> the Twin activity topic its release actually gates entry
+                    // into (see SpringBootProjectGenerator.mapSignalToGatedTwinTopic) - how
+                    // SignalBroadcaster's own REQUEST/RESPONSE handoff (unchanged) knows which
+                    // activity's queue pair to route a given signal's delivery through.
+                    public static final Map<String, String> TOPIC_BY_SIGNAL = Map.ofEntries(
+                            %s
+                    );
 
                     @Bean
-                    public DirectExchange signalDeliveryExchange() {
-                        return new DirectExchange(SIGNAL_EXCHANGE);
+                    public DirectExchange messagingExchange() {
+                        return new DirectExchange(EXCHANGE);
                     }
-
-                    @Bean
-                    public Queue signalDeliveryQueue() {
-                        return new Queue(SIGNAL_QUEUE);
-                    }
-
-                    @Bean
-                    public Binding signalDeliveryBinding() {
-                        return BindingBuilder.bind(signalDeliveryQueue()).to(signalDeliveryExchange())
-                                .with(SIGNAL_ROUTING_KEY);
-                    }
+                    %s
                 }
-                """.formatted(subPackage);
+                """.formatted(subPackage, exchangeName, taskQueueEntries, responseQueueEntries,
+                taskRoutingKeyEntries, responseRoutingKeyEntries, topicBySignalEntries, queueBeans);
 
-        String publisherSource = """
+        String taskPublisherSource = """
                 package %s;
 
                 import org.slf4j.Logger;
@@ -564,21 +762,22 @@ public class SpringBootProjectGenerator {
                 import org.springframework.beans.factory.annotation.Value;
                 import org.springframework.stereotype.Component;
 
-                // Publishes Main<->Twin signal handoffs to RabbitMQ; SignalDeliveryListener performs
-                // the actual Camunda delivery on consume. Always present as a bean, but isEnabled()
-                // returns false unless metaml.messaging.enabled=true (no broker required by default,
-                // matching HarnessMessagePublisher's own pattern). Payload is pipe-delimited
-                // (phase|signalName|executionId|processInstanceId|businessKey), not JSON, to stay
+                // Publishes a "run this Twin activity now" task message to that activity's own
+                // dedicated task queue (see RabbitMqConfig.TASK_QUEUE_BY_TOPIC) - TaskQueueListener
+                // performs the actual Camunda signal delivery that releases Twin's waiting execution,
+                // on consume. Always present as a bean, but isEnabled() returns false unless
+                // metaml.messaging.enabled=true (no broker required by default). Payload is
+                // pipe-delimited (signalName|executionId|processInstanceId|businessKey), not JSON,
                 // independent of the pre-existing messaging package's Jackson configuration.
                 @Component
-                public class SignalDeliveryPublisher {
+                public class TaskQueuePublisher {
 
-                    private static final Logger logger = LoggerFactory.getLogger(SignalDeliveryPublisher.class);
+                    private static final Logger logger = LoggerFactory.getLogger(TaskQueuePublisher.class);
 
                     private final RabbitTemplate rabbitTemplate;
                     private final boolean enabled;
 
-                    public SignalDeliveryPublisher(RabbitTemplate rabbitTemplate,
+                    public TaskQueuePublisher(RabbitTemplate rabbitTemplate,
                             @Value("${metaml.messaging.enabled:false}") boolean enabled) {
                         this.rabbitTemplate = rabbitTemplate;
                         this.enabled = enabled;
@@ -588,80 +787,227 @@ public class SpringBootProjectGenerator {
                         return enabled;
                     }
 
-                    public void publish(String phase, String signalName, String executionId,
+                    // True for a Twin activity that has its own dedicated task queue - every activity
+                    // discovered from the Twin BPMN's own external-task topics has one (see
+                    // RabbitMqConfig.TASK_QUEUE_BY_TOPIC).
+                    public boolean isEligible(String twinTopic) {
+                        return RabbitMqConfig.TASK_QUEUE_BY_TOPIC.containsKey(twinTopic);
+                    }
+
+                    public void publish(String twinTopic, String signalName, String executionId,
                             String processInstanceId, String businessKey) {
-                        String payload = phase + "|" + signalName + "|" + executionId + "|" + processInstanceId
+                        String routingKey = RabbitMqConfig.TASK_ROUTING_KEY_BY_TOPIC.get(twinTopic);
+                        if (routingKey == null) {
+                            throw new IllegalArgumentException("No task queue is declared for Twin activity '"
+                                    + twinTopic + "' - callers must check isEligible(twinTopic) first");
+                        }
+                        String payload = signalName + "|" + executionId + "|" + processInstanceId
                                 + "|" + (businessKey == null ? "" : businessKey);
-                        rabbitTemplate.convertAndSend(SignalMessagingConfig.SIGNAL_EXCHANGE,
-                                SignalMessagingConfig.SIGNAL_ROUTING_KEY, payload);
-                        logger.info("{}: published signal '{}' delivery for execution {} (processInstanceId={}, "
-                                + "businessKey={}) to RabbitMQ exchange '{}' key '{}'", phase, signalName,
-                                executionId, processInstanceId, businessKey, SignalMessagingConfig.SIGNAL_EXCHANGE,
-                                SignalMessagingConfig.SIGNAL_ROUTING_KEY);
+                        rabbitTemplate.convertAndSend(RabbitMqConfig.EXCHANGE, routingKey, payload);
+                        logger.info("TASK: published activity '{}' (signal '{}') to RabbitMQ exchange '{}' key "
+                                + "'{}' (queue '{}') for execution {} (processInstanceId={}, businessKey={})",
+                                twinTopic, signalName, RabbitMqConfig.EXCHANGE, routingKey,
+                                RabbitMqConfig.TASK_QUEUE_BY_TOPIC.get(twinTopic), executionId, processInstanceId,
+                                businessKey);
                     }
                 }
                 """.formatted(subPackage);
 
-        String listenerSource = """
+        String responsePublisherSource = """
                 package %s;
 
-                import org.camunda.bpm.engine.RuntimeService;
                 import org.slf4j.Logger;
                 import org.slf4j.LoggerFactory;
-                import org.springframework.amqp.rabbit.annotation.RabbitListener;
-                import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+                import org.springframework.amqp.rabbit.core.RabbitTemplate;
+                import org.springframework.beans.factory.annotation.Value;
                 import org.springframework.stereotype.Component;
 
-                // The real consumer for signal-delivery messages published over RabbitMQ (see
-                // SignalDeliveryPublisher and SignalMessagingConfig). This is what makes RabbitMQ
-                // the actual Main<->Twin transport rather than an audit log next to a direct
-                // in-process call: the Camunda signal delivery itself happens here, triggered by
-                // consuming the message, not by SignalBroadcaster's own scheduled tick. Enabled only
-                // with metaml.messaging.enabled=true; when disabled, SignalBroadcaster delivers
-                // signals directly instead (see its own class comment).
+                // Publishes a "this Twin activity finished" response message to that activity's own
+                // dedicated response queue (see RabbitMqConfig.RESPONSE_QUEUE_BY_TOPIC) -
+                // ResponseQueueListener performs the actual Camunda signal delivery that releases
+                // Main's waiting execution, on consume. Always present as a bean, but isEnabled()
+                // returns false unless metaml.messaging.enabled=true. Payload format mirrors
+                // TaskQueuePublisher's own.
                 @Component
-                @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
-                public class SignalDeliveryListener {
+                public class ResponseQueuePublisher {
 
-                    private static final Logger logger = LoggerFactory.getLogger(SignalDeliveryListener.class);
+                    private static final Logger logger = LoggerFactory.getLogger(ResponseQueuePublisher.class);
 
-                    private final RuntimeService runtimeService;
+                    private final RabbitTemplate rabbitTemplate;
+                    private final boolean enabled;
 
-                    public SignalDeliveryListener(RuntimeService runtimeService) {
-                        this.runtimeService = runtimeService;
+                    public ResponseQueuePublisher(RabbitTemplate rabbitTemplate,
+                            @Value("${metaml.messaging.enabled:false}") boolean enabled) {
+                        this.rabbitTemplate = rabbitTemplate;
+                        this.enabled = enabled;
                     }
 
-                    @RabbitListener(queues = SignalMessagingConfig.SIGNAL_QUEUE)
-                    public void onSignalDelivery(String payload) {
-                        String[] parts = payload.split("\\\\|", -1);
-                        if (parts.length != 5) {
-                            logger.error("[signal-delivery] discarding malformed message: {}", payload);
-                            return;
+                    public boolean isEnabled() {
+                        return enabled;
+                    }
+
+                    public boolean isEligible(String twinTopic) {
+                        return RabbitMqConfig.RESPONSE_QUEUE_BY_TOPIC.containsKey(twinTopic);
+                    }
+
+                    public void publish(String twinTopic, String signalName, String executionId,
+                            String processInstanceId, String businessKey) {
+                        String routingKey = RabbitMqConfig.RESPONSE_ROUTING_KEY_BY_TOPIC.get(twinTopic);
+                        if (routingKey == null) {
+                            throw new IllegalArgumentException("No response queue is declared for Twin activity '"
+                                    + twinTopic + "' - callers must check isEligible(twinTopic) first");
                         }
-                        String phase = parts[0];
-                        String signalName = parts[1];
-                        String executionId = parts[2];
-                        String processInstanceId = parts[3];
-                        String businessKey = parts[4];
-                        try {
-                            runtimeService.signalEventReceived(signalName, executionId);
-                            logger.info("{}: delivered signal '{}' to execution {} (processInstanceId={}, "
-                                    + "businessKey={}) via RabbitMQ", phase, signalName, executionId,
-                                    processInstanceId, businessKey);
-                        } catch (Exception e) {
-                            // Expected during normal operation - the execution may already have moved on
-                            // (e.g. another delivery reached it first).
-                            logger.info("{}: signal '{}' delivery to execution {} skipped (already advanced?): {}",
-                                    phase, signalName, executionId, e.toString());
-                        }
+                        String payload = signalName + "|" + executionId + "|" + processInstanceId
+                                + "|" + (businessKey == null ? "" : businessKey);
+                        rabbitTemplate.convertAndSend(RabbitMqConfig.EXCHANGE, routingKey, payload);
+                        logger.info("RESPONSE: published activity '{}' (signal '{}') to RabbitMQ exchange '{}' "
+                                + "key '{}' (queue '{}') for execution {} (processInstanceId={}, businessKey={})",
+                                twinTopic, signalName, RabbitMqConfig.EXCHANGE, routingKey,
+                                RabbitMqConfig.RESPONSE_QUEUE_BY_TOPIC.get(twinTopic), executionId,
+                                processInstanceId, businessKey);
                     }
                 }
                 """.formatted(subPackage);
 
+        String listenerImports = queues.isEmpty()
+                ? """
+                        import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+                        import org.springframework.stereotype.Component;
+                        """
+                : """
+                        import org.camunda.bpm.engine.RuntimeService;
+                        import org.slf4j.Logger;
+                        import org.slf4j.LoggerFactory;
+                        import org.springframework.amqp.rabbit.annotation.RabbitListener;
+                        import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+                        import org.springframework.stereotype.Component;
+                        """;
+
+        // No Twin external-task topic exists when queues is empty, so there is no Main<->Twin
+        // communication activity to declare a RabbitMQ consumer for - the class is still generated
+        // (present unconditionally, like every other piece here), it just has nothing to listen on.
+        String noActivitiesComment = "    // No Twin external-task activity was found in this project's BPMNs, so\n"
+                + "    // there is no Main<->Twin communication activity to declare a RabbitMQ consumer for.\n";
+
+        String taskListenerFields = queues.isEmpty() ? ""
+                : "    private static final Logger logger = LoggerFactory.getLogger(TaskQueueListener.class);\n\n";
+        String taskListenerBody = queues.isEmpty()
+                ? noActivitiesComment
+                : """
+                            private final RuntimeService runtimeService;
+
+                            public TaskQueueListener(RuntimeService runtimeService) {
+                                this.runtimeService = runtimeService;
+                            }
+
+                            @RabbitListener(queues = { %s })
+                            public void onTaskMessage(String payload) {
+                                String[] parts = payload.split("\\\\|", -1);
+                                if (parts.length != 4) {
+                                    logger.error("[task-queue] discarding malformed message: {}", payload);
+                                    return;
+                                }
+                                String signalName = parts[0];
+                                String executionId = parts[1];
+                                String processInstanceId = parts[2];
+                                String businessKey = parts[3];
+                                try {
+                                    runtimeService.signalEventReceived(signalName, executionId);
+                                    logger.info("TASK: delivered signal '{}' to execution {} (processInstanceId={}, "
+                                            + "businessKey={}) via RabbitMQ", signalName, executionId,
+                                            processInstanceId, businessKey);
+                                } catch (Exception e) {
+                                    // Expected during normal operation - the execution may already have moved
+                                    // on (e.g. another delivery reached it first).
+                                    logger.info("TASK: signal '{}' delivery to execution {} skipped (already "
+                                            + "advanced?): {}", signalName, executionId, e.toString());
+                                }
+                            }
+                        """.formatted(queues.stream()
+                                .map(q -> "\"" + q.taskQueueName() + "\"")
+                                .collect(Collectors.joining(", ")));
+
+        String responseListenerFields = queues.isEmpty() ? ""
+                : "    private static final Logger logger = LoggerFactory.getLogger(ResponseQueueListener.class);\n\n";
+        String responseListenerBody = queues.isEmpty()
+                ? noActivitiesComment
+                : """
+                            private final RuntimeService runtimeService;
+
+                            public ResponseQueueListener(RuntimeService runtimeService) {
+                                this.runtimeService = runtimeService;
+                            }
+
+                            @RabbitListener(queues = { %s })
+                            public void onResponseMessage(String payload) {
+                                String[] parts = payload.split("\\\\|", -1);
+                                if (parts.length != 4) {
+                                    logger.error("[response-queue] discarding malformed message: {}", payload);
+                                    return;
+                                }
+                                String signalName = parts[0];
+                                String executionId = parts[1];
+                                String processInstanceId = parts[2];
+                                String businessKey = parts[3];
+                                try {
+                                    runtimeService.signalEventReceived(signalName, executionId);
+                                    logger.info("RESPONSE: delivered signal '{}' to execution {} "
+                                            + "(processInstanceId={}, businessKey={}) via RabbitMQ", signalName,
+                                            executionId, processInstanceId, businessKey);
+                                } catch (Exception e) {
+                                    // Expected during normal operation - the execution may already have moved
+                                    // on (e.g. another delivery reached it first).
+                                    logger.info("RESPONSE: signal '{}' delivery to execution {} skipped (already "
+                                            + "advanced?): {}", signalName, executionId, e.toString());
+                                }
+                            }
+                        """.formatted(queues.stream()
+                                .map(q -> "\"" + q.responseQueueName() + "\"")
+                                .collect(Collectors.joining(", ")));
+
+        String taskListenerSource = """
+                package %s;
+
+                %s
+                // The real consumer for task messages, one queue per Main<->Twin communication activity
+                // (see RabbitMqConfig). This is what makes RabbitMQ the actual Main->Twin transport
+                // rather than an audit log next to a direct call: the Camunda signal delivery that
+                // releases Twin's waiting execution happens here, triggered by consuming the message,
+                // not by SignalBroadcaster's own scheduled tick. Enabled only with
+                // metaml.messaging.enabled=true; when disabled, SignalBroadcaster delivers signals
+                // directly instead.
+                @Component
+                @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
+                public class TaskQueueListener {
+
+                %s%s
+                }
+                """.formatted(subPackage, listenerImports, taskListenerFields, taskListenerBody);
+
+        String responseListenerSource = """
+                package %s;
+
+                %s
+                // The real consumer for response messages, one queue per Main<->Twin communication
+                // activity (see RabbitMqConfig). This is what makes RabbitMQ the actual Twin->Main
+                // transport: the Camunda signal delivery that releases Main's waiting execution happens
+                // here, triggered by consuming the message. Enabled only with
+                // metaml.messaging.enabled=true; when disabled, SignalBroadcaster delivers signals
+                // directly instead.
+                @Component
+                @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
+                public class ResponseQueueListener {
+
+                %s%s
+                }
+                """.formatted(subPackage, listenerImports, responseListenerFields, responseListenerBody);
+
         Path packageDir = projectDir.resolve("src/main/java").resolve(subPackage.replace('.', '/'));
-        writeFile(packageDir.resolve("SignalMessagingConfig.java"), configSource);
-        writeFile(packageDir.resolve("SignalDeliveryPublisher.java"), publisherSource);
-        writeFile(packageDir.resolve("SignalDeliveryListener.java"), listenerSource);
+        writeFile(packageDir.resolve("RabbitMqConfig.java"), configSource);
+        writeFile(packageDir.resolve("TaskQueuePublisher.java"), taskPublisherSource);
+        writeFile(packageDir.resolve("TaskQueueListener.java"), taskListenerSource);
+        writeFile(packageDir.resolve("ResponseQueuePublisher.java"), responsePublisherSource);
+        writeFile(packageDir.resolve("ResponseQueueListener.java"), responseListenerSource);
     }
 
     // Generates a Spring component that periodically broadcasts all BPMN-defined signals so that
@@ -671,8 +1017,13 @@ public class SpringBootProjectGenerator {
     private void writeSignalBroadcaster(Path projectDir, String basePackage, Set<String> signalNames) {
         String subPackage = basePackage + ".signal";
         String coordinationPackage = basePackage + ".coordination";
+        String messagingPackage = basePackage + ".messaging";
+        String messagingImports = """
+                import %1$s.RabbitMqConfig;
+                import %1$s.TaskQueuePublisher;
+                import %1$s.ResponseQueuePublisher;""".formatted(messagingPackage);
         String signalList = signalNames.stream()
-                .map(s -> "\"" + s + "\"")
+                .map(s -> "\"" + escapeJavaStringLiteral(s) + "\"")
                 .collect(Collectors.joining(", "));
 
         String source = """
@@ -692,6 +1043,7 @@ public class SpringBootProjectGenerator {
                 import org.springframework.scheduling.annotation.Scheduled;
 
                 import %s.PairRegistry;
+                %s
 
                 // Delivers BPMN-defined signals to the specific executions currently waiting on each one,
                 // so intermediate signal catch events in both processes can advance. Both Manufacturing and
@@ -732,7 +1084,8 @@ public class SpringBootProjectGenerator {
 
                     private final RuntimeService runtimeService;
                     private final PairRegistry pairRegistry;
-                    private final SignalDeliveryPublisher signalDeliveryPublisher;
+                    private final TaskQueuePublisher taskQueuePublisher;
+                    private final ResponseQueuePublisher responseQueuePublisher;
                     // (businessKey + "|" + signalName) currently past step 1, awaiting proof of step 2
                     // before the initiator is released. Only this scheduled method ever touches these
                     // fields (Spring never overlaps two runs of the same @Scheduled method), but they
@@ -758,10 +1111,11 @@ public class SpringBootProjectGenerator {
                     private static final int MAX_PARTNER_ARRIVAL_TICKS = 5;
 
                     public SignalBroadcaster(RuntimeService runtimeService, PairRegistry pairRegistry,
-                            SignalDeliveryPublisher signalDeliveryPublisher) {
+                            TaskQueuePublisher taskQueuePublisher, ResponseQueuePublisher responseQueuePublisher) {
                         this.runtimeService = runtimeService;
                         this.pairRegistry = pairRegistry;
-                        this.signalDeliveryPublisher = signalDeliveryPublisher;
+                        this.taskQueuePublisher = taskQueuePublisher;
+                        this.responseQueuePublisher = responseQueuePublisher;
                     }
 
                     @Scheduled(fixedDelay = 1000)
@@ -883,16 +1237,32 @@ public class SpringBootProjectGenerator {
                         return !responderSignals.isEmpty();
                     }
 
-                    // When messaging is enabled, publishes to RabbitMQ (SignalDeliveryListener calls
-                    // signalEventReceived on consume). When not, calls signalEventReceived directly.
-                    // A missed delivery because the execution already moved on is normal - not an error.
+                    // Routes a REQUEST through the gated Twin activity's own task queue and a RESPONSE
+                    // through that same activity's response queue (see RabbitMqConfig.TOPIC_BY_SIGNAL),
+                    // when messaging is enabled and this signal is provably gated to one - i.e. it is a
+                    // genuine Main<->Twin communication activity, not a signal declared on only one
+                    // side. DELIVERED (the unpaired/fallback phase) always delivers directly: it does
+                    // not represent a real cross-process handoff, so it must never touch RabbitMQ even
+                    // when messaging is enabled. A missed delivery because the execution already moved
+                    // on is normal - not an error.
                     private void deliverTo(String signalName, EventSubscription subscription, String businessKey,
                             String phase) {
-                        if (signalDeliveryPublisher.isEnabled()) {
-                            signalDeliveryPublisher.publish(phase, signalName, subscription.getExecutionId(),
-                                    subscription.getProcessInstanceId(), businessKey);
-                            everDelivered.add(subscription.getProcessInstanceId() + "|" + signalName);
-                            return;
+                        String gatedTopic = RabbitMqConfig.TOPIC_BY_SIGNAL.get(signalName);
+                        if (gatedTopic != null) {
+                            if ("REQUEST".equals(phase) && taskQueuePublisher.isEnabled()
+                                    && taskQueuePublisher.isEligible(gatedTopic)) {
+                                taskQueuePublisher.publish(gatedTopic, signalName, subscription.getExecutionId(),
+                                        subscription.getProcessInstanceId(), businessKey);
+                                everDelivered.add(subscription.getProcessInstanceId() + "|" + signalName);
+                                return;
+                            }
+                            if ("RESPONSE".equals(phase) && responseQueuePublisher.isEnabled()
+                                    && responseQueuePublisher.isEligible(gatedTopic)) {
+                                responseQueuePublisher.publish(gatedTopic, signalName, subscription.getExecutionId(),
+                                        subscription.getProcessInstanceId(), businessKey);
+                                everDelivered.add(subscription.getProcessInstanceId() + "|" + signalName);
+                                return;
+                            }
                         }
                         try {
                             runtimeService.signalEventReceived(signalName, subscription.getExecutionId());
@@ -905,7 +1275,7 @@ public class SpringBootProjectGenerator {
                         }
                     }
                 }
-                """.formatted(subPackage, coordinationPackage, signalList);
+                """.formatted(subPackage, coordinationPackage, messagingImports, signalList);
 
         Path packageDir = projectDir.resolve("src/main/java").resolve(subPackage.replace('.', '/'));
         writeFile(packageDir.resolve("SignalBroadcaster.java"), source);
@@ -1258,11 +1628,7 @@ public class SpringBootProjectGenerator {
         }
     }
 
-    // Generates one endpoint per BPMN activity (N activities → N endpoints), replacing the
-    // template's loanApproval-hardcoded controller. A single method produces both controllers, as
-    // the professor asked: "controller-twin controller-manuf... right? Um and then the delegates
-    // you can have the the twin side delegates twin delegates manufacturing"
-    // bridgeMethod distinguishes which NotificationBridge side is called after each activity.
+    // One endpoint per activity; bridgeMethod selects the NotificationBridge side.
     private void writeController(Path projectDir, String basePackage, String subPackage, String className,
             String requestMapping, String processKey, List<BpmnActivities.Activity> activities,
             String bridgeMethod) {
@@ -1275,8 +1641,7 @@ public class SpringBootProjectGenerator {
             endpoints.append(renderActivityEndpoint(activity, bridgeMethod));
         }
 
-        // only the helpers something actually calls, so a generated file never carries a private
-        // method nothing references
+        // Include only helpers the activity triggers actually use.
         StringBuilder helpers = new StringBuilder();
         if (triggers.contains(BpmnActivities.Trigger.USER_TASK)) {
             helpers.append(USER_TASK_HELPER);
@@ -1291,7 +1656,7 @@ public class SpringBootProjectGenerator {
             helpers.append(RESPOND_HELPER);
         }
 
-        // Inject ExternalTaskService only when needed; an unused unresolvable bean fails startup.
+        // Unresolvable unused bean fails startup; inject only when needed.
         boolean needsExternalTaskService = triggers.contains(BpmnActivities.Trigger.EXTERNAL_TASK);
         String externalImport = needsExternalTaskService
                 ? """
@@ -1494,9 +1859,6 @@ public class SpringBootProjectGenerator {
                 }
             """;
 
-    // Extracts bean names from delegateExpression execution listeners in a BPMN. These are
-    // references like ${manufTaskCompletionListener} on service tasks — Camunda resolves them as
-    // Spring beans at runtime, and the engine throws PropertyNotFoundException if they're missing.
     private static Set<String> extractExecutionListenerBeanNames(String bpmnXml) {
         Set<String> beanNames = new LinkedHashSet<>();
         java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
@@ -1508,9 +1870,6 @@ public class SpringBootProjectGenerator {
         return beanNames;
     }
 
-    // Generates a stub ExecutionListener bean for a delegateExpression reference found in the BPMN.
-    // The professor's BPMNs must not be modified, so the generated platform must provide any beans
-    // they reference. The stub logs execution; the real implementation is the professor's concern.
     private void writeExecutionListenerStub(Path projectDir, String basePackage, String beanName) {
         String listenerPackage = basePackage + ".listener";
         String className = Character.toUpperCase(beanName.charAt(0)) + beanName.substring(1);
@@ -1523,9 +1882,7 @@ public class SpringBootProjectGenerator {
                 import org.slf4j.LoggerFactory;
                 import org.springframework.stereotype.Component;
 
-                // Generated stub for BPMN delegateExpression "${%s}". The professor's BPMN references
-                // this bean as an execution listener on service tasks. Without it the engine throws
-                // PropertyNotFoundException. Replace with real implementation when ready.
+                // Stub for BPMN delegateExpression "${%s}". Replace with real implementation.
                 @Component("%s")
                 public class %s implements ExecutionListener {
 
