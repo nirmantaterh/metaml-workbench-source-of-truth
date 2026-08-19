@@ -24,19 +24,28 @@ const Header = () => {
                 <Navbar.Collapse id="basic-navbar-nav">
                     <Nav className="me-auto">
                         <Nav.Link to={"/"}>Catalog</Nav.Link>
-                        {/* Sample and the old bare Model link are gone from this menu (Sample's
-                            route still works if linked to directly) */}
-                        <NavDropdown title="Transmute" id="basic-nav-dropdown">
-                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.CreateProject.path}>
-                                Create Project
+                        <NavDropdown title="Project" id="project-nav-dropdown">
+                            <NavDropdown.Item to={"#"}>
+                                Create
                             </NavDropdown.Item>
-                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.EditProject.path}>
-                                Edit Existing Project
+                            <NavDropdown.Item to={"#"}>
+                                Edit
+                            </NavDropdown.Item>
+                            <NavDropdown.Item to={"#"}>
+                                Delete
                             </NavDropdown.Item>
                         </NavDropdown>
-                        {/* Two different things share this menu: the twin workflow
-                            (Connect/Evolve/Bridge) and Evolve Workflow itself - connecting to a
-                            deployed generated application, not a twin */}
+                        <NavDropdown title="Transmute" id="transmute-nav-dropdown">
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.CreateModel.path}>
+                                Model
+                            </NavDropdown.Item>
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.EditModel.path}>
+                                Generate
+                            </NavDropdown.Item>
+                            <NavDropdown.Item to={"#"}>
+                                Launch
+                            </NavDropdown.Item>
+                        </NavDropdown>
                         <NavDropdown title="Evolve" id="evolve-nav-dropdown">
                             <NavDropdown.Item as={Link} to={WorkbenchRoutes.EvolvePage.path}>
                                 Twin Workflow
@@ -45,8 +54,6 @@ const Header = () => {
                                 Deployed Applications
                             </NavDropdown.Item>
                         </NavDropdown>
-                        {/* Tenant policy lifecycle plus its approvals - unrelated to Evolve
-                            above, which is twin execution, not policy */}
                         <NavDropdown title="Governance" id="governance-nav-dropdown">
                             <NavDropdown.Item as={Link} to={WorkbenchRoutes.GovernancePolicies.path}>
                                 Policies
@@ -57,10 +64,7 @@ const Header = () => {
                         </NavDropdown>
                         <Nav.Link to={"/"}>Help</Nav.Link>
                     </Nav>
-                    {/* <span class="ml-auto navbar-text"></span> */}
                     <Nav className="justify-content-end">
-                        {/* <Nav.Link to={"/"}>About</Nav.Link> */}
-                        {/* <Nav.Link to={"/"}>Contact</Nav.Link> */}
                     </Nav>
                 </Navbar.Collapse>
             </Container>

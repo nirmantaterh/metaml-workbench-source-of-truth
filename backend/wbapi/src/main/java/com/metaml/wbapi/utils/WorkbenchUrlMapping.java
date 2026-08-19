@@ -56,4 +56,12 @@ public class WorkbenchUrlMapping {
     // as everything above.
     public static final String GOVERNANCE_EVALUATE = "/evaluate";
     /* ======== End Governance API ======== */
+
+    public static final String PROJECT = API + "/projects";
+    public static final String CREATE_PROJECT = "/create";
+    public static final String UPDATE_PROJECT = "/update/{projectId}";
+    public static final String DELETE_PROJECT = "/delete/{projectId}";
+    public static final String GET_PROJECT_DETAILS = "/{projectId}";
+    public static final String GET_ALL_PROJECTS = "/all";
+    public static final String GET_ALL_PROJECTS_BY_TEAM = "/{teamId}/all";
 }

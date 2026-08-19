@@ -24,12 +24,13 @@ const router = createBrowserRouter(
             <Route path={CommonRoutes.Home.path} element={<RootLayout />}>
                 <Route index element={<Home />}/>
 
+                {/* Workbench Routes */}
                 <Route path={WorkbenchRoutes.SamplePage.path} element={<SamplPage/>} />
-                {/* legacy path, still works if bookmarked - starts blank, same as CreateProject */}
+                {/* legacy path, still works if bookmarked - starts blank, same as CreateModel */}
                 <Route path={WorkbenchRoutes.ModelPage.path} element={<ModelPage/>} />
-                <Route path={WorkbenchRoutes.CreateProject.path} element={<ModelPage/>} />
+                <Route path={WorkbenchRoutes.CreateModel.path} element={<ModelPage/>} />
                 <Route path={WorkbenchRoutes.ModelEditor.path} element={<ModelPage/>} />
-                <Route path={WorkbenchRoutes.EditProject.path} element={<EditProjectListPage/>} />
+                <Route path={WorkbenchRoutes.EditModel.path} element={<EditProjectListPage/>} />
                 <Route path={WorkbenchRoutes.EvolvePage.path} element={<EvolvePage/>} />
                 <Route path={WorkbenchRoutes.DeployedAppsPage.path} element={<DeployedAppsPage/>} />
                 <Route path={WorkbenchRoutes.GovernancePolicies.path} element={<GovernancePoliciesPage/>} />
