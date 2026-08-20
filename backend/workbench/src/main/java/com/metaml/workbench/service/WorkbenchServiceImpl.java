@@ -48,6 +48,7 @@ import com.metaml.workbench.model.GovernanceDecision;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinAdvance;
 import com.metaml.workbench.model.TwinProcess;
+import com.metaml.workbench.store.ProcessModelArchiveStore;
 import com.metaml.workbench.store.ProcessModelFileStore;
 import com.metaml.workbench.store.WorkbenchStateStore;
 import com.metaml.workbench.workflow.StageError;
@@ -61,6 +62,7 @@ import jakarta.annotation.PostConstruct;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -122,6 +124,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     private final TwinModelGenerator twinModelGenerator;
     private final WorkbenchStateStore stateStore;
     private final ProcessModelFileStore modelFileStore;
+    private final ProcessModelArchiveStore processModelArchiveStore;
     private final DelegateClassGenerator delegateClassGenerator;
     private final SpringBootProjectGenerator springBootProjectGenerator;
     private final SpringBootProjectLauncher springBootProjectLauncher;
@@ -135,6 +138,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             RuntimeService runtimeService, RepositoryService repositoryService, HistoryService historyService,
             TaskService taskService, TwinModelGenerator twinModelGenerator,
             WorkbenchStateStore stateStore, ProcessModelFileStore modelFileStore,
+            ProcessModelArchiveStore processModelArchiveStore,
             DelegateClassGenerator delegateClassGenerator, SpringBootProjectGenerator springBootProjectGenerator,
             SpringBootProjectLauncher springBootProjectLauncher, WorkflowStateTracker workflowStateTracker) {
         this.nodeManagerClient = nodeManagerClient;
@@ -148,6 +152,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         this.twinModelGenerator = twinModelGenerator;
         this.stateStore = stateStore;
         this.modelFileStore = modelFileStore;
+        this.processModelArchiveStore = processModelArchiveStore;
         this.delegateClassGenerator = delegateClassGenerator;
         this.springBootProjectGenerator = springBootProjectGenerator;
         this.springBootProjectLauncher = springBootProjectLauncher;
@@ -157,7 +162,17 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     @PostConstruct
     void restoreState() {
         WorkbenchStateStore.Snapshot snapshot = stateStore.load();
-        for (ProcessModel model : snapshot.models()) {
+        // H2-backed archive is authoritative; the JSON snapshot is only consulted for a model that
+        // isn't in it at all - one saved by a build before the archive existed, never re-saved
+        // since. That's what keeps a genuinely legacy model restorable without giving the snapshot
+        // any say over a model the archive already knows about.
+        List<ProcessModel> restoredModels = new ArrayList<>(processModelArchiveStore.findAll());
+        for (ProcessModel legacyModel : snapshot.models()) {
+            if (restoredModels.stream().noneMatch(m -> m.getId().equals(legacyModel.getId()))) {
+                restoredModels.add(legacyModel);
+            }
+        }
+        for (ProcessModel model : restoredModels) {
             processModels.put(model.getId(), model);
             // WorkflowStateTracker now genuinely persists (WorkflowEventStore) and has already
             // loaded its own history by this point - Spring fully constructs a dependency bean,
@@ -540,12 +555,12 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             discardDeployment(deployment.getId());
             throw new IllegalArgumentException("Process model already exists: " + modelId);
         }
+        Path bpmnFilePath;
         try {
-            // the Spring Boot generation step (and Joanna's own spec) needs a real .bpmn file on
-            // disk, not just the copy of this XML that WorkbenchStateStore already embeds inside
-            // its own shared workbench-state.json - that file is a restart-recovery cache, not
-            // something meant to be opened or copied on its own
-            modelFileStore.save(modelId, bpmnXml);
+            // the Spring Boot generation step needs a real .bpmn file on disk, not just the copy
+            // of this XML that the archive/JSON snapshot already embed as a string field - that
+            // copy is a restart-recovery cache, not something meant to be opened directly
+            bpmnFilePath = modelFileStore.save(modelId, bpmnXml);
         } catch (RuntimeException e) {
             // don't leave a model that's deployed and in memory but has no matching file - roll
             // both back rather than leave a half-saved model the Generate step would silently
@@ -554,6 +569,9 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             discardDeployment(deployment.getId());
             throw e;
         }
+        // H2-backed archive is the model's real persistence now; the JSON snapshot below still
+        // covers twins and remains a redundant backup for models
+        processModelArchiveStore.save(model, bpmnFilePath);
         persistState();
         workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.COMPLETED, null);
         logger.info("Saved process model {} and deployed process definition {}", modelId, definition.getId());
@@ -649,6 +667,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                 }
                 processModels.remove(modelId, model);
                 modelFileStore.delete(modelId);
+                processModelArchiveStore.deleteByModelId(modelId);
                 persistState();
             });
             if (!deleted) {

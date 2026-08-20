@@ -24,14 +24,26 @@ const Header = () => {
                 <Navbar.Collapse id="basic-navbar-nav">
                     <Nav className="me-auto">
                         <Nav.Link to={"/"}>Catalog</Nav.Link>
-                        {/* Sample and the old bare Model link are gone from this menu (Sample's
-                            route still works if linked to directly) */}
-                        <NavDropdown title="Transmute" id="basic-nav-dropdown">
-                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.CreateProject.path}>
-                                Create Project
+                        <NavDropdown title="Project" id="project-nav-dropdown">
+                            <NavDropdown.Item to={"#"}>
+                                Create
                             </NavDropdown.Item>
-                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.EditProject.path}>
-                                Edit Existing Project
+                            <NavDropdown.Item to={"#"}>
+                                Edit
+                            </NavDropdown.Item>
+                            <NavDropdown.Item to={"#"}>
+                                Delete
+                            </NavDropdown.Item>
+                        </NavDropdown>
+                        <NavDropdown title="Transmute" id="transmute-nav-dropdown">
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.CreateModel.path}>
+                                Model
+                            </NavDropdown.Item>
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.EditModel.path}>
+                                Generate
+                            </NavDropdown.Item>
+                            <NavDropdown.Item to={"#"}>
+                                Launch
                             </NavDropdown.Item>
                         </NavDropdown>
                         {/* Two different things share this menu: the twin workflow

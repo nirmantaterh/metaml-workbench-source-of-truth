@@ -46,6 +46,7 @@ import com.metaml.workbench.governance.ApprovalStatus;
 import com.metaml.workbench.governance.PolicyDecisionEngine;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinProcess;
+import com.metaml.workbench.store.ProcessModelArchiveStore;
 import com.metaml.workbench.store.ProcessModelFileStore;
 import com.metaml.workbench.store.WorkbenchStateStore;
 import com.metaml.workbench.workflow.StageEvent;
@@ -82,6 +83,7 @@ class ModelDeletionTest {
     private SpringBootProjectLauncher launcher;
     private ProcessModelFileStore modelFileStore;
     private WorkbenchStateStore stateStore;
+    private ProcessModelArchiveStore processModelArchiveStore;
     private ApprovalService approvalService;
     private RepositoryService repositoryService;
     private RuntimeService runtimeService;
@@ -116,6 +118,8 @@ class ModelDeletionTest {
         stateStore = mock(WorkbenchStateStore.class);
         approvalService = mock(ApprovalService.class);
         when(stateStore.load()).thenReturn(new WorkbenchStateStore.Snapshot(models, twins));
+        processModelArchiveStore = mock(ProcessModelArchiveStore.class);
+        when(processModelArchiveStore.findAll()).thenReturn(models);
         when(approvalService.listAllApproved()).thenReturn(List.of());
 
         repositoryService = mock(RepositoryService.class, RETURNS_DEEP_STUBS);
@@ -135,7 +139,7 @@ class ModelDeletionTest {
         return new WorkbenchServiceImpl(mock(NodeManagerClient.class), mock(GovernanceService.class),
                 mock(PolicyDecisionEngine.class), approvalService, runtimeService, repositoryService,
                 mock(HistoryService.class), mock(TaskService.class), mock(TwinModelGenerator.class), stateStore,
-                modelFileStore, delegateClassGenerator, generator, launcher, tracker);
+                modelFileStore, processModelArchiveStore, delegateClassGenerator, generator, launcher, tracker);
     }
 
     private String saveModel(String modelId) {

@@ -34,6 +34,7 @@ import com.metaml.workbench.generation.SpringBootProjectGenerator;
 import com.metaml.workbench.generation.SpringBootProjectLauncher;
 import com.metaml.workbench.governance.ApprovalService;
 import com.metaml.workbench.governance.PolicyDecisionEngine;
+import com.metaml.workbench.store.ProcessModelArchiveStore;
 import com.metaml.workbench.store.ProcessModelFileStore;
 import com.metaml.workbench.store.WorkbenchStateStore;
 import com.metaml.workbench.workflow.StageEvent;
@@ -73,6 +74,7 @@ class GeneratedProjectRetentionTest {
     private SpringBootProjectGenerator generator;
     private SpringBootProjectLauncher launcher;
     private WorkbenchStateStore stateStore;
+    private ProcessModelArchiveStore processModelArchiveStore;
     private ApprovalService approvalService;
     private WorkbenchServiceImpl service;
 
@@ -107,6 +109,8 @@ class GeneratedProjectRetentionTest {
         stateStore = mock(WorkbenchStateStore.class);
         approvalService = mock(ApprovalService.class);
         when(stateStore.load()).thenReturn(new WorkbenchStateStore.Snapshot(List.of(), List.of()));
+        processModelArchiveStore = mock(ProcessModelArchiveStore.class);
+        when(processModelArchiveStore.findAll()).thenReturn(List.of());
         when(approvalService.listAllApproved()).thenReturn(List.of());
 
         RepositoryService repositoryService = mock(RepositoryService.class, RETURNS_DEEP_STUBS);
@@ -125,15 +129,16 @@ class GeneratedProjectRetentionTest {
         return new WorkbenchServiceImpl(mock(NodeManagerClient.class), mock(GovernanceService.class),
                 mock(PolicyDecisionEngine.class), approvalService, mock(RuntimeService.class), repositoryService,
                 mock(HistoryService.class), mock(TaskService.class), mock(TwinModelGenerator.class), stateStore,
-                mock(ProcessModelFileStore.class), delegateClassGenerator, generator, launcher, tracker);
+                mock(ProcessModelFileStore.class), processModelArchiveStore, delegateClassGenerator, generator,
+                launcher, tracker);
     }
 
     // a real restart: the previous service instance is gone, the tracker reloads its event history
     // from the file it actually persisted, and the generator rescans the real output directory
     private WorkbenchServiceImpl restart(List<String> modelIds) {
         WorkbenchServiceImpl restarted = newService(newTracker());
-        when(stateStore.load()).thenReturn(new WorkbenchStateStore.Snapshot(
-                modelIds.stream().map(GeneratedProjectRetentionTest::modelNamed).toList(), List.of()));
+        when(processModelArchiveStore.findAll())
+                .thenReturn(modelIds.stream().map(GeneratedProjectRetentionTest::modelNamed).toList());
         restarted.restoreState();
         return restarted;
     }

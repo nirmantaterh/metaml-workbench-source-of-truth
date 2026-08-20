@@ -110,6 +110,8 @@ class WireTransferWalkthroughTest {
     @Autowired
     private com.metaml.workbench.store.ProcessModelFileStore modelFileStore;
     @Autowired
+    private com.metaml.workbench.store.ProcessModelArchiveStore processModelArchiveStore;
+    @Autowired
     private com.metaml.workbench.codegen.DelegateClassGenerator delegateClassGenerator;
     @Autowired
     private com.metaml.workbench.generation.SpringBootProjectGenerator springBootProjectGenerator;
@@ -322,7 +324,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl beforeRestart = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
-                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                modelFileStore, processModelArchiveStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
         ProcessModel model = beforeRestart.saveProcessModel(null, "restart persistence test", loanApprovalBpmn());
         com.metaml.workbench.generation.GeneratedProject project =
@@ -344,7 +346,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
-                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                modelFileStore, processModelArchiveStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 restartedTracker);
         invokePostConstruct(restartedService, "restoreState");
 
@@ -386,7 +388,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl beforeRestart = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
-                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                modelFileStore, processModelArchiveStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
         ProcessModel model = beforeRestart.saveProcessModel(null, "generated project restart test", loanApprovalBpmn());
         com.metaml.workbench.generation.GeneratedProject project =
@@ -401,7 +403,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
-                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                modelFileStore, processModelArchiveStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 restartedTracker);
         invokePostConstruct(restartedService, "restoreState");
 
@@ -447,7 +449,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl beforeRestart = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
-                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                modelFileStore, processModelArchiveStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
         ProcessModel model = beforeRestart.saveProcessModel(null, "missing artifact test", loanApprovalBpmn());
         com.metaml.workbench.generation.GeneratedProject project =
@@ -464,7 +466,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
-                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                modelFileStore, processModelArchiveStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 restartedTracker);
         invokePostConstruct(restartedService, "restoreState");
 
@@ -515,7 +517,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
-                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                modelFileStore, processModelArchiveStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 restartedTracker);
         invokePostConstruct(restartedService, "restoreState");
 
@@ -554,7 +556,7 @@ class WireTransferWalkthroughTest {
                 twinModelGenerator, delegateClassGenerator);
         WorkbenchServiceImpl serviceWithBrokenTemplate = new WorkbenchServiceImpl(nodeManagerClient,
                 governanceService, policyDecisionEngine, approvalService, runtimeService, repositoryService,
-                historyService, taskService, twinModelGenerator, stateStore, modelFileStore, delegateClassGenerator,
+                historyService, taskService, twinModelGenerator, stateStore, modelFileStore, processModelArchiveStore, delegateClassGenerator,
                 brokenGenerator, springBootProjectLauncher, workflowStateTracker);
 
         ProcessModel model = serviceWithBrokenTemplate.saveProcessModel(null, "failure test", loanApprovalBpmn());
@@ -718,7 +720,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl beforeRestart = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
-                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                modelFileStore, processModelArchiveStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
         ProcessModel model = beforeRestart.saveProcessModel(null, "tenant restart test", citibankBpmn(),
                 "tenant-redcollar");
@@ -731,7 +733,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, realStateStore,
-                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                modelFileStore, processModelArchiveStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 restartedTracker);
         invokePostConstruct(restartedService, "restoreState");
 
@@ -760,7 +762,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl beforeRestart = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
                 policyDecisionEngine, realApprovalService, runtimeService, repositoryService, historyService,
-                taskService, twinModelGenerator, realStateStore, modelFileStore, delegateClassGenerator,
+                taskService, twinModelGenerator, realStateStore, modelFileStore, processModelArchiveStore, delegateClassGenerator,
                 springBootProjectGenerator, springBootProjectLauncher,
                 new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
         ProcessModel model = beforeRestart.saveProcessModel(null, "restart approval test", citibankBpmn(),
@@ -778,7 +780,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
                 policyDecisionEngine, restartedApprovalService, runtimeService, repositoryService, historyService,
-                taskService, twinModelGenerator, realStateStore, modelFileStore, delegateClassGenerator,
+                taskService, twinModelGenerator, realStateStore, modelFileStore, processModelArchiveStore, delegateClassGenerator,
                 springBootProjectGenerator, springBootProjectLauncher, restartedTracker);
         invokePostConstruct(restartedService, "restoreState");
 
@@ -808,7 +810,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl beforeCrash = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
                 policyDecisionEngine, realApprovalService, runtimeService, repositoryService, historyService,
-                taskService, twinModelGenerator, realStateStore, modelFileStore, delegateClassGenerator,
+                taskService, twinModelGenerator, realStateStore, modelFileStore, processModelArchiveStore, delegateClassGenerator,
                 springBootProjectGenerator, springBootProjectLauncher,
                 new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
         ProcessModel model = beforeCrash.saveProcessModel(null, "reconcile not-run test", citibankBpmn(),
@@ -832,7 +834,7 @@ class WireTransferWalkthroughTest {
         invokePostConstructOn(restartedApprovalService, "restore");
         WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
                 policyDecisionEngine, restartedApprovalService, runtimeService, repositoryService, historyService,
-                taskService, twinModelGenerator, realStateStore, modelFileStore, delegateClassGenerator,
+                taskService, twinModelGenerator, realStateStore, modelFileStore, processModelArchiveStore, delegateClassGenerator,
                 springBootProjectGenerator, springBootProjectLauncher, restartedTracker);
         invokePostConstruct(restartedService, "restoreState");
 
@@ -863,7 +865,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl beforeCrash = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
                 policyDecisionEngine, realApprovalService, runtimeService, repositoryService, historyService,
-                taskService, twinModelGenerator, realStateStore, modelFileStore, delegateClassGenerator,
+                taskService, twinModelGenerator, realStateStore, modelFileStore, processModelArchiveStore, delegateClassGenerator,
                 springBootProjectGenerator, springBootProjectLauncher,
                 new com.metaml.workbench.workflow.WorkflowStateTracker(realEventStore));
         ProcessModel model = beforeCrash.saveProcessModel(null, "reconcile already-run test", citibankBpmn(),
@@ -897,7 +899,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl restartedService = new WorkbenchServiceImpl(nodeManagerClient, governanceService,
                 policyDecisionEngine, restartedApprovalService, runtimeService, repositoryService, historyService,
-                taskService, twinModelGenerator, realStateStore, modelFileStore, delegateClassGenerator,
+                taskService, twinModelGenerator, realStateStore, modelFileStore, processModelArchiveStore, delegateClassGenerator,
                 springBootProjectGenerator, springBootProjectLauncher, restartedTracker);
         invokePostConstruct(restartedService, "restoreState");
 
@@ -1287,7 +1289,7 @@ class WireTransferWalkthroughTest {
 
         WorkbenchServiceImpl freshService = new WorkbenchServiceImpl(nodeManagerClient, governanceService, policyDecisionEngine, approvalService,
                 runtimeService, repositoryService, historyService, taskService, twinModelGenerator, stateStore,
-                modelFileStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
+                modelFileStore, processModelArchiveStore, delegateClassGenerator, springBootProjectGenerator, springBootProjectLauncher,
                 workflowStateTracker);
         Field twinProcessesField = WorkbenchServiceImpl.class.getDeclaredField("twinProcesses");
         twinProcessesField.setAccessible(true);
