@@ -53,7 +53,8 @@ class SpringBootProjectGeneratorTest {
     // needs no collaborators)
     private SpringBootProjectGenerator generator() {
         return new SpringBootProjectGenerator(templateDir.toString(), outputDir.toString(),
-                new TwinModelGenerator(), new DelegateClassGenerator());
+                new TwinModelGenerator(), new DelegateClassGenerator(),
+                new com.metaml.workbench.codegen.ExternalTaskWorkerGenerator());
     }
 
     // Manufacturing controller/delegates now live under a project-specific package
@@ -537,11 +538,28 @@ class SpringBootProjectGeneratorTest {
         assertThat(generator().scanExisting()).isEmpty();
     }
 
-    // same "no safe single answer" reasoning as the no-file case above - two candidates is exactly
-    // as unresolvable as zero, not a coin flip
+    // generate() writes a project metadata file declaring the real process key, so an extra
+    // unrelated .bpmn file sitting alongside it is no longer ambiguous - findProcessKey trusts the
+    // declared key once its own .bpmn file is confirmed still present. Ambiguity from a stray file
+    // is only a real problem for a project that predates the metadata file (see the legacy test
+    // below).
     @Test
-    void scanExistingSkipsAProjectDirectoryWithAmbiguousBpmnFiles() throws IOException {
+    void scanExistingResolvesAProjectWithAnExtraBpmnFileViaItsDeclaredMetadata() throws IOException {
         GeneratedProject project = generator().generate(loanApprovalBpmn(), List.of());
+        write(project.directory().resolve("src/main/resources/processes/extra.bpmn"), "<bpmn>unexpected</bpmn>");
+
+        assertThat(generator().scanExisting()).extracting(GeneratedProject::projectId)
+                .containsExactly(project.projectId());
+    }
+
+    // same "no safe single answer" reasoning as the no-file case above - two candidates is exactly
+    // as unresolvable as zero, not a coin flip. Only reachable for a project that predates the
+    // metadata file (simulated here by deleting it) - see the metadata-backed case above for the
+    // now-normal shape of an extra .bpmn file alongside the declared one.
+    @Test
+    void scanExistingSkipsALegacyProjectDirectoryWithAmbiguousBpmnFilesAndNoMetadata() throws IOException {
+        GeneratedProject project = generator().generate(loanApprovalBpmn(), List.of());
+        Files.delete(project.directory().resolve(".metaml-project.properties"));
         write(project.directory().resolve("src/main/resources/processes/extra.bpmn"), "<bpmn>unexpected</bpmn>");
 
         assertThat(generator().scanExisting()).isEmpty();

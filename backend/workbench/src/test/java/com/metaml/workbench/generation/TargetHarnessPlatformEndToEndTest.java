@@ -41,7 +41,8 @@ class TargetHarnessPlatformEndToEndTest {
 
         Path outputDir = tempDir.resolve("generated-projects");
         SpringBootProjectGenerator generator = new SpringBootProjectGenerator(REAL_TEMPLATE.toString(),
-                outputDir.toString(), new TwinModelGenerator(), new DelegateClassGenerator());
+                outputDir.toString(), new TwinModelGenerator(), new DelegateClassGenerator(),
+                new com.metaml.workbench.codegen.ExternalTaskWorkerGenerator());
 
         String bpmnXml = manufacturingFixtureBpmn();
         List<GeneratedDelegate> delegates = new DelegateClassGenerator()

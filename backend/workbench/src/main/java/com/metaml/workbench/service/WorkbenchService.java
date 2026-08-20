@@ -28,6 +28,21 @@ public interface WorkbenchService {
     // metadata, not authentication; there is no login to derive it from yet.
     ProcessModel saveProcessModel(String id, String name, String bpmnXml, String tenantId);
 
+    // First-class alternative to saveProcessModel for a process pair with its own independently
+    // authored second BPMN (e.g. RedCollar's Manuf + Twin), rather than one derived automatically
+    // from bpmnXml at generate time. Flows through exactly the same MODEL/GENERATE/LAUNCH workflow
+    // stages, generatedProjects/modelIdByProjectId bookkeeping, and retention logic as
+    // saveProcessModel - generateSpringBootProject branches on ProcessModel.hasAuthoredTwin() to
+    // pick SpringBootProjectGenerator.generateWithAuthoredTwin() over the single-BPMN generate(),
+    // but everything upstream and downstream of that one branch is shared, not duplicated.
+    //
+    // twinBpmnXml is unrelated to TwinProcess/TwinModelGenerator's own "twin" concept (a governance-
+    // evolution shadow instance of a running process) - this is a second, independently modeled
+    // process, deployed into the generated Target Platform as-is, never onto the Workbench's own
+    // engine or its evolution machinery.
+    ProcessModel saveProcessModelWithAuthoredTwin(String id, String name, String bpmnXml, String twinBpmnXml,
+            String tenantId);
+
     ProcessModel getProcessModel(String id);
 
     // Authoring/catalog deletion: removes the model, its .bpmn artifact, and every generated

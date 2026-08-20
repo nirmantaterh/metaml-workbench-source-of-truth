@@ -72,6 +72,25 @@ public class WorkbenchController {
         }
     }
 
+    // Product-path entry point for a model with its own independently authored second BPMN (e.g.
+    // Manufacturing + Twin supplied as two separate files) - without this, saveProcessModelWithAuthoredTwin
+    // was reachable only by calling WorkbenchService directly, never through the real API. Generation
+    // itself needs no separate endpoint: TRANSMUTE_GENERATE_PROJECT below already branches on
+    // ProcessModel.hasAuthoredTwin() once the model is saved this way.
+    @PostMapping(WorkbenchUrlMapping.TRANSMUTE_MODELE_AUTHORED_TWIN)
+    public ResponseEntity<ApiResponse> saveModelWithAuthoredTwin(
+            @RequestBody com.metaml.wbapi.payload.request.SaveAuthoredTwinProcessModelRequest request) {
+        try {
+            ProcessModel model = workbenchService.saveProcessModelWithAuthoredTwin(request.getId(), request.getName(),
+                    request.getBpmnXml(), request.getTwinBpmnXml(), request.getTenantId());
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, model));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
     // New scope item 1 (Navigation & UI): backs "Edit Existing Project" - a picker needs something
     // to list, not just a lookup by an id the user already has to know
     @GetMapping(WorkbenchUrlMapping.TRANSMUTE_MODELE)

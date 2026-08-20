@@ -33,6 +33,12 @@ public class ProcessModelArchiveStore {
     }
 
     public ProcessModelArchive save(ProcessModel model, Path bpmnFilePath) {
+        return save(model, bpmnFilePath, null);
+    }
+
+    // twinBpmnFilePath is null for the ordinary single-BPMN path. Set only alongside
+    // model.hasAuthoredTwin() - see ProcessModel.authoredTwinBpmnXml.
+    public ProcessModelArchive save(ProcessModel model, Path bpmnFilePath, Path twinBpmnFilePath) {
         Project project = projectRepository.findByName(model.getName())
                 .orElseGet(() -> projectRepository.save(newProject(model.getName())));
 
@@ -41,6 +47,8 @@ public class ProcessModelArchiveStore {
         archive.setName(model.getName());
         archive.setBpmnXml(model.getBpmnXml());
         archive.setBpmnFilePath(bpmnFilePath == null ? null : bpmnFilePath.toString());
+        archive.setTwinBpmnXml(model.getAuthoredTwinBpmnXml());
+        archive.setTwinBpmnFilePath(twinBpmnFilePath == null ? null : twinBpmnFilePath.toString());
         archive.setProcessDefinitionId(model.getProcessDefinitionId());
         archive.setTenantId(model.getTenantId());
         archive.setMajor(1);
@@ -71,8 +79,8 @@ public class ProcessModelArchiveStore {
         Instant createdAt = archive.getCreatedAt() == null
                 ? null
                 : archive.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant();
-        return new ProcessModel(archive.getModelId(), archive.getName(), archive.getBpmnXml(), createdAt,
-                archive.getProcessDefinitionId(), archive.getTenantId());
+        return new ProcessModel(archive.getModelId(), archive.getName(), archive.getBpmnXml(),
+                archive.getTwinBpmnXml(), createdAt, archive.getProcessDefinitionId(), archive.getTenantId());
     }
 
     private static Project newProject(String name) {

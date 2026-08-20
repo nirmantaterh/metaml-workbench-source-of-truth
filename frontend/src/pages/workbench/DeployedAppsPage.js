@@ -94,6 +94,23 @@ const DeployedAppsPage = () => {
                                 <td>{project.launchedAt ? new Date(project.launchedAt).toLocaleString() : "-"}</td>
                                 <td className="text-muted small">{project.projectId}</td>
                                 <td className="text-end">
+                                    {project.port && (
+                                        <Button
+                                            size="sm"
+                                            variant="success"
+                                            className="me-2"
+                                            onClick={() =>
+                                                window.open(
+                                                    `${window.location.protocol}//${window.location.hostname}:${project.port}/`,
+                                                    "_blank",
+                                                    "noopener,noreferrer"
+                                                )
+                                            }
+                                            title="Opens this project's own standalone target platform, not a Workbench page"
+                                        >
+                                            Open Target Platform
+                                        </Button>
+                                    )}
                                     {project.modelId ? (
                                         <Button
                                             as={Link}

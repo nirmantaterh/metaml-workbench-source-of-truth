@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Target Platform</title>
+<style>
+  :root {
+    --bg: #14101f;
+    --panel: #1e1830;
+    --panel-border: #34294f;
+    --accent: #8b7bff;
+    --accent-soft: #6a5acd;
+    --text: #e8e3fb;
+    --text-dim: #a89cc8;
+    --ok: #57e0a8;
+    --warn: #f2c94c;
+    --off: #6b6280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: radial-gradient(circle at 20% 0%, #241c3a 0%, var(--bg) 55%);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .shell { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 280px;
+    flex-shrink: 0;
+    padding: 28px 20px;
+    border-right: 1px solid var(--panel-border);
+  }
+  .brand { font-size: 22px; font-weight: 700; letter-spacing: 0.2px; line-height: 1.25; }
+  .brand-accent { color: var(--accent); }
+  .brand-rule { width: 64px; height: 3px; background: var(--accent); border-radius: 2px; margin: 14px 0 24px; }
+  .nav-section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin: 18px 0 8px; }
+  .process-card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .process-card .name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .process-card .key { font-size: 11px; color: var(--text-dim); font-family: ui-monospace, Menlo, monospace; margin-bottom: 8px; word-break: break-all; }
+  .badge-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
+  .dot.warn { background: var(--warn); }
+  .main {
+    flex: 1;
+    padding: 28px 32px;
+    min-width: 0;
+  }
+  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+  .topbar h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--panel); border: 1px solid var(--panel-border);
+    border-radius: 999px; padding: 6px 14px; font-size: 12px; color: var(--text-dim);
+  }
+  .pill.on { color: var(--ok); border-color: rgba(87,224,168,0.35); }
+  .pill.off { color: var(--off); }
+  .cards-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 26px; }
+  .stat-card {
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; padding: 18px;
+  }
+  .stat-card .label { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+  .stat-card .value { font-size: 26px; font-weight: 700; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; margin-bottom: 20px;
+  }
+  .panel h2 { font-size: 15px; margin: 0 0 14px; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--text-dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 8px 10px; border-bottom: 1px solid var(--panel-border); }
+  td { padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
+  tr.instance-row { cursor: pointer; }
+  tr.instance-row:hover { background: rgba(139,123,255,0.06); }
+  .status-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--text-dim); }
+  .var-panel { display: none; }
+  .var-panel.open { display: table-row; }
+  .var-panel td { background: rgba(139,123,255,0.04); }
+  .var-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+  .var-item { background: rgba(0,0,0,0.18); border: 1px solid var(--panel-border); border-radius: 8px; padding: 8px 10px; }
+  .var-item .k { font-size: 11px; color: var(--text-dim); margin-bottom: 2px; }
+  .var-item .v { font-size: 13px; word-break: break-word; }
+  .empty { color: var(--text-dim); font-size: 13px; padding: 10px 0; }
+  .refresh-note { font-size: 11px; color: var(--text-dim); }
+  .activity-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .activity-tag { font-size: 10px; background: rgba(139,123,255,0.12); color: var(--text-dim); border-radius: 4px; padding: 2px 6px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span id="brand-title">Target Platform</span></div>
+    <div class="brand-rule"></div>
+    <div class="nav-section-label">Deployed Processes</div>
+    <div id="process-cards"><div class="empty">Loading&hellip;</div></div>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <h1 id="page-title">Runtime Dashboard</h1>
+      <span id="messaging-pill" class="pill">Messaging: &hellip;</span>
+    </div>
+
+    <div class="cards-row" id="stat-cards"></div>
+
+    <div class="panel">
+      <h2>Recent Runtime Activity</h2>
+      <table id="instances-table">
+        <thead>
+          <tr>
+            <th>Process</th>
+            <th>Instance</th>
+            <th>Business Key</th>
+            <th>Status</th>
+            <th>Started</th>
+          </tr>
+        </thead>
+        <tbody id="instances-body">
+          <tr><td colspan="5" class="empty">Loading&hellip;</td></tr>
+        </tbody>
+      </table>
+      <div class="refresh-note" style="margin-top:10px;">Auto-refreshes every 5s. Click a row for process-instance details.</div>
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  var expanded = null;
+
+  function fmtTime(iso) {
+    if (!iso) return "—";
+    try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function deriveTitle(processes) {
+    if (!processes || processes.length === 0) return "Target Platform";
+    var key = processes[0].processDefinitionKey || "";
+    var prefix = key.indexOf(".") > 0 ? key.substring(0, key.indexOf(".")) : key;
+    return (prefix || "Target Platform") + " Target Platform";
+  }
+
+  function renderProcesses(info) {
+    var processes = info.processes || [];
+    var title = deriveTitle(processes);
+    document.getElementById("brand-title").textContent = title;
+    document.title = title;
+
+    var pill = document.getElementById("messaging-pill");
+    if (info.messagingEnabled) {
+      pill.textContent = "Messaging: connected (RabbitMQ)";
+      pill.className = "pill on";
+    } else {
+      pill.textContent = "Messaging: disabled";
+      pill.className = "pill off";
+    }
+
+    var cardsHost = document.getElementById("process-cards");
+    if (processes.length === 0) {
+      cardsHost.innerHTML = '<div class="empty">No processes deployed.</div>';
+    } else {
+      cardsHost.innerHTML = processes.map(function (p) {
+        var tags = (p.activities || []).slice(0, 6).map(function (a) {
+          return '<span class="activity-tag">' + escapeHtml(a) + "</span>";
+        }).join("");
+        return (
+          '<div class="process-card">' +
+            '<div class="name">' + escapeHtml(p.name) + "</div>" +
+            '<div class="key">' + escapeHtml(p.processDefinitionKey) + " &middot; v" + p.version + "</div>" +
+            '<div class="badge-row"><span class="dot"></span> ' + p.activeInstanceCount + " active instance(s)</div>" +
+            '<div class="activity-tags">' + tags + "</div>" +
+          "</div>"
+        );
+      }).join("");
+    }
+
+    var statHost = document.getElementById("stat-cards");
+    var totalActive = processes.reduce(function (sum, p) { return sum + (p.activeInstanceCount || 0); }, 0);
+    var cards = [
+      { label: "Deployed Processes", value: processes.length },
+      { label: "Active Instances", value: totalActive },
+      { label: "Messaging Runtime", value: info.messagingEnabled ? "RabbitMQ" : "Direct" }
+    ];
+    statHost.innerHTML = cards.map(function (c) {
+      return '<div class="stat-card"><div class="label">' + escapeHtml(c.label) + '</div><div class="value">' + escapeHtml(c.value) + "</div></div>";
+    }).join("");
+  }
+
+  function renderVariables(vars) {
+    var keys = Object.keys(vars || {});
+    if (keys.length === 0) return '<div class="empty">No process variables recorded.</div>';
+    return '<div class="var-grid">' + keys.map(function (k) {
+      var v = vars[k];
+      var display = (v === null || v === undefined) ? "—" : (typeof v === "object" ? JSON.stringify(v) : String(v));
+      return '<div class="var-item"><div class="k">' + escapeHtml(k) + '</div><div class="v">' + escapeHtml(display) + "</div></div>";
+    }).join("") + "</div>";
+  }
+
+  function renderInstances(list) {
+    var body = document.getElementById("instances-body");
+    if (!list || list.length === 0) {
+      body.innerHTML = '<tr><td colspan="5" class="empty">No process instances have run yet.</td></tr>';
+      return;
+    }
+    var rows = [];
+    list.forEach(function (inst, idx) {
+      var statusHtml = inst.active
+        ? '<span class="status-chip"><span class="dot"></span> Active</span>'
+        : '<span class="status-chip"><span class="dot" style="background:#8b7bff"></span> Completed</span>';
+      rows.push(
+        '<tr class="instance-row" data-idx="' + idx + '">' +
+          "<td>" + escapeHtml(inst.processDefinitionKey) + "</td>" +
+          '<td class="mono">' + escapeHtml(inst.processInstanceId) + "</td>" +
+          "<td>" + escapeHtml(inst.businessKey || "—") + "</td>" +
+          "<td>" + statusHtml + "</td>" +
+          "<td>" + fmtTime(inst.startTime) + "</td>" +
+        "</tr>"
+      );
+      var isOpen = expanded === inst.processInstanceId;
+      rows.push(
+        '<tr class="var-panel' + (isOpen ? " open" : "") + '" data-idx="' + idx + '"><td colspan="5">' +
+          renderVariables(inst.variables) +
+        "</td></tr>"
+      );
+    });
+    body.innerHTML = rows.join("");
+
+    Array.prototype.forEach.call(body.querySelectorAll(".instance-row"), function (row) {
+      row.addEventListener("click", function () {
+        var idx = row.getAttribute("data-idx");
+        var inst = list[idx];
+        expanded = (expanded === inst.processInstanceId) ? null : inst.processInstanceId;
+        renderInstances(list);
+      });
+    });
+  }
+
+  function refresh() {
+    fetch("/api/v1/platform/info").then(function (r) { return r.json(); }).then(renderProcesses)
+      .catch(function () {
+        document.getElementById("process-cards").innerHTML = '<div class="empty">Unable to reach platform runtime.</div>';
+      });
+    fetch("/api/v1/platform/recent-instances").then(function (r) { return r.json(); }).then(renderInstances)
+      .catch(function () {
+        document.getElementById("instances-body").innerHTML = '<tr><td colspan="5" class="empty">Unable to reach platform runtime.</td></tr>';
+      });
+  }
+
+  refresh();
+  setInterval(refresh, 5000);
+})();
+</script>
+</body>
+</html>

@@ -14,6 +14,13 @@ export async function saveModel(payload) {
     return result.data;
 }
 
+// payload: { id?, name, bpmnXml, twinBpmnXml, tenantId } - persists an independently authored
+// second BPMN (e.g. Main + Twin) alongside the primary one; see ProcessModel.hasAuthoredTwin().
+export async function saveModelWithAuthoredTwin(payload) {
+    const result = await api.post(`/wb/transmute/model/authored-twin`, payload);
+    return result.data;
+}
+
 export async function getModel(id) {
     const result = await api.get(`/wb/transmute/model/${id}`);
     return result.data;

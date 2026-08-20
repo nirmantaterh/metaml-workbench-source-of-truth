@@ -81,6 +81,14 @@
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<!-- Test-only: backs a standalone in-memory Camunda engine (no Spring context) used to verify
+		     external-task retry/failure semantics against real engine state - see
+		     ExternalTaskRetrySemanticsTest. Version left to the Spring Boot parent BOM. -->
+		<dependency>
+			<groupId>com.h2database</groupId>
+			<artifactId>h2</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
 	<build>

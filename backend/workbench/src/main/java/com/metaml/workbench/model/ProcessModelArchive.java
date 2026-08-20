@@ -34,6 +34,14 @@ public class ProcessModelArchive {
     @Column(length = 255)
     private String bpmnFilePath;
 
+    // Both null for the ordinary single-BPMN path. Set only when the model was saved with its own
+    // independently authored second process - see ProcessModel.authoredTwinBpmnXml.
+    @Lob
+    private String twinBpmnXml;
+
+    @Column(length = 255)
+    private String twinBpmnFilePath;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 

@@ -11,6 +11,12 @@ public class WorkbenchUrlMapping {
     public static final String TRANSMUTE_CREATE = WB_TRANSMUTE + "/create";
     public static final String TRANSMUTE_CONNECT = WB_TRANSMUTE + "/connect";
     public static final String TRANSMUTE_MODELE = WB_TRANSMUTE + "/model";
+    // First-class alternative to TRANSMUTE_MODELE for a model with its own independently authored
+    // second BPMN (e.g. a Manufacturing + Twin pair supplied as two separate files), routed to
+    // WorkbenchService.saveProcessModelWithAuthoredTwin - see that method's own comment. Generation
+    // itself still goes through the existing TRANSMUTE_GENERATE_PROJECT endpoint unchanged; only
+    // saving needs its own entry point, since it's the one place the extra BPMN has to be supplied.
+    public static final String TRANSMUTE_MODELE_AUTHORED_TWIN = TRANSMUTE_MODELE + "/authored-twin";
     public static final String TRANSMUTE_GENERATE = WB_TRANSMUTE + "/generate";
     public static final String TRANSMUTE_GENERATE_PROJECT = WB_TRANSMUTE + "/generate-project";
     // named distinctly from TRANSMUTE_LAUNCH, which starts a twin process instance - this starts

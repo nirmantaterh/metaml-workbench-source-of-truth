@@ -10,6 +10,7 @@ import WorkflowDetailsPanel from "../../components/workbench/WorkflowDetailsPane
 
 import {
     saveModel,
+    saveModelWithAuthoredTwin,
     getModel,
     generateProject,
     launchProject,
@@ -23,8 +24,15 @@ const ModelPage = () => {
     const { canvasRef, propertiesPanelRef, modelerRef, selected, importXml, currentXml } = useBpmnModeler();
 
     const bpmnFileInputRef = useRef(null);
+    const twinFileInputRef = useRef(null);
 
     const [modelName, setModelName] = useState("New Process");
+    // Raw XML of an independently authored Twin BPMN, provided alongside the Main diagram in the
+    // canvas above - not rendered in the canvas itself (the modeler only ever shows one process),
+    // just carried alongside it and sent together on Save (see saveModelWithAuthoredTwin). null
+    // means "no Twin attached" -> Save falls back to the original single-BPMN path.
+    const [twinBpmnXml, setTwinBpmnXml] = useState(null);
+    const [twinFileName, setTwinFileName] = useState(null);
     // caller-supplied ownership, not auth; "" = unowned
     const [tenantId, setTenantId] = useState("");
     const [tenants, setTenants] = useState([]);
@@ -51,6 +59,11 @@ const ModelPage = () => {
     const [status, setStatus] = useState(null); // { type: 'ok'|'err'|'info', text }
     const [busy, setBusy] = useState(false);
     const [detailsOpen, setDetailsOpen] = useState(false);
+    // The generated target platform's own URL (a separate standalone Spring Boot app - see
+    // SpringBootProjectLauncher) once Launch actually succeeds; null whenever nothing confirmed
+    // running belongs to the current projectId (before first Launch, after a Launch failure, or
+    // after Generate produces a fresh project that hasn't been launched yet).
+    const [launchedUrl, setLaunchedUrl] = useState(null);
 
     const refreshWorkflowState = async (modelId) => {
         if (!modelId) return;
@@ -107,6 +120,15 @@ const ModelPage = () => {
                 setModelName(model.name || "Untitled");
                 setSavedModelId(model.id || routeModelId);
                 setTenantId(model.tenantId || "");
+                // Restore a previously-attached Twin so re-saving (e.g. after editing Main) keeps
+                // persisting both, rather than silently dropping back to single-BPMN.
+                if (model.authoredTwinBpmnXml) {
+                    setTwinBpmnXml(model.authoredTwinBpmnXml);
+                    setTwinFileName("(restored from saved model)");
+                } else {
+                    setTwinBpmnXml(null);
+                    setTwinFileName(null);
+                }
                 setStatus({ type: "ok", text: `Loaded "${model.name || routeModelId}".` });
                 await refreshWorkflowState(model.id || routeModelId);
             } catch (err) {
@@ -148,17 +170,49 @@ const ModelPage = () => {
         }
     };
 
+    const handleAttachTwinFile = async (event) => {
+        const file = event.target.files && event.target.files[0];
+        event.target.value = "";
+        if (!file) {
+            return;
+        }
+        try {
+            const xml = await file.text();
+            setTwinBpmnXml(xml);
+            setTwinFileName(file.name);
+            setStatus({
+                type: "ok",
+                text: `Attached Twin "${file.name}". Nothing is saved yet - press Save to persist Main + Twin together.`,
+            });
+        } catch (err) {
+            setStatus({ type: "err", text: `Could not read Twin file "${file.name}": ${err.message || err}.` });
+        }
+    };
+
+    const handleClearTwin = () => {
+        setTwinBpmnXml(null);
+        setTwinFileName(null);
+        setStatus({ type: "info", text: "Twin removed. The next Save persists Main only." });
+    };
+
     const handleSave = async () => {
         setBusy(true);
         try {
             const bpmnXml = await currentXml();
             // "" must become null; backend skips tenant governance only on strict null, not empty string
-            const res = await saveModel({ name: modelName, bpmnXml, tenantId: tenantId || null });
+            const res = twinBpmnXml
+                ? await saveModelWithAuthoredTwin({ name: modelName, bpmnXml, twinBpmnXml, tenantId: tenantId || null })
+                : await saveModel({ name: modelName, bpmnXml, tenantId: tenantId || null });
             const saved = res.data || res;
             setSavedModelId(saved.id || null);
             // each save is a new entity; the previous project/launch no longer applies
             setProjectId(null);
-            setStatus({ type: "ok", text: `Saved model "${saved.name || modelName}" (id ${saved.id ?? "?"}).` });
+            setStatus({
+                type: "ok",
+                text: twinBpmnXml
+                    ? `Saved Main + Twin "${saved.name || modelName}" (id ${saved.id ?? "?"}).`
+                    : `Saved model "${saved.name || modelName}" (id ${saved.id ?? "?"}).`,
+            });
             await refreshWorkflowState(saved.id);
         } catch (err) {
             setStatus({ type: "err", text: "Save failed: " + (err.response?.data?.message || err.message) });
@@ -170,6 +224,7 @@ const ModelPage = () => {
     // Shared by the manual Launch button and the automatic post-generation launch below. Reports
     // its own success/failure so a launch failure is never mistaken for a generate failure.
     const launchProjectId = async (idToLaunch) => {
+        setLaunchedUrl(null);
         try {
             const res = await launchProject({ projectId: idToLaunch });
             const launched = res.data || res;
@@ -177,6 +232,12 @@ const ModelPage = () => {
                 type: "ok",
                 text: `Launched on port ${launched.port ?? "?"} (process "${launched.processKey || "?"}").`,
             });
+            // Same host as this Workbench frontend, launched port - never a hardcoded host/port.
+            // The target is a fully separate standalone application; this is only a convenience
+            // link to it, not a route into it.
+            if (launched.port) {
+                setLaunchedUrl(`${window.location.protocol}//${window.location.hostname}:${launched.port}/`);
+            }
         } catch (err) {
             setStatus({ type: "err", text: "Launch failed: " + (err.response?.data?.message || err.message) });
         }
@@ -188,6 +249,7 @@ const ModelPage = () => {
             return;
         }
         setBusy(true);
+        setLaunchedUrl(null);
         try {
             const res = await generateProject({ modelId: savedModelId });
             const project = res.data || res;
@@ -262,6 +324,38 @@ const ModelPage = () => {
                     >
                         Open BPMN file
                     </Button>
+                    <input
+                        ref={twinFileInputRef}
+                        type="file"
+                        accept=".bpmn,.xml"
+                        style={{ display: "none" }}
+                        onChange={handleAttachTwinFile}
+                    />
+                    {twinFileName ? (
+                        <span className="bpmn-twin-badge" title={twinFileName}>
+                            Twin: {twinFileName}
+                            <button
+                                type="button"
+                                className="bpmn-twin-badge-clear"
+                                onClick={handleClearTwin}
+                                disabled={busy}
+                                aria-label="Remove attached Twin"
+                                title="Remove attached Twin (next Save persists Main only)"
+                            >
+                                &times;
+                            </button>
+                        </span>
+                    ) : (
+                        <Button
+                            size="sm"
+                            variant="outline-secondary"
+                            onClick={() => twinFileInputRef.current && twinFileInputRef.current.click()}
+                            disabled={busy}
+                            title="Attach an independently authored Twin BPMN file. Sent together with Main on the next Save."
+                        >
+                            Attach Twin BPMN
+                        </Button>
+                    )}
                     <Form.Control
                         size="sm"
                         className="bpmn-model-name"
@@ -291,6 +385,16 @@ const ModelPage = () => {
                     </Form.Select>
                     <div className="spacer" />
                     {status && <span className={`bpmn-status ${statusClass}`}>{status.text}</span>}
+                    {launchedUrl && (
+                        <Button
+                            size="sm"
+                            variant="success"
+                            onClick={() => window.open(launchedUrl, "_blank", "noopener,noreferrer")}
+                            title={launchedUrl}
+                        >
+                            Open Target Platform
+                        </Button>
+                    )}
                     <Button size="sm" variant="outline-primary" onClick={handleSave} disabled={busy}>
                         Save
                     </Button>

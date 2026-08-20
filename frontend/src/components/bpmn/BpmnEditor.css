@@ -89,6 +89,34 @@
     font-size: 0.85rem;
 }
 
+.bpmn-twin-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #eef4f6;
+    color: #1f5f71;
+    border: 1px solid #cfe1e6;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bpmn-twin-badge-clear {
+    background: none;
+    border: none;
+    color: #1f5f71;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 0 0 2px;
+    cursor: pointer;
+}
+.bpmn-twin-badge-clear:hover:not(:disabled) {
+    color: #b8452f;
+}
+
 /* outline buttons barely change at the default 0.65 opacity, still full-color border/text.
    grey them out for real so it's obvious the button isn't clickable yet. */
 .bpmn-toolbar .btn:disabled {

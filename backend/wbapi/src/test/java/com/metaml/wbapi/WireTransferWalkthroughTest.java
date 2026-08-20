@@ -553,7 +553,8 @@ class WireTransferWalkthroughTest {
     void aRealGenerateFailureIsRecordedAsFailedWithTheRealErrorNotSilentlySwallowed() throws Exception {
         var brokenGenerator = new com.metaml.workbench.generation.SpringBootProjectGenerator(
                 "./no-such-template-directory-anywhere", "target/test-data/generated-projects",
-                twinModelGenerator, delegateClassGenerator);
+                twinModelGenerator, delegateClassGenerator,
+                new com.metaml.workbench.codegen.ExternalTaskWorkerGenerator());
         WorkbenchServiceImpl serviceWithBrokenTemplate = new WorkbenchServiceImpl(nodeManagerClient,
                 governanceService, policyDecisionEngine, approvalService, runtimeService, repositoryService,
                 historyService, taskService, twinModelGenerator, stateStore, modelFileStore, processModelArchiveStore, delegateClassGenerator,
