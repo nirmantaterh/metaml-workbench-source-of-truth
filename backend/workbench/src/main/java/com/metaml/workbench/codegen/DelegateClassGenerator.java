@@ -119,6 +119,62 @@ public class DelegateClassGenerator {
         return delegates;
     }
 
+    // A ServiceTask with camunda:class is instantiated by Camunda directly via that fully-qualified
+    // class name - no Spring bean lookup involved, unlike delegateExpression. The generated stub
+    // must therefore land at the exact package the BPMN itself names, not this generator's own
+    // package convention, or the deployed process fails the first time the task runs.
+    public List<GeneratedDelegate> generateFromJavaClass(String bpmnXml) {
+        BpmnModelInstance model = Bpmn.readModelFromStream(
+                new ByteArrayInputStream(bpmnXml.getBytes(StandardCharsets.UTF_8)));
+
+        Map<String, String> taskNameByFqcn = new LinkedHashMap<>();
+        Map<String, String> elementIdByFqcn = new LinkedHashMap<>();
+        for (ServiceTask task : model.getModelElementsByType(ServiceTask.class)) {
+            String fqcn = task.getCamundaClass();
+            if (fqcn == null || fqcn.isBlank()) {
+                continue;
+            }
+            taskNameByFqcn.putIfAbsent(fqcn, task.getName());
+            elementIdByFqcn.putIfAbsent(fqcn, task.getId());
+        }
+
+        List<GeneratedDelegate> delegates = new ArrayList<>();
+        for (Map.Entry<String, String> entry : taskNameByFqcn.entrySet()) {
+            String fqcn = entry.getKey();
+            int lastDot = fqcn.lastIndexOf('.');
+            String packageName = lastDot > 0 ? fqcn.substring(0, lastDot) : "";
+            String className = lastDot > 0 ? fqcn.substring(lastDot + 1) : fqcn;
+            String source = renderJavaClassSource(packageName, className, entry.getValue());
+            delegates.add(new GeneratedDelegate(className, className, entry.getValue(), DelegateKind.JAVA_CLASS,
+                    source, elementIdByFqcn.get(fqcn)));
+        }
+        return delegates;
+    }
+
+    private static String renderJavaClassSource(String packageName, String className, String taskName) {
+        String label = (taskName == null || taskName.isBlank()) ? "(unnamed activity)" : sanitizeForComment(taskName);
+        String packageDecl = packageName.isBlank() ? "" : "package " + packageName + ";\n\n";
+        return """
+                %simport org.camunda.bpm.engine.delegate.DelegateExecution;
+                import org.camunda.bpm.engine.delegate.JavaDelegate;
+                import org.slf4j.Logger;
+                import org.slf4j.LoggerFactory;
+
+                // Generated from the BPMN activity "%s" (camunda:class="%s").
+                public class %s implements JavaDelegate {
+
+                    private static final Logger logger = LoggerFactory.getLogger(%s.class);
+
+                    @Override
+                    public void execute(DelegateExecution execution) {
+                        logger.info("Executing generated delegate for activity \\"%s\\" (process instance {})",
+                                execution.getProcessInstanceId());
+                    }
+                }
+                """.formatted(packageDecl, label,
+                packageName.isBlank() ? className : packageName + "." + className, className, className, label);
+    }
+
     // the element that loses the collision - the first one whose bean name isn't the one the
     // generated class is going to be named after. Returns null when every element here agrees on
     // the bean name, i.e. the legitimate shared-delegate case.

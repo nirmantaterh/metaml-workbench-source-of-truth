@@ -107,6 +107,7 @@ public class SpringBootProjectGenerator {
         writeProcessFile(projectDir, processKey, bpmnXml);
         writePairRegistry(projectDir, basePackage);
         writeManufacturingDelegates(projectDir, basePackage, delegates);
+        writeJavaClassDelegates(projectDir, delegateClassGenerator.generateFromJavaClass(bpmnXml));
         writeController(projectDir, basePackage, "controller.manufacturing", "GeneratedManufacturingController",
                 "/api/v1/manufacturing", processKey, activities, "notifyTwin");
         generateTwinResources(projectDir, basePackage, model, processKey);
@@ -155,6 +156,9 @@ public class SpringBootProjectGenerator {
         List<GeneratedWorker> twinWorkers = externalTaskWorkerGenerator.generate(
                 twinBpmnXml, basePackage + ".worker.twin", true);
         writeWorkers(projectDir, twinWorkers);
+
+        writeJavaClassDelegates(projectDir, delegateClassGenerator.generateFromJavaClass(manufBpmnXml));
+        writeJavaClassDelegates(projectDir, delegateClassGenerator.generateFromJavaClass(twinBpmnXml));
 
         // Generate controllers for both processes
         List<BpmnActivities.Activity> manufActivities = BpmnActivities.eligible(manufModel);
@@ -212,6 +216,7 @@ public class SpringBootProjectGenerator {
         List<GeneratedDelegate> twinDelegates =
                 delegateClassGenerator.generate(twinBpmnXml, basePackage + ".delegate.twin");
         writeTwinDelegates(projectDir, basePackage, twinDelegates);
+        writeJavaClassDelegates(projectDir, delegateClassGenerator.generateFromJavaClass(twinBpmnXml));
 
         List<BpmnActivities.Activity> twinActivities = BpmnActivities.eligible(twinModel);
         writeController(projectDir, basePackage, "controller.twin", "GeneratedTwinController", "/api/v1/twin",
@@ -501,6 +506,20 @@ public class SpringBootProjectGenerator {
         Path packageDir = projectDir.resolve("src/main/java")
                 .resolve((basePackage + ".delegate.twin").replace('.', '/'));
         for (GeneratedDelegate delegate : delegates) {
+            writeDelegateFile(packageDir, delegate.className(), delegate.sourceCode(), delegate.beanName(),
+                    delegate.bpmnElementId());
+        }
+    }
+
+    // camunda:class delegates carry their own package in sourceCode (see
+    // DelegateClassGenerator.generateFromJavaClass), so the write path is derived from that instead
+    // of a caller-supplied basePackage.
+    private void writeJavaClassDelegates(Path projectDir, List<GeneratedDelegate> delegates) {
+        for (GeneratedDelegate delegate : delegates) {
+            String packageLine = delegate.sourceCode().lines()
+                    .filter(l -> l.startsWith("package ")).findFirst().orElse("");
+            String packageName = packageLine.replace("package ", "").replace(";", "").trim();
+            Path packageDir = projectDir.resolve("src/main/java").resolve(packageName.replace('.', '/'));
             writeDelegateFile(packageDir, delegate.className(), delegate.sourceCode(), delegate.beanName(),
                     delegate.bpmnElementId());
         }

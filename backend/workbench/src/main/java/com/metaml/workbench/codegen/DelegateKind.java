@@ -11,5 +11,6 @@ package com.metaml.workbench.codegen;
 // models produced zero delegates and deployed a project that would crash on the first task.
 public enum DelegateKind {
     SERVICE_TASK,
-    TASK_LISTENER
+    TASK_LISTENER,
+    JAVA_CLASS
 }

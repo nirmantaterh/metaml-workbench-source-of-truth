@@ -372,6 +372,55 @@ class DelegateClassGeneratorTest {
                 """;
     }
 
+    @Test
+    void generateFromJavaClassProducesADelegateAtTheBpmnsOwnPackage() {
+        String bpmn = javaClassBpmn("com.redcollar.manuf.api.delegates.VerifyOrderDetailsDelegate",
+                "Verify Order Details");
+
+        List<GeneratedDelegate> generated = generator.generateFromJavaClass(bpmn);
+
+        assertThat(generated).hasSize(1);
+        GeneratedDelegate delegate = generated.get(0);
+        assertThat(delegate.className()).isEqualTo("VerifyOrderDetailsDelegate");
+        assertThat(delegate.kind()).isEqualTo(DelegateKind.JAVA_CLASS);
+        assertThat(delegate.sourceCode())
+                .contains("package com.redcollar.manuf.api.delegates;")
+                .contains("public class VerifyOrderDetailsDelegate implements JavaDelegate")
+                .doesNotContain("@Component");
+    }
+
+    @Test
+    void generateFromJavaClassIsGenericToAnyPackageNotJustRedCollar() {
+        String bpmn = javaClassBpmn("com.example.orders.api.delegates.UpdateInventoryDelegate",
+                "Update Inventory");
+
+        List<GeneratedDelegate> generated = generator.generateFromJavaClass(bpmn);
+
+        assertThat(generated.get(0).sourceCode()).contains("package com.example.orders.api.delegates;")
+                .contains("public class UpdateInventoryDelegate implements JavaDelegate");
+    }
+
+    @Test
+    void generateFromJavaClassIgnoresExternalAndDelegateExpressionTasks() {
+        List<GeneratedDelegate> generated = generator.generateFromJavaClass(loanApprovalBpmn());
+        assertThat(generated).isEmpty();
+    }
+
+    private static String javaClassBpmn(String fqcn, String taskName) {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="p" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:serviceTask id="Task_A" name="%s" camunda:class="%s" />
+                    <bpmn2:endEvent id="End" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """.formatted(taskName, fqcn);
+    }
+
     private static String delegateExpressionBpmn(String rawExpression) {
         return """
                 <?xml version="1.0" encoding="UTF-8"?>
