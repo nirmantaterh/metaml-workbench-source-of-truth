@@ -459,6 +459,11 @@ public class SpringBootProjectGenerator {
                 } else {
                     Files.createDirectories(target.getParent());
                     Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+                    // Files.copy doesn't carry the executable bit on its own - every generated
+                    // project needs its own mvnw runnable, not just the template's.
+                    if ("mvnw".equals(target.getFileName().toString())) {
+                        target.toFile().setExecutable(true);
+                    }
                 }
             }
         } catch (IOException e) {
