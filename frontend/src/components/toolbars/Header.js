@@ -35,6 +35,13 @@ const Header = () => {
                                 Delete
                             </NavDropdown.Item>
                         </NavDropdown>
+                        {/* Model / Generate / Launch is one continuous pipeline (see WorkflowStage),
+                            not three independent pages - Generate needs a saved model id and
+                            Launch needs a generated project id, both only available once you're
+                            already in the editor for that model. So only "Model" opens straight
+                            into a blank editor; the other two entries take you to where that
+                            model/project state actually lives - pick a saved model to resume its
+                            Generate/Launch buttons, or see everything already launched. */}
                         <NavDropdown title="Transmute" id="transmute-nav-dropdown">
                             <NavDropdown.Item as={Link} to={WorkbenchRoutes.CreateModel.path}>
                                 Model
@@ -42,7 +49,7 @@ const Header = () => {
                             <NavDropdown.Item as={Link} to={WorkbenchRoutes.EditModel.path}>
                                 Generate
                             </NavDropdown.Item>
-                            <NavDropdown.Item to={"#"}>
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.DeployedAppsPage.path}>
                                 Launch
                             </NavDropdown.Item>
                         </NavDropdown>

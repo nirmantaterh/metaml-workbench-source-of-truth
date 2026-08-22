@@ -13,6 +13,7 @@ import org.camunda.bpm.model.bpmn.instance.SignalEventDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.metaml.workbench.bpmn.OperationalTwinGenerator;
@@ -21,6 +22,8 @@ import com.metaml.workbench.codegen.DelegateClassGenerator;
 import com.metaml.workbench.codegen.ExternalTaskWorkerGenerator;
 import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.codegen.GeneratedWorker;
+import com.metaml.workbench.codegen.TargetPlatformMessagingGenerator;
+import com.metaml.workbench.codegen.TargetPlatformSourceGenerator;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -55,6 +58,11 @@ public class SpringBootProjectGenerator {
 
     private static final String TARGET_PLATFORM_BASE_PACKAGE = "com.metaml.targetplatform";
 
+    // The RedCollarTP-derived template's own fixed package (see isTargetPlatformTemplate) - reused
+    // here so writeSchedulingConfig/writeProcessStatusController, both otherwise generic across
+    // every generation mode, can be called for this mode too instead of being duplicated.
+    private static final String TARGET_PLATFORM_BASE_PACKAGE_LITERAL = "com.tp.TargetPlatform";
+
     private static final String DELEGATE_PACKAGE_PATH = "src/main/java/com/example/camundademo/delegate";
     private static final String CONTROLLER_PACKAGE_PATH = "src/main/java/com/example/camundademo/controller";
     private static final String PROCESSES_PATH = "src/main/resources/processes";
@@ -67,17 +75,33 @@ public class SpringBootProjectGenerator {
     private final TwinModelGenerator twinModelGenerator;
     private final DelegateClassGenerator delegateClassGenerator;
     private final ExternalTaskWorkerGenerator externalTaskWorkerGenerator;
+    private final TargetPlatformSourceGenerator targetPlatformSourceGenerator;
+    private final TargetPlatformMessagingGenerator targetPlatformMessagingGenerator;
 
+    @Autowired
     public SpringBootProjectGenerator(
             @Value("${workbench.generation.template-directory:./templates/camundademo}") String templateDirectory,
             @Value("${workbench.generation.output-directory:./data/generated-projects}") String outputDirectory,
             TwinModelGenerator twinModelGenerator, DelegateClassGenerator delegateClassGenerator,
-            ExternalTaskWorkerGenerator externalTaskWorkerGenerator) {
+            ExternalTaskWorkerGenerator externalTaskWorkerGenerator,
+            TargetPlatformSourceGenerator targetPlatformSourceGenerator,
+            TargetPlatformMessagingGenerator targetPlatformMessagingGenerator) {
         this.templateDirectory = Path.of(templateDirectory);
         this.outputDirectory = Path.of(outputDirectory);
         this.twinModelGenerator = twinModelGenerator;
         this.delegateClassGenerator = delegateClassGenerator;
         this.externalTaskWorkerGenerator = externalTaskWorkerGenerator;
+        this.targetPlatformSourceGenerator = targetPlatformSourceGenerator;
+        this.targetPlatformMessagingGenerator = targetPlatformMessagingGenerator;
+    }
+
+    // Preserves the small direct-construction seam used by the existing generator tests.
+    public SpringBootProjectGenerator(String templateDirectory, String outputDirectory,
+            TwinModelGenerator twinModelGenerator, DelegateClassGenerator delegateClassGenerator,
+            ExternalTaskWorkerGenerator externalTaskWorkerGenerator) {
+        this(templateDirectory, outputDirectory, twinModelGenerator, delegateClassGenerator,
+                externalTaskWorkerGenerator, new TargetPlatformSourceGenerator(),
+                new TargetPlatformMessagingGenerator());
     }
 
     public GeneratedProject generate(String bpmnXml, List<GeneratedDelegate> delegates) {
@@ -87,6 +111,9 @@ public class SpringBootProjectGenerator {
         }
         BpmnModelInstance model = Bpmn.readModelFromStream(
                 new ByteArrayInputStream(bpmnXml.getBytes(StandardCharsets.UTF_8)));
+        if (isTargetPlatformTemplate()) {
+            return generateTargetPlatform(bpmnXml, Bpmn.convertToString(twinModelGenerator.generate(model)));
+        }
         String processKey = extractProcessKey(model);
 
         // A signal-gated Main gets a derived operational Twin via the same pipeline an attached
@@ -126,6 +153,9 @@ public class SpringBootProjectGenerator {
         if (!Files.isDirectory(templateDirectory)) {
             throw new IllegalStateException("No template project at " + templateDirectory.toAbsolutePath()
                     + " - workbench.generation.template-directory must point at the camundademo template");
+        }
+        if (isTargetPlatformTemplate()) {
+            return generateTargetPlatform(manufBpmnXml, twinBpmnXml);
         }
 
         BpmnModelInstance manufModel = Bpmn.readModelFromStream(
@@ -204,6 +234,142 @@ public class SpringBootProjectGenerator {
                 basePackage, projectDir.toAbsolutePath());
 
         return new GeneratedProject(projectId, projectDir, manufProcessKey);
+    }
+
+    // The RedCollar-derived template deliberately keeps its package fixed at com.tp.TargetPlatform.
+    // It owns its proxy/twin controllers and configuration already; generation only supplies the
+    // two BPMNs and the source beans those BPMNs name.
+    private boolean isTargetPlatformTemplate() {
+        return Files.isDirectory(templateDirectory.resolve("src/main/java/com/tp/TargetPlatform"));
+    }
+
+    private GeneratedProject generateTargetPlatform(String proxyBpmnXml, String twinBpmnXml) {
+        BpmnModelInstance proxyModel = Bpmn.readModelFromStream(
+                new ByteArrayInputStream(proxyBpmnXml.getBytes(StandardCharsets.UTF_8)));
+        BpmnModelInstance twinModel = Bpmn.readModelFromStream(
+                new ByteArrayInputStream(twinBpmnXml.getBytes(StandardCharsets.UTF_8)));
+        String proxyKey = extractProcessKey(proxyModel);
+        String twinKey = extractProcessKey(twinModel);
+        String projectId = UUID.randomUUID().toString();
+        Path projectDir = resolveProjectDirectory(projectId);
+        copyTemplate(projectDir);
+        clearTargetPlatformGeneratedSources(projectDir);
+
+        TargetPlatformSourceGenerator.Result proxy = targetPlatformSourceGenerator.generate(proxyBpmnXml, false);
+        TargetPlatformSourceGenerator.Result twin = targetPlatformSourceGenerator.generate(twinBpmnXml, true);
+        writeProcessFile(projectDir, proxyKey, proxy.bpmnXml());
+        writeProcessFile(projectDir, twinKey, twin.bpmnXml());
+        writeTargetPlatformSources(projectDir, proxy.sources());
+        writeTargetPlatformSources(projectDir, twin.sources());
+
+        // A serviceTask with camunda:type="external" (RedCollar's own real BPMNs are built
+        // entirely from these - see ExternalTaskWorkerGenerator's own comment) is a wait state
+        // TargetPlatformSourceGenerator above never touches: it only recognises
+        // delegateExpression/class. Without a worker subscribed to its topic the token parks
+        // there forever and nothing - including every signal downstream of it - ever runs.
+        // ExternalTaskWorkerGenerator derives the GeneratedExternalTaskWorker import by stripping
+        // the LAST segment off packageName (see its own renderTwinWorkerSource comment) - so the
+        // worker package must be "<interface package>.<side>", not "<side>.worker", to actually
+        // land one level under where writeWorkerInterface below puts the interface itself.
+        List<GeneratedWorker> proxyWorkers = externalTaskWorkerGenerator.generate(proxyBpmnXml,
+                TARGET_PLATFORM_BASE_PACKAGE_LITERAL + ".worker.proxy", false);
+        List<GeneratedWorker> twinWorkers = externalTaskWorkerGenerator.generate(twinBpmnXml,
+                TARGET_PLATFORM_BASE_PACKAGE_LITERAL + ".worker.twin", true);
+        clearTargetPlatformGeneratedWorkers(projectDir);
+        writeWorkers(projectDir, proxyWorkers);
+        writeWorkers(projectDir, twinWorkers);
+        writeWorkerInterface(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL);
+        writeExternalTaskPoller(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL);
+
+        // proxy<->twin synchronization: neither BPMN throws its own signals (see SignalBroadcaster's
+        // own comment), so a signal shared by both sides is the only place they actually agree to
+        // meet - everything else here just gets that meeting delivered over a real broker instead of
+        // an in-process call.
+        Set<String> proxySignals = extractSignalNames(proxyModel);
+        Set<String> twinSignals = extractSignalNames(twinModel);
+        Set<String> sharedSignals = new LinkedHashSet<>(proxySignals);
+        sharedSignals.retainAll(twinSignals);
+        Set<String> allSignals = new LinkedHashSet<>(proxySignals);
+        allSignals.addAll(twinSignals);
+        String messagingNamespace = packageSlugFor(proxyKey) + "." + projectId;
+        List<TargetPlatformMessagingGenerator.GeneratedSource> messagingSources = targetPlatformMessagingGenerator
+                .generate(messagingNamespace, sharedSignals, allSignals, proxyKey, twinKey);
+        writeTargetPlatformMessagingSources(projectDir, messagingSources);
+        writeSchedulingConfig(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL);
+        writeProcessStatusController(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL);
+
+        writeProjectMetadata(projectDir, proxyKey);
+        logger.info("Generated TargetPlatform {} at {} with {} proxy and {} twin source bean(s), {} shared "
+                        + "sync signal(s) of {} total", projectId, projectDir.toAbsolutePath(), proxy.sources().size(),
+                twin.sources().size(), sharedSignals.size(), allSignals.size());
+        return new GeneratedProject(projectId, projectDir, proxyKey);
+    }
+
+    private void clearTargetPlatformGeneratedSources(Path projectDir) {
+        List<Path> roots = List.of(
+                projectDir.resolve("src/main/java/com/tp/TargetPlatform/proxy/delegates"),
+                projectDir.resolve("src/main/java/com/tp/TargetPlatform/proxy/events"),
+                projectDir.resolve("src/main/java/com/tp/TargetPlatform/proxy/listeners"),
+                projectDir.resolve("src/main/java/com/tp/TargetPlatform/twin/delegates"),
+                projectDir.resolve("src/main/java/com/tp/TargetPlatform/twin/events"),
+                projectDir.resolve("src/main/java/com/tp/TargetPlatform/twin/listeners"));
+        for (Path root : roots) {
+            try {
+                if (Files.exists(root)) {
+                    try (Stream<Path> files = Files.walk(root)) {
+                        files.filter(path -> path.toString().endsWith(".java"))
+                                .forEach(SpringBootProjectGenerator::deleteIfExists);
+                    }
+                }
+                Files.createDirectories(root);
+            } catch (IOException e) {
+                throw new UncheckedIOException("Could not prepare TargetPlatform generated-source directory " + root, e);
+            }
+        }
+    }
+
+    private void clearTargetPlatformGeneratedWorkers(Path projectDir) {
+        List<Path> roots = List.of(
+                projectDir.resolve("src/main/java/com/tp/TargetPlatform/worker/proxy"),
+                projectDir.resolve("src/main/java/com/tp/TargetPlatform/worker/twin"));
+        for (Path root : roots) {
+            try {
+                if (Files.exists(root)) {
+                    try (Stream<Path> files = Files.walk(root)) {
+                        files.filter(path -> path.toString().endsWith(".java"))
+                                .forEach(SpringBootProjectGenerator::deleteIfExists);
+                    }
+                }
+                Files.createDirectories(root);
+            } catch (IOException e) {
+                throw new UncheckedIOException("Could not prepare TargetPlatform generated-worker directory " + root, e);
+            }
+        }
+    }
+
+    private void writeTargetPlatformSources(Path projectDir, List<TargetPlatformSourceGenerator.GeneratedSource> sources) {
+        for (TargetPlatformSourceGenerator.GeneratedSource source : sources) {
+            Path output = projectDir.resolve("src/main/java/com/tp/TargetPlatform")
+                    .resolve(source.relativeDirectory()).resolve(source.className() + ".java");
+            // Do not overwrite a source file if a future template intentionally supplies one.
+            if (!Files.exists(output)) {
+                writeFile(output, source.source());
+            }
+        }
+    }
+
+    // Unlike writeTargetPlatformSources above, these always overwrite: the synchronization layer
+    // and the proxy/twin controllers are structural to this generation mode, not a per-activity
+    // stub a future template might intentionally hand-supply - and the controllers specifically
+    // bake in this generation's own process keys, so a stale copy from a previous generate() would
+    // silently start the WRONG process definition.
+    private void writeTargetPlatformMessagingSources(Path projectDir,
+            List<TargetPlatformMessagingGenerator.GeneratedSource> sources) {
+        for (TargetPlatformMessagingGenerator.GeneratedSource source : sources) {
+            Path output = projectDir.resolve("src/main/java/com/tp/TargetPlatform")
+                    .resolve(source.relativeDirectory()).resolve(source.className() + ".java");
+            writeFile(output, source.source());
+        }
     }
 
     private void generateTwinResources(Path projectDir, String basePackage, BpmnModelInstance originalModel,

@@ -12,6 +12,7 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -369,9 +370,20 @@ public class SpringBootProjectLauncher {
     private Process startProcess(Path projectDir, int port, Map<String, String> extraEnv) {
         boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
         String wrapper = projectDir.resolve(windows ? "mvnw.cmd" : "mvnw").toAbsolutePath().toString();
-        List<String> command = windows
-                ? List.of("cmd.exe", "/c", wrapper, "spring-boot:run")
-                : List.of(wrapper, "spring-boot:run");
+        boolean hasWrapper = Files.isRegularFile(Path.of(wrapper));
+        // RedCollarTP supplies Maven wrapper metadata but not the wrapper scripts.  Keep the
+        // normal wrapper path for templates that have it, and use the installed Maven executable
+        // for this otherwise-complete target platform template. Only this path also gets an
+        // explicit build step first (see runMavenInstall) - every wrapper-based template/test
+        // here already exercises 'mvnw spring-boot:run' on its own, which compiles as part of its
+        // own default lifecycle.
+        if (!hasWrapper) {
+            runMavenInstall(projectDir);
+        }
+        List<String> command = hasWrapper
+                ? (windows ? List.of("cmd.exe", "/c", wrapper, "spring-boot:run")
+                        : List.of(wrapper, "spring-boot:run"))
+                : List.of(mavenExecutable(), "spring-boot:run");
         try {
             Path logFile = projectDir.resolve("launch.log");
             ProcessBuilder builder = new ProcessBuilder(command)
@@ -395,6 +407,64 @@ public class SpringBootProjectLauncher {
         } catch (IOException e) {
             throw new UncheckedIOException("Could not start generated project at " + projectDir.toAbsolutePath(), e);
         }
+    }
+
+    // Explicit build step, requested for the RedCollarTP-derived Target Platform launch flow:
+    // `mvn clean install -DskipTests` runs to completion BEFORE the run command starts, so a
+    // compile or dependency failure is reported here - plainly, with its own log - rather than
+    // only surfacing later as an opaque "never started listening on port N". Blocking, like the
+    // rest of startProcess's caller; launch() already treats the whole method as one unit of work.
+    private static final Duration BUILD_TIMEOUT = Duration.ofMinutes(5);
+
+    private void runMavenInstall(Path projectDir) {
+        Path buildLog = projectDir.resolve("build.log");
+        List<String> command = List.of(mavenExecutable(), "clean", "install", "-DskipTests");
+        Process build;
+        try {
+            build = new ProcessBuilder(command)
+                    .directory(projectDir.toFile())
+                    .redirectOutput(ProcessBuilder.Redirect.to(buildLog.toFile()))
+                    .redirectErrorStream(true)
+                    .start();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Could not run 'mvn clean install -DskipTests' for "
+                    + projectDir.toAbsolutePath(), e);
+        }
+        boolean finished;
+        try {
+            finished = build.waitFor(BUILD_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            build.destroyForcibly();
+            throw new IllegalStateException("Interrupted while running 'mvn clean install -DskipTests' for "
+                    + projectDir.toAbsolutePath());
+        }
+        if (!finished) {
+            build.destroyForcibly();
+            throw new IllegalStateException("'mvn clean install -DskipTests' did not finish within "
+                    + BUILD_TIMEOUT.toSeconds() + "s for " + projectDir.toAbsolutePath() + " - check "
+                    + buildLog.toAbsolutePath());
+        }
+        if (build.exitValue() != 0) {
+            throw new IllegalStateException("'mvn clean install -DskipTests' failed (exit " + build.exitValue()
+                    + ") for " + projectDir.toAbsolutePath() + " - check " + buildLog.toAbsolutePath());
+        }
+        logger.info("'mvn clean install -DskipTests' finished for {}", projectDir.toAbsolutePath());
+    }
+
+    // An app launched from an IDE/service frequently inherits a much shorter PATH than an
+    // interactive terminal.  Resolve the standard Maven locations before falling back to PATH so
+    // a RedCollar-derived template without mvnw still launches on macOS/Homebrew and Linux.
+    private static String mavenExecutable() {
+        String mavenHome = System.getenv("MAVEN_HOME");
+        if (mavenHome != null && !mavenHome.isBlank()) {
+            Path candidate = Path.of(mavenHome, "bin", "mvn");
+            if (Files.isExecutable(candidate)) return candidate.toString();
+        }
+        for (String candidate : List.of("/opt/homebrew/bin/mvn", "/usr/local/bin/mvn", "/usr/bin/mvn")) {
+            if (Files.isExecutable(Path.of(candidate))) return candidate;
+        }
+        return "mvn";
     }
 
     // polls rather than trusting a fixed sleep - a cold Maven dependency download takes nothing

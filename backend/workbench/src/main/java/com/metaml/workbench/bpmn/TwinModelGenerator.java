@@ -20,6 +20,9 @@ import org.camunda.bpm.model.bpmn.instance.ReceiveTask;
 import org.camunda.bpm.model.bpmn.instance.ServiceTask;
 import org.camunda.bpm.model.bpmn.instance.UserTask;
 import org.camunda.bpm.model.bpmn.instance.bpmndi.BpmnDiagram;
+import org.camunda.bpm.model.bpmn.instance.bpmndi.BpmnEdge;
+import org.camunda.bpm.model.bpmn.instance.bpmndi.BpmnPlane;
+import org.camunda.bpm.model.bpmn.instance.bpmndi.BpmnShape;
 import org.camunda.bpm.model.xml.instance.DomDocument;
 import org.camunda.bpm.model.xml.instance.DomElement;
 import org.slf4j.Logger;
@@ -71,6 +74,10 @@ public class TwinModelGenerator {
     private static final String MESSAGE_ID_PREFIX = "Message_";
     private static final String MI_LOOP_CHARACTERISTICS_ID_PREFIX = "MultiInstance_";
     private static final String MI_CARDINALITY_ID_PREFIX = "LoopCardinality_";
+    private static final String DI_SHAPE_ID_PREFIX = "BPMNShape_";
+    private static final String DI_EDGE_ID_PREFIX = "BPMNEdge_";
+    private static final String DI_PLANE_ID_PREFIX = "BPMNPlane_";
+    private static final String DI_DIAGRAM_ID_PREFIX = "BPMNDiagram_";
 
     // original activity ids ending in any of these would collide with their own derived twin ids
     private static final List<String> RESERVED_ID_SUFFIXES = List.of(AUTOMATION_TASK_ID_SUFFIX,
@@ -120,7 +127,7 @@ public class TwinModelGenerator {
         copyFlowDetails(twin, flows);
         copyDefaultFlows(process, twin);
         copyMetamlExtensions(original, twin, process, copied);
-        stripDiagramInterchange(twin);
+        stabilizeDiagramInterchange(twin);
 
         return twin;
     }
@@ -161,9 +168,34 @@ public class TwinModelGenerator {
         }
     }
 
-    private static void stripDiagramInterchange(BpmnModelInstance twin) {
-        for (BpmnDiagram diagram : new ArrayList<>(twin.getModelElementsByType(BpmnDiagram.class))) {
-            diagram.getParentElement().removeChildElement(diagram);
+    // The builder attaches a full BPMNDI diagram (one BPMNShape/BPMNEdge per node/flow) whether
+    // asked for or not, same as it does for messages/loop ids above - but with a random id per
+    // call, which used to mean dropping the whole diagram rather than keeping it in sync. Deriving
+    // each DI element's id from the already-stable twin element id it depicts (bpmnElement) keeps
+    // this deterministic like the rest of generate(), and - unlike dropping it - leaves the twin
+    // renderable in Cockpit, which matters once a generated proxy and its twin are actually running
+    // side by side over RabbitMQ and someone wants to watch where each one currently is.
+    private static void stabilizeDiagramInterchange(BpmnModelInstance twin) {
+        for (BpmnShape shape : twin.getModelElementsByType(BpmnShape.class)) {
+            BaseElement depicted = shape.getBpmnElement();
+            if (depicted != null) {
+                shape.setId(DI_SHAPE_ID_PREFIX + depicted.getId());
+            }
+        }
+        for (BpmnEdge edge : twin.getModelElementsByType(BpmnEdge.class)) {
+            BaseElement depicted = edge.getBpmnElement();
+            if (depicted != null) {
+                edge.setId(DI_EDGE_ID_PREFIX + depicted.getId());
+            }
+        }
+        for (BpmnPlane plane : twin.getModelElementsByType(BpmnPlane.class)) {
+            BaseElement depicted = plane.getBpmnElement();
+            plane.setId(DI_PLANE_ID_PREFIX + (depicted == null ? "" : depicted.getId()));
+        }
+        for (BpmnDiagram diagram : twin.getModelElementsByType(BpmnDiagram.class)) {
+            BpmnPlane plane = diagram.getBpmnPlane();
+            BaseElement depicted = plane == null ? null : plane.getBpmnElement();
+            diagram.setId(DI_DIAGRAM_ID_PREFIX + (depicted == null ? "" : depicted.getId()));
         }
     }
 

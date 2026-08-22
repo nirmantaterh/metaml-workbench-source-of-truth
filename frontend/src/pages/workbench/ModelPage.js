@@ -82,6 +82,11 @@ const ModelPage = () => {
     // running belongs to the current projectId (before first Launch, after a Launch failure, or
     // after Generate produces a fresh project that hasn't been launched yet).
     const [launchedUrl, setLaunchedUrl] = useState(null);
+    // { businessKey, proxy: {processInstanceId, role}, twin: {processInstanceId, role} } once
+    // Start Proxy + Twin succeeds; null before that, and reset on every new Launch/Generate so a
+    // stale pairing from a previous run is never shown against a newly launched instance.
+    const [pairResult, setPairResult] = useState(null);
+    const [pairing, setPairing] = useState(false);
 
     const refreshWorkflowState = async (modelId) => {
         if (!modelId) return;
@@ -247,6 +252,7 @@ const ModelPage = () => {
     // its own success/failure so a launch failure is never mistaken for a generate failure.
     const launchProjectId = async (idToLaunch) => {
         setLaunchedUrl(null);
+        setPairResult(null);
         try {
             const res = await launchProject({ projectId: idToLaunch });
             const launched = res.data || res;
@@ -307,6 +313,43 @@ const ModelPage = () => {
         await launchProjectId(projectId);
         await refreshWorkflowState(savedModelId);
         setBusy(false);
+    };
+
+    // Starts a proxy instance and a twin instance under the SAME businessKey on the launched
+    // Target Platform's own REST API (not the workbench backend - a fully separate app, see
+    // launchedUrl's own comment) - that shared key is what SignalBroadcaster/PairRegistry use to
+    // recognize the two as partners and actually synchronize their shared signals over RabbitMQ,
+    // instead of each running unpaired. Only RedCollarTP-style generated platforms expose
+    // /api/proxy/start and /api/twin/start; a generic Target Harness Platform does not, and this
+    // fails with a clear message rather than a confusing 404 if pointed at one of those.
+    const handleStartPair = async () => {
+        if (!launchedUrl) return;
+        setPairing(true);
+        setPairResult(null);
+        const businessKey = `sync-${Date.now()}`;
+        try {
+            const startSide = async (side) => {
+                const response = await fetch(`${launchedUrl}api/${side}/start?businessKey=${businessKey}`, {
+                    method: "POST",
+                });
+                if (!response.ok) {
+                    throw new Error(`${side} start failed (HTTP ${response.status}) - this generated platform may `
+                        + "not support proxy/twin pairing");
+                }
+                return response.json();
+            };
+            const [proxy, twin] = await Promise.all([startSide("proxy"), startSide("twin")]);
+            setPairResult({ businessKey, proxy, twin });
+            setStatus({
+                type: "ok",
+                text: `Started proxy (${proxy.role}) and twin (${twin.role}) paired on businessKey `
+                    + `"${businessKey}" - open Cockpit to watch them synchronize.`,
+            });
+        } catch (err) {
+            setStatus({ type: "err", text: "Start Proxy + Twin failed: " + err.message });
+        } finally {
+            setPairing(false);
+        }
     };
 
     const statusClass =
@@ -442,6 +485,17 @@ const ModelPage = () => {
                             Open Target Platform
                         </Button>
                     )}
+                    {launchedUrl && (
+                        <Button
+                            size="sm"
+                            variant="outline-success"
+                            onClick={handleStartPair}
+                            disabled={pairing}
+                            title="Starts a proxy instance and a twin instance under the same businessKey so they synchronize over RabbitMQ"
+                        >
+                            {pairing ? "Starting…" : "Start Proxy + Twin"}
+                        </Button>
+                    )}
                     <Button size="sm" variant="outline-primary" onClick={handleSave} disabled={busy}>
                         Save
                     </Button>
@@ -488,6 +542,24 @@ const ModelPage = () => {
                         )}
                     </div>
                 </div>
+
+                {pairResult && (
+                    <div className="bpmn-toolbar-row bpmn-toolbar-status">
+                        <span className="text-muted small">
+                            businessKey <code>{pairResult.businessKey}</code> — proxy:{" "}
+                            <code>{pairResult.proxy.processInstanceId}</code> ({pairResult.proxy.role}), twin:{" "}
+                            <code>{pairResult.twin.processInstanceId}</code> ({pairResult.twin.role})
+                        </span>
+                        <div className="spacer" />
+                        <Button
+                            size="sm"
+                            variant="outline-secondary"
+                            onClick={() => window.open(`${launchedUrl}camunda/app/cockpit/default/`, "_blank", "noopener,noreferrer")}
+                        >
+                            Open Cockpit
+                        </Button>
+                    </div>
+                )}
             </div>
 
             <div className="bpmn-main">
