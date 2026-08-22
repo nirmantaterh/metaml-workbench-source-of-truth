@@ -3,6 +3,7 @@ package com.metaml.workbench.service;
 import java.util.List;
 
 import com.metaml.workbench.dto.ProjectDto;
+import com.metaml.workbench.dto.ProcessModelSummaryDto;
 import com.metaml.workbench.model.Project;
 
 public interface ProjectService {
@@ -13,4 +14,8 @@ public interface ProjectService {
     Project getProjectById(Long id);
 
     void saveProject(Project project);
+
+    List<ProcessModelSummaryDto> getProjectProcessModels(Long projectId);
+
+    void deleteProject(Long projectId);
 }

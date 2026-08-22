@@ -14,4 +14,5 @@ public class SaveProcessModelRequest {
     // Tenant ownership (Phase 0 governance audit) - optional. Caller-supplied, not
     // authentication; null behaves exactly like a model saved before tenancy existed.
     private String tenantId;
+    private Long projectId;
 }

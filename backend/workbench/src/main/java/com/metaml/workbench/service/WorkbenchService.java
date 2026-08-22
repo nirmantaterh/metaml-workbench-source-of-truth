@@ -28,6 +28,11 @@ public interface WorkbenchService {
     // metadata, not authentication; there is no login to derive it from yet.
     ProcessModel saveProcessModel(String id, String name, String bpmnXml, String tenantId);
 
+    // The Project UI uses this overload so a saved process belongs to the project the user chose.
+    default ProcessModel saveProcessModel(String id, String name, String bpmnXml, String tenantId, Long projectId) {
+        return saveProcessModel(id, name, bpmnXml, tenantId);
+    }
+
     // First-class alternative to saveProcessModel for a process pair with its own independently
     // authored second BPMN (e.g. RedCollar's Manuf + Twin), rather than one derived automatically
     // from bpmnXml at generate time. Flows through exactly the same MODEL/GENERATE/LAUNCH workflow
@@ -43,6 +48,11 @@ public interface WorkbenchService {
     ProcessModel saveProcessModelWithAuthoredTwin(String id, String name, String bpmnXml, String twinBpmnXml,
             String tenantId);
 
+    default ProcessModel saveProcessModelWithAuthoredTwin(String id, String name, String bpmnXml, String twinBpmnXml,
+            String tenantId, Long projectId) {
+        return saveProcessModelWithAuthoredTwin(id, name, bpmnXml, twinBpmnXml, tenantId);
+    }
+
     ProcessModel getProcessModel(String id);
 
     // Authoring/catalog deletion: removes the model, its .bpmn artifact, and every generated
@@ -56,6 +66,9 @@ public interface WorkbenchService {
     // history is retained, which is also what permanently retires the model id: it can never be
     // recreated, or the new model would inherit the dead one's Generate/Launch history.
     boolean deleteProcessModel(String modelId);
+
+    // Non-mutating preflight used by project deletion, so a project is never partly deleted.
+    boolean canDeleteProcessModel(String modelId);
 
     // New scope item 1 (Navigation & UI): "Edit Existing Project" needs something to list, not
     // just a lookup by an id the user already has to know. Newest first - that's the one someone

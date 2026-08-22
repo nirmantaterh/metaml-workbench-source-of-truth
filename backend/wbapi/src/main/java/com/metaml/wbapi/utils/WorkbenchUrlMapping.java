@@ -63,5 +63,6 @@ public class WorkbenchUrlMapping {
     public static final String DELETE_PROJECT = "/delete/{projectId}";
     public static final String GET_PROJECT_DETAILS = "/{projectId}";
     public static final String GET_ALL_PROJECTS = "/all";
+    public static final String GET_PROJECT_PROCESSES = "/{projectId}/process-models";
     public static final String GET_ALL_PROJECTS_BY_TEAM = "/{teamId}/all";
 }

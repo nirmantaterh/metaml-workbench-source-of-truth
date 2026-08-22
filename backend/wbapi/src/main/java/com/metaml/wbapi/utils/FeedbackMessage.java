@@ -11,7 +11,7 @@ public class FeedbackMessage {
     public static final String ERROR = "Error occurred";
     /* ======================== End General API feedback ======================== */
 
-    public static final String CREATE_PROJECT_SUCCESS = "Project created succesfully!";
+    public static final String CREATE_PROJECT_SUCCESS = "Saved successfully";
     public static final String UPDATE_PROJECT_SUCCESS = "Project updated succesfully!";
     public static final String DELETE_PROJECT_SUCCESS = "Project deleted succesfully!";
     public static final String PROJECT_FOUND = "Project found!";
