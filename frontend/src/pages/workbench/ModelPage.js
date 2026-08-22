@@ -7,6 +7,7 @@ import useBpmnModeler from "../../components/bpmn/useBpmnModeler";
 import "../../components/bpmn/BpmnEditor.css";
 import WorkflowProgress from "../../components/workbench/WorkflowProgress";
 import WorkflowDetailsPanel from "../../components/workbench/WorkflowDetailsPanel";
+import { openCockpitUrl } from "../../components/workbench/openCockpitUrl";
 
 import {
     saveModel,
@@ -19,6 +20,8 @@ import {
 } from "../../services/workbench/WorkbenchService";
 import { listProjects } from "../../services/workbench/ProjectService";
 import { WorkbenchRoutes } from "../../routes";
+
+const TRANSMUTE_LAUNCH_EVENT = "metaml:transmute-launch-current-generated-platform";
 
 const ModelPage = () => {
     const { id: routeModelId } = useParams();
@@ -70,18 +73,14 @@ const ModelPage = () => {
         return () => { cancelled = true; };
     }, []);
     const [savedModelId, setSavedModelId] = useState(null);
-    // restored from workflow state on load so Launch stays usable after a reload
-    const [projectId, setProjectId] = useState(null);
+    // restored from workflow state on load so Launch stays usable after a reload. This is the
+    // generated Target Platform id, not the persisted Workbench Project id or Process Model id.
+    const [generatedProjectId, setGeneratedProjectId] = useState(null);
     const [workflowState, setWorkflowState] = useState(null);
 
     const [status, setStatus] = useState(null); // { type: 'ok'|'err'|'info', text }
     const [busy, setBusy] = useState(false);
     const [detailsOpen, setDetailsOpen] = useState(false);
-    // The generated target platform's own URL (a separate standalone Spring Boot app - see
-    // SpringBootProjectLauncher) once Launch actually succeeds; null whenever nothing confirmed
-    // running belongs to the current projectId (before first Launch, after a Launch failure, or
-    // after Generate produces a fresh project that hasn't been launched yet).
-    const [launchedUrl, setLaunchedUrl] = useState(null);
 
     const refreshWorkflowState = async (modelId) => {
         if (!modelId) return;
@@ -89,10 +88,10 @@ const ModelPage = () => {
             const res = await getWorkflowState(modelId);
             const state = res.data || res;
             setWorkflowState(state);
-            // restore projectId so Launch stays available after a reload
+            // restore the generated platform id so Launch stays available after a reload
             const generateStage = state.stages?.GENERATE;
             if (generateStage?.status === "COMPLETED" && generateStage.detail) {
-                setProjectId(generateStage.detail);
+                setGeneratedProjectId(generateStage.detail);
             }
         } catch (err) {
             // ignore: workflow breadcrumb failing shouldn't block the rest of the page
@@ -228,7 +227,7 @@ const ModelPage = () => {
             const saved = res.data || res;
             setSavedModelId(saved.id || null);
             // each save is a new entity; the previous project/launch no longer applies
-            setProjectId(null);
+            setGeneratedProjectId(null);
             setStatus({
                 type: "ok",
                 text: twinBpmnXml
@@ -243,23 +242,20 @@ const ModelPage = () => {
         }
     };
 
-    // Shared by the manual Launch button and the automatic post-generation launch below. Reports
-    // its own success/failure so a launch failure is never mistaken for a generate failure.
-    const launchProjectId = async (idToLaunch) => {
-        setLaunchedUrl(null);
+    // Launch the already-generated standalone runtime for the current persisted model/process.
+    const launchGeneratedProjectId = async (idToLaunch) => {
         try {
             const res = await launchProject({ projectId: idToLaunch });
             const launched = res.data || res;
+            if (!launched.port) {
+                throw new Error("Launch succeeded but no port was returned");
+            }
+            const cockpitUrl = `${window.location.protocol}//${window.location.hostname}:${launched.port}/camunda/app/cockpit/engine/`;
             setStatus({
                 type: "ok",
-                text: `Launched on port ${launched.port ?? "?"} (process "${launched.processKey || "?"}").`,
+                text: `Launched on port ${launched.port} (process "${launched.processKey || "?"}").`,
             });
-            // Same host as this Workbench frontend, launched port - never a hardcoded host/port.
-            // The target is a fully separate standalone application; this is only a convenience
-            // link to it, not a route into it.
-            if (launched.port) {
-                setLaunchedUrl(`${window.location.protocol}//${window.location.hostname}:${launched.port}/`);
-            }
+            openCockpitUrl(cockpitUrl);
         } catch (err) {
             setStatus({ type: "err", text: "Launch failed: " + (err.response?.data?.message || err.message) });
         }
@@ -271,25 +267,17 @@ const ModelPage = () => {
             return;
         }
         setBusy(true);
-        setLaunchedUrl(null);
         try {
             const res = await generateProject({ modelId: savedModelId });
             const project = res.data || res;
             const newProjectId = project.projectId || null;
-            setProjectId(newProjectId);
-            // Automatic launch after generation (explicit requirement): a successful Generate must
-            // not require a separate manual Launch click. Reuses the same launch endpoint the Launch
-            // button uses; the Model -> Generate -> Launch indicator still advances on its own as each
-            // backend stage completes. The Launch button stays for re-launching later.
-            if (newProjectId) {
-                setStatus({
-                    type: "info",
-                    text: `Generated Target Harness Platform for process "${project.processKey || "?"}" (id ${newProjectId}) - launching...`,
-                });
-                await launchProjectId(newProjectId);
-            } else {
-                setStatus({ type: "err", text: "Generation returned no project id to launch." });
-            }
+            setGeneratedProjectId(newProjectId);
+            setStatus({
+                type: "ok",
+                text: newProjectId
+                    ? `Generated Target Harness Platform for process "${project.processKey || "?"}" (id ${newProjectId}).`
+                    : "Generated Target Harness Platform.",
+            });
         } catch (err) {
             setStatus({ type: "err", text: "Generate failed: " + (err.response?.data?.message || err.message) });
         } finally {
@@ -299,15 +287,25 @@ const ModelPage = () => {
     };
 
     const handleLaunch = async () => {
-        if (!projectId) {
+        if (!generatedProjectId) {
             setStatus({ type: "err", text: "Generate a project before launching it." });
             return;
         }
         setBusy(true);
-        await launchProjectId(projectId);
+        await launchGeneratedProjectId(generatedProjectId);
         await refreshWorkflowState(savedModelId);
         setBusy(false);
     };
+
+    useEffect(() => {
+        const onLaunchRequest = () => {
+            void handleLaunch();
+        };
+        document.addEventListener(TRANSMUTE_LAUNCH_EVENT, onLaunchRequest);
+        return () => {
+            document.removeEventListener(TRANSMUTE_LAUNCH_EVENT, onLaunchRequest);
+        };
+    }, [handleLaunch]);
 
     const statusClass =
         status?.type === "err" ? "text-danger" : status?.type === "ok" ? "text-success" : "text-muted";
@@ -432,16 +430,6 @@ const ModelPage = () => {
                             Back to project processes
                         </Button>
                     )}
-                    {launchedUrl && (
-                        <Button
-                            size="sm"
-                            variant="success"
-                            onClick={() => window.open(launchedUrl, "_blank", "noopener,noreferrer")}
-                            title={launchedUrl}
-                        >
-                            Open Target Platform
-                        </Button>
-                    )}
                     <Button size="sm" variant="outline-primary" onClick={handleSave} disabled={busy}>
                         Save
                     </Button>
@@ -458,8 +446,8 @@ const ModelPage = () => {
                         size="sm"
                         variant="primary"
                         onClick={handleLaunch}
-                        disabled={busy || !projectId}
-                        title={!projectId ? "Generate a project first" : undefined}
+                        disabled={busy || !generatedProjectId}
+                        title={!generatedProjectId ? "Generate a project first" : undefined}
                     >
                         Launch
                     </Button>

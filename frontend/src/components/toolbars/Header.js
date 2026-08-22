@@ -8,6 +8,8 @@ import { WorkbenchRoutes } from "../../routes";
 import UseMessageAlerts from "../hooks/UseMessageAlerts";
 import AlertMessage from "../common/AlertMessage";
 
+const TRANSMUTE_LAUNCH_EVENT = "metaml:transmute-launch-current-generated-platform";
+
 const Header = () => {
     const { errorMessage, setErrorMessage, showErrorAlert, setShowErrorAlert } = UseMessageAlerts();
     const navigate = useNavigate();
@@ -36,16 +38,21 @@ const Header = () => {
                             </NavDropdown.Item>
                         </NavDropdown>
                         <NavDropdown title="Transmute" id="transmute-nav-dropdown">
-                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.CreateModel.path}>
-                                Model
-                            </NavDropdown.Item>
-                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.EditModel.path}>
-                                Generate
-                            </NavDropdown.Item>
-                            <NavDropdown.Item to={"#"}>
-                                Launch
-                            </NavDropdown.Item>
-                        </NavDropdown>
+                        <NavDropdown.Item as={Link} to={WorkbenchRoutes.CreateModel.path}>
+                            Model
+                        </NavDropdown.Item>
+                        <NavDropdown.Item as={Link} to={WorkbenchRoutes.EditModel.path}>
+                            Generate
+                        </NavDropdown.Item>
+                        <NavDropdown.Item
+                            onClick={(event) => {
+                                event.preventDefault();
+                                document.dispatchEvent(new CustomEvent(TRANSMUTE_LAUNCH_EVENT));
+                            }}
+                        >
+                            Launch
+                        </NavDropdown.Item>
+                    </NavDropdown>
                         {/* Two different things share this menu: the twin workflow
                             (Connect/Evolve/Bridge) and Evolve Workflow itself - connecting to a
                             deployed generated application, not a twin */}

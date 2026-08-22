@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
 import ModelPage from "./ModelPage";
+import { listProjects } from "../../services/workbench/ProjectService";
 import {
     saveModel,
     getModel,
@@ -11,7 +12,9 @@ import {
     generateProject,
     launchProject,
     getWorkflowState,
+    listTenants,
 } from "../../services/workbench/WorkbenchService";
+import { openCockpitUrl } from "../../components/workbench/openCockpitUrl";
 
 // name has to start with "mock" to be referenced from a jest.mock factory below
 const mockModelXml = "<definitions id=\"test-model\" />";
@@ -23,6 +26,11 @@ jest.mock("../../services/workbench/WorkbenchService", () => ({
     generateProject: jest.fn(),
     launchProject: jest.fn(),
     getWorkflowState: jest.fn(),
+    listTenants: jest.fn(),
+}));
+
+jest.mock("../../services/workbench/ProjectService", () => ({
+    listProjects: jest.fn(),
 }));
 
 // the real hook boots bpmn-js, which ships untransformed ESM and wants a live canvas to attach to -
@@ -45,6 +53,11 @@ jest.mock("../../components/bpmn/useBpmnModeler", () => ({
 jest.mock("../../components/bpmn/DataPanel", () => ({
     __esModule: true,
     default: () => null,
+}));
+
+jest.mock("../../components/workbench/openCockpitUrl", () => ({
+    __esModule: true,
+    openCockpitUrl: jest.fn(),
 }));
 
 // omitting timestamp keeps WorkflowProgress's title exactly the status string, so a title query
@@ -92,7 +105,7 @@ let backendWorkflowState;
 const button = (name) => screen.getByRole("button", { name });
 
 const renderPage = () => render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[{ pathname: "/wb/model", state: { projectId: "7" } }]}>
         <ModelPage />
     </MemoryRouter>
 );
@@ -108,6 +121,8 @@ describe("ModelPage - save / generate / launch", () => {
         jest.clearAllMocks();
         backendWorkflowState = NOTHING_YET;
         getWorkflowState.mockImplementation(async () => backendWorkflowState);
+        listProjects.mockResolvedValue([{ id: "7", displayName: "Project 7", name: "Project 7" }]);
+        listTenants.mockResolvedValue([]);
         getModel.mockResolvedValue({ id: "m-1", name: "New Process", bpmnXml: mockModelXml });
         saveModel.mockResolvedValue({ id: "m-1", name: "New Process" });
         generateDelegates.mockResolvedValue([]);
@@ -122,7 +137,13 @@ describe("ModelPage - save / generate / launch", () => {
             await saveTheModel();
 
             // tenantId is always sent, "" normalized to null - see handleSave's own comment on why
-            expect(saveModel).toHaveBeenCalledWith({ name: "New Process", bpmnXml: mockModelXml, tenantId: null });
+            // the persisted Project id is also required now that Save truly attaches the model to a project.
+            expect(saveModel).toHaveBeenCalledWith({
+                name: "New Process",
+                bpmnXml: mockModelXml,
+                tenantId: null,
+                projectId: 7,
+            });
             expect(await screen.findByText(/Saved model "New Process" \(id m-1\)/)).toBeInTheDocument();
         });
 
@@ -199,9 +220,7 @@ describe("ModelPage - save / generate / launch", () => {
             expect(generateDelegates).not.toHaveBeenCalled();
         });
 
-        // explicit requirement: "Automatically launch the generated Spring Boot application after
-        // generation" - a successful Generate must not require a separate manual Launch click.
-        test("automatically launches the generated project without a separate Launch click", async () => {
+        test("stops at generation and leaves Launch for the existing generated project id", async () => {
             renderPage();
             backendWorkflowState = SAVED;
             await saveTheModel();
@@ -210,12 +229,12 @@ describe("ModelPage - save / generate / launch", () => {
             userEvent.click(button("Generate"));
 
             await waitFor(() => expect(generateProject).toHaveBeenCalledWith({ modelId: "m-1" }));
-            // launch fired on its own off the id Generate produced - no second click
-            await waitFor(() => expect(launchProject).toHaveBeenCalledWith({ projectId: "p-9" }));
-            expect(await screen.findByText(/Launched on port 8091/)).toBeInTheDocument();
+            expect(launchProject).not.toHaveBeenCalled();
+            expect(await screen.findByText(/Generated Target Harness Platform for process "order-process" \(id p-9\)\./)).toBeInTheDocument();
+            await waitFor(() => expect(button("Launch")).toBeEnabled());
         });
 
-        test("does not launch when a failed generate produced no project id", async () => {
+        test("reports a failed generate instead of launching", async () => {
             generateProject.mockRejectedValue(new Error("Kaboom"));
 
             renderPage();
@@ -245,23 +264,45 @@ describe("ModelPage - save / generate / launch", () => {
             expect(launchProject).not.toHaveBeenCalled();
         });
 
-        // after the automatic launch, the Launch button stays usable to re-launch the same project id
-        test("re-launches the project id that Generate produced", async () => {
+        test("launches when the Transmute Launch event is dispatched", async () => {
             renderPage();
             backendWorkflowState = SAVED;
             await saveTheModel();
             await waitFor(() => expect(button("Generate")).toBeEnabled());
 
             userEvent.click(button("Generate"));
-            // automatic launch first
-            await waitFor(() => expect(launchProject).toHaveBeenCalledWith({ projectId: "p-9" }));
             await waitFor(() => expect(button("Launch")).toBeEnabled());
 
-            launchProject.mockClear();
+            act(() => {
+                document.dispatchEvent(new CustomEvent("metaml:transmute-launch-current-generated-platform"));
+            });
+
+            await waitFor(() => expect(launchProject).toHaveBeenCalledWith({ projectId: "p-9" }));
+            await waitFor(() =>
+                expect(openCockpitUrl).toHaveBeenCalledWith(
+                    "http://localhost:8091/camunda/app/cockpit/engine/"
+                )
+            );
+        });
+
+        test("launches the generated project id and opens Cockpit directly", async () => {
+            renderPage();
+            backendWorkflowState = SAVED;
+            await saveTheModel();
+            await waitFor(() => expect(button("Generate")).toBeEnabled());
+
+            userEvent.click(button("Generate"));
+            await waitFor(() => expect(button("Launch")).toBeEnabled());
+
             userEvent.click(button("Launch"));
 
             await waitFor(() => expect(launchProject).toHaveBeenCalledWith({ projectId: "p-9" }));
-            expect(await screen.findByText(/Launched on port 8091/)).toBeInTheDocument();
+            await waitFor(() =>
+                expect(openCockpitUrl).toHaveBeenCalledWith(
+                    "http://localhost:8091/camunda/app/cockpit/engine/",
+                )
+            );
+            expect(await screen.findByText(/Launched on port 8091 \(process "order-process"\)\./)).toBeInTheDocument();
         });
 
         // the projectId that makes Launch usable is restored from the backend's own record, so
@@ -277,6 +318,11 @@ describe("ModelPage - save / generate / launch", () => {
 
             userEvent.click(button("Launch"));
             await waitFor(() => expect(launchProject).toHaveBeenCalledWith({ projectId: "proj-9" }));
+            await waitFor(() =>
+                expect(openCockpitUrl).toHaveBeenCalledWith(
+                    "http://localhost:8091/camunda/app/cockpit/engine/",
+                )
+            );
         });
     });
 
