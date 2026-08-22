@@ -98,7 +98,7 @@ public class SpringBootProjectGenerator {
 
         List<BpmnActivities.Activity> activities = BpmnActivities.eligible(model);
         String projectId = UUID.randomUUID().toString();
-        Path projectDir = outputDirectory.resolve(projectId);
+        Path projectDir = resolveProjectDirectory(projectId);
         String basePackage = TARGET_PLATFORM_BASE_PACKAGE + "." + packageSlugFor(processKey);
 
         copyTemplate(projectDir);
@@ -136,7 +136,7 @@ public class SpringBootProjectGenerator {
         String manufProcessKey = extractProcessKey(manufModel);
         String twinProcessKey = extractProcessKey(twinModel);
         String projectId = UUID.randomUUID().toString();
-        Path projectDir = outputDirectory.resolve(projectId);
+        Path projectDir = resolveProjectDirectory(projectId);
         String basePackage = TARGET_PLATFORM_BASE_PACKAGE + "." + packageSlugFor(manufProcessKey);
 
         copyTemplate(projectDir);
@@ -296,6 +296,19 @@ public class SpringBootProjectGenerator {
     // professor said RabbitMQ belongs: "we'll add the rabbit in Q to the template repository. And
     // then that becomes your updated generated set."
     // copyTemplate() + rewritePackage() handle the rest; nothing is generated here.
+
+    // projectId is always a freshly minted UUID (see the two call sites above), never user input,
+    // so this can't actually be walked outside outputDirectory today - but ProcessModelFileStore
+    // guards the same shape of path for the same reason: the check is cheap, and "trusted for now"
+    // is exactly the kind of assumption that stops being true the next time a caller changes.
+    private Path resolveProjectDirectory(String projectId) {
+        Path root = outputDirectory.toAbsolutePath().normalize();
+        Path resolved = root.resolve(projectId).normalize();
+        if (!resolved.startsWith(root)) {
+            throw new IllegalArgumentException("projectId must not resolve outside the output directory: " + projectId);
+        }
+        return resolved;
+    }
 
     // Reconstructs the in-memory registry from disk rather than a separate store that could drift.
     // Directories without exactly one non-twin .bpmn file are skipped, not guessed at.
