@@ -8,6 +8,8 @@ import { WorkbenchRoutes } from "../../routes";
 import UseMessageAlerts from "../hooks/UseMessageAlerts";
 import AlertMessage from "../common/AlertMessage";
 
+const TRANSMUTE_LAUNCH_EVENT = "metaml:transmute-launch-current-generated-platform";
+
 const Header = () => {
     const { errorMessage, setErrorMessage, showErrorAlert, setShowErrorAlert } = UseMessageAlerts();
     const navigate = useNavigate();
@@ -49,7 +51,12 @@ const Header = () => {
                             <NavDropdown.Item as={Link} to={WorkbenchRoutes.EditModel.path}>
                                 Generate
                             </NavDropdown.Item>
-                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.DeployedAppsPage.path}>
+                            <NavDropdown.Item
+                                onClick={(event) => {
+                                    event.preventDefault();
+                                    document.dispatchEvent(new CustomEvent(TRANSMUTE_LAUNCH_EVENT));
+                                }}
+                            >
                                 Launch
                             </NavDropdown.Item>
                         </NavDropdown>

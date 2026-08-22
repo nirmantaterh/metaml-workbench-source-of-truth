@@ -7,6 +7,7 @@ import useBpmnModeler from "../../components/bpmn/useBpmnModeler";
 import "../../components/bpmn/BpmnEditor.css";
 import WorkflowProgress from "../../components/workbench/WorkflowProgress";
 import WorkflowDetailsPanel from "../../components/workbench/WorkflowDetailsPanel";
+import { openCockpitUrl } from "../../components/workbench/openCockpitUrl";
 
 import {
     saveModel,
@@ -19,6 +20,8 @@ import {
 } from "../../services/workbench/WorkbenchService";
 import { listProjects } from "../../services/workbench/ProjectService";
 import { WorkbenchRoutes } from "../../routes";
+
+const TRANSMUTE_LAUNCH_EVENT = "metaml:transmute-launch-current-generated-platform";
 
 const ModelPage = () => {
     const { id: routeModelId } = useParams();
@@ -70,21 +73,24 @@ const ModelPage = () => {
         return () => { cancelled = true; };
     }, []);
     const [savedModelId, setSavedModelId] = useState(null);
-    // restored from workflow state on load so Launch stays usable after a reload
-    const [projectId, setProjectId] = useState(null);
+    // restored from workflow state on load so Launch stays usable after a reload. This is the
+    // generated Target Platform id, not the persisted Workbench Project id or Process Model id.
+    const [generatedProjectId, setGeneratedProjectId] = useState(null);
     const [workflowState, setWorkflowState] = useState(null);
 
     const [status, setStatus] = useState(null); // { type: 'ok'|'err'|'info', text }
     const [busy, setBusy] = useState(false);
     const [detailsOpen, setDetailsOpen] = useState(false);
-    // The generated target platform's own URL (a separate standalone Spring Boot app - see
-    // SpringBootProjectLauncher) once Launch actually succeeds; null whenever nothing confirmed
-    // running belongs to the current projectId (before first Launch, after a Launch failure, or
-    // after Generate produces a fresh project that hasn't been launched yet).
-    const [launchedUrl, setLaunchedUrl] = useState(null);
+    // The generated Target Platform's own base URL (a separate standalone Spring Boot app - see
+    // SpringBootProjectLauncher), set once Launch actually succeeds. Only RedCollarTP-style
+    // platforms expose /api/proxy/start and /api/twin/start, so this is what "Start Proxy + Twin"
+    // below calls directly - never through the Workbench's own `api` axios instance, which points
+    // at a completely different host:port. Reset on every new Launch so a stale base URL is never
+    // used against a platform that isn't running there anymore.
+    const [launchedBaseUrl, setLaunchedBaseUrl] = useState(null);
     // { businessKey, proxy: {processInstanceId, role}, twin: {processInstanceId, role} } once
-    // Start Proxy + Twin succeeds; null before that, and reset on every new Launch/Generate so a
-    // stale pairing from a previous run is never shown against a newly launched instance.
+    // Start Proxy + Twin succeeds; null before that, and reset on every new Launch so a stale
+    // pairing from a previous run is never shown against a newly launched instance.
     const [pairResult, setPairResult] = useState(null);
     const [pairing, setPairing] = useState(false);
 
@@ -94,10 +100,10 @@ const ModelPage = () => {
             const res = await getWorkflowState(modelId);
             const state = res.data || res;
             setWorkflowState(state);
-            // restore projectId so Launch stays available after a reload
+            // restore the generated platform id so Launch stays available after a reload
             const generateStage = state.stages?.GENERATE;
             if (generateStage?.status === "COMPLETED" && generateStage.detail) {
-                setProjectId(generateStage.detail);
+                setGeneratedProjectId(generateStage.detail);
             }
         } catch (err) {
             // ignore: workflow breadcrumb failing shouldn't block the rest of the page
@@ -233,7 +239,7 @@ const ModelPage = () => {
             const saved = res.data || res;
             setSavedModelId(saved.id || null);
             // each save is a new entity; the previous project/launch no longer applies
-            setProjectId(null);
+            setGeneratedProjectId(null);
             setStatus({
                 type: "ok",
                 text: twinBpmnXml
@@ -248,24 +254,26 @@ const ModelPage = () => {
         }
     };
 
-    // Shared by the manual Launch button and the automatic post-generation launch below. Reports
-    // its own success/failure so a launch failure is never mistaken for a generate failure.
-    const launchProjectId = async (idToLaunch) => {
-        setLaunchedUrl(null);
+    // Launch the already-generated standalone runtime for the current persisted model/process.
+    const launchGeneratedProjectId = async (idToLaunch) => {
+        setLaunchedBaseUrl(null);
         setPairResult(null);
         try {
             const res = await launchProject({ projectId: idToLaunch });
             const launched = res.data || res;
+            if (!launched.port) {
+                throw new Error("Launch succeeded but no port was returned");
+            }
+            // Same host as this Workbench frontend, launched port - never a hardcoded host/port.
+            // The target is a fully separate standalone application.
+            const baseUrl = `${window.location.protocol}//${window.location.hostname}:${launched.port}/`;
+            const cockpitUrl = `${baseUrl}camunda/app/cockpit/engine/`;
+            setLaunchedBaseUrl(baseUrl);
             setStatus({
                 type: "ok",
-                text: `Launched on port ${launched.port ?? "?"} (process "${launched.processKey || "?"}").`,
+                text: `Launched on port ${launched.port} (process "${launched.processKey || "?"}").`,
             });
-            // Same host as this Workbench frontend, launched port - never a hardcoded host/port.
-            // The target is a fully separate standalone application; this is only a convenience
-            // link to it, not a route into it.
-            if (launched.port) {
-                setLaunchedUrl(`${window.location.protocol}//${window.location.hostname}:${launched.port}/`);
-            }
+            openCockpitUrl(cockpitUrl);
         } catch (err) {
             setStatus({ type: "err", text: "Launch failed: " + (err.response?.data?.message || err.message) });
         }
@@ -277,25 +285,17 @@ const ModelPage = () => {
             return;
         }
         setBusy(true);
-        setLaunchedUrl(null);
         try {
             const res = await generateProject({ modelId: savedModelId });
             const project = res.data || res;
             const newProjectId = project.projectId || null;
-            setProjectId(newProjectId);
-            // Automatic launch after generation (explicit requirement): a successful Generate must
-            // not require a separate manual Launch click. Reuses the same launch endpoint the Launch
-            // button uses; the Model -> Generate -> Launch indicator still advances on its own as each
-            // backend stage completes. The Launch button stays for re-launching later.
-            if (newProjectId) {
-                setStatus({
-                    type: "info",
-                    text: `Generated Target Harness Platform for process "${project.processKey || "?"}" (id ${newProjectId}) - launching...`,
-                });
-                await launchProjectId(newProjectId);
-            } else {
-                setStatus({ type: "err", text: "Generation returned no project id to launch." });
-            }
+            setGeneratedProjectId(newProjectId);
+            setStatus({
+                type: "ok",
+                text: newProjectId
+                    ? `Generated Target Harness Platform for process "${project.processKey || "?"}" (id ${newProjectId}).`
+                    : "Generated Target Harness Platform.",
+            });
         } catch (err) {
             setStatus({ type: "err", text: "Generate failed: " + (err.response?.data?.message || err.message) });
         } finally {
@@ -305,31 +305,41 @@ const ModelPage = () => {
     };
 
     const handleLaunch = async () => {
-        if (!projectId) {
+        if (!generatedProjectId) {
             setStatus({ type: "err", text: "Generate a project before launching it." });
             return;
         }
         setBusy(true);
-        await launchProjectId(projectId);
+        await launchGeneratedProjectId(generatedProjectId);
         await refreshWorkflowState(savedModelId);
         setBusy(false);
     };
 
+    useEffect(() => {
+        const onLaunchRequest = () => {
+            void handleLaunch();
+        };
+        document.addEventListener(TRANSMUTE_LAUNCH_EVENT, onLaunchRequest);
+        return () => {
+            document.removeEventListener(TRANSMUTE_LAUNCH_EVENT, onLaunchRequest);
+        };
+    }, [handleLaunch]);
+
     // Starts a proxy instance and a twin instance under the SAME businessKey on the launched
     // Target Platform's own REST API (not the workbench backend - a fully separate app, see
-    // launchedUrl's own comment) - that shared key is what SignalBroadcaster/PairRegistry use to
-    // recognize the two as partners and actually synchronize their shared signals over RabbitMQ,
-    // instead of each running unpaired. Only RedCollarTP-style generated platforms expose
-    // /api/proxy/start and /api/twin/start; a generic Target Harness Platform does not, and this
-    // fails with a clear message rather than a confusing 404 if pointed at one of those.
+    // launchedBaseUrl's own comment) - that shared key is what SignalBroadcaster/PairRegistry use
+    // to recognize the two as partners and actually synchronize their shared signals over
+    // RabbitMQ, instead of each running unpaired. Only RedCollarTP-style generated platforms
+    // expose /api/proxy/start and /api/twin/start; a generic Target Harness Platform does not,
+    // and this fails with a clear message rather than a confusing 404 if pointed at one of those.
     const handleStartPair = async () => {
-        if (!launchedUrl) return;
+        if (!launchedBaseUrl) return;
         setPairing(true);
         setPairResult(null);
         const businessKey = `sync-${Date.now()}`;
         try {
             const startSide = async (side) => {
-                const response = await fetch(`${launchedUrl}api/${side}/start?businessKey=${businessKey}`, {
+                const response = await fetch(`${launchedBaseUrl}api/${side}/start?businessKey=${businessKey}`, {
                     method: "POST",
                 });
                 if (!response.ok) {
@@ -475,17 +485,7 @@ const ModelPage = () => {
                             Back to project processes
                         </Button>
                     )}
-                    {launchedUrl && (
-                        <Button
-                            size="sm"
-                            variant="success"
-                            onClick={() => window.open(launchedUrl, "_blank", "noopener,noreferrer")}
-                            title={launchedUrl}
-                        >
-                            Open Target Platform
-                        </Button>
-                    )}
-                    {launchedUrl && (
+                    {launchedBaseUrl && (
                         <Button
                             size="sm"
                             variant="outline-success"
@@ -512,8 +512,8 @@ const ModelPage = () => {
                         size="sm"
                         variant="primary"
                         onClick={handleLaunch}
-                        disabled={busy || !projectId}
-                        title={!projectId ? "Generate a project first" : undefined}
+                        disabled={busy || !generatedProjectId}
+                        title={!generatedProjectId ? "Generate a project first" : undefined}
                     >
                         Launch
                     </Button>
@@ -554,7 +554,7 @@ const ModelPage = () => {
                         <Button
                             size="sm"
                             variant="outline-secondary"
-                            onClick={() => window.open(`${launchedUrl}camunda/app/cockpit/default/`, "_blank", "noopener,noreferrer")}
+                            onClick={() => openCockpitUrl(`${launchedBaseUrl}camunda/app/cockpit/engine/`)}
                         >
                             Open Cockpit
                         </Button>
