@@ -8,6 +8,7 @@ import com.metaml.workbench.constants.ProjectStatus;
 public class ProjectDto {
     private Long id;
     private String name;
+    private String displayName;
     private String description;
     private ProjectStatus status;
 }

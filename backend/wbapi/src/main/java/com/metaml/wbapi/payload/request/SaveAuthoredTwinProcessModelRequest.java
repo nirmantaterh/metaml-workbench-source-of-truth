@@ -16,4 +16,5 @@ public class SaveAuthoredTwinProcessModelRequest {
     private String bpmnXml;
     private String twinBpmnXml;
     private String tenantId;
+    private Long projectId;
 }

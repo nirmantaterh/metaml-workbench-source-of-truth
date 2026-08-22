@@ -9,6 +9,8 @@ export async function getAllProjects() {
     }
 }
 
+export const listProjects = getAllProjects;
+
 export async function createProject(project) {
     try {
         const result = await api.post(`/projects/create`, project);
@@ -16,4 +18,14 @@ export async function createProject(project) {
     } catch (error) {
         throw error;
     }
+}
+
+export async function getProjectProcesses(projectId) {
+    const result = await api.get(`/projects/${projectId}/process-models`);
+    return result.data;
+}
+
+export async function deleteProject(projectId) {
+    const result = await api.delete(`/projects/delete/${projectId}`);
+    return result.data;
 }

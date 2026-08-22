@@ -62,8 +62,11 @@ public class WorkbenchController {
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_MODELE)
     public ResponseEntity<ApiResponse> saveModel(@RequestBody SaveProcessModelRequest request) {
         try {
+            if (request.getProjectId() == null) {
+                throw new IllegalArgumentException("A project must be selected before saving a process model");
+            }
             ProcessModel model = workbenchService.saveProcessModel(request.getId(), request.getName(),
-                    request.getBpmnXml(), request.getTenantId());
+                    request.getBpmnXml(), request.getTenantId(), request.getProjectId());
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, model));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
@@ -81,8 +84,11 @@ public class WorkbenchController {
     public ResponseEntity<ApiResponse> saveModelWithAuthoredTwin(
             @RequestBody com.metaml.wbapi.payload.request.SaveAuthoredTwinProcessModelRequest request) {
         try {
+            if (request.getProjectId() == null) {
+                throw new IllegalArgumentException("A project must be selected before saving a process model");
+            }
             ProcessModel model = workbenchService.saveProcessModelWithAuthoredTwin(request.getId(), request.getName(),
-                    request.getBpmnXml(), request.getTwinBpmnXml(), request.getTenantId());
+                    request.getBpmnXml(), request.getTwinBpmnXml(), request.getTenantId(), request.getProjectId());
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, model));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));

@@ -55,7 +55,7 @@ public class ProcessModelArchive {
     private String preRelease;
     private String buildMetadata;
 
-    @ManyToOne
-    @JoinColumn(name = "project_id")
+    @ManyToOne(optional = false, fetch = FetchType.LAZY)
+    @JoinColumn(name = "project_id", nullable = false)
     private Project project;
 }
