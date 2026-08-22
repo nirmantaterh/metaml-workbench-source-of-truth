@@ -62,6 +62,8 @@
   }
   .pill.on { color: var(--ok); border-color: rgba(87,224,168,0.35); }
   .pill.off { color: var(--off); }
+  a.pill { text-decoration: none; cursor: pointer; }
+  a.pill:hover { border-color: var(--accent); color: var(--text); }
   .cards-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 26px; }
   .stat-card {
     background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; padding: 18px;
@@ -103,7 +105,10 @@
   <main class="main">
     <div class="topbar">
       <h1 id="page-title">Runtime Dashboard</h1>
-      <span id="messaging-pill" class="pill">Messaging: &hellip;</span>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <a class="pill" href="/camunda/app/cockpit/engine/" target="_blank" rel="noopener noreferrer">Open Camunda Cockpit &#8599;</a>
+        <span id="messaging-pill" class="pill">Messaging: &hellip;</span>
+      </div>
     </div>
 
     <div class="cards-row" id="stat-cards"></div>
