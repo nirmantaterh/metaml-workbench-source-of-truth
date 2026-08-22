@@ -27,18 +27,25 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public Project createProject(ProjectDto projectDto) {
-        if (projectDto == null || projectDto.getName() == null || projectDto.getName().isBlank()) {
+        if (projectDto == null) {
             throw new IllegalArgumentException("Project name must not be blank");
         }
+
+        String displayName = projectDto.getDisplayName() != null && !projectDto.getDisplayName().isBlank()
+                ? projectDto.getDisplayName().trim()
+                : projectDto.getName();
+        if (displayName == null || displayName.isBlank()) {
+            throw new IllegalArgumentException("Project name must not be blank");
+        }
+        displayName = displayName.trim();
         if (projectDto.getDescription() != null && projectDto.getDescription().length() > 500) {
             throw new IllegalArgumentException("Project description must be at most 500 characters");
         }
         Project project = new Project();
-        projectDto.setName(projectDto.getName().trim());
+        projectDto.setDisplayName(displayName);
+        projectDto.setName(generateInternalName(displayName));
         projectAttributesMapper.setCommonAttributes(projectDto, project);
-        Project saved = projectRepository.save(project);
-        saved.setDisplayName("PROJECT-%06d".formatted(saved.getId()));
-        return projectRepository.save(saved);
+        return projectRepository.save(project);
     }
 
     @Override
@@ -93,8 +100,16 @@ public class ProjectServiceImpl implements ProjectService {
     }
 
     private void ensureDisplayName(Project project) {
-        if (project.getDisplayName() == null && project.getId() != null) {
-            project.setDisplayName("PROJECT-%06d".formatted(project.getId()));
+        if (project.getDisplayName() == null) {
+            project.setDisplayName(project.getName());
         }
+    }
+
+    private String generateInternalName(String displayName) {
+        String slug = displayName == null ? "" : displayName.toLowerCase()
+                .replaceAll("[^a-z0-9]+", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^_+|_+$", "");
+        return slug.isBlank() ? "project" : slug;
     }
 }

@@ -37,7 +37,7 @@ public class ProjectController {
             Project project = projectService.createProject(request);
             ProjectDto newProject = entityConverter.mapEntityToDto(project, ProjectDto.class);
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.CREATE_PROJECT_SUCCESS + ": "
-                    + newProject.getName(), newProject));
+                    + (newProject.getDisplayName() != null ? newProject.getDisplayName() : newProject.getName()), newProject));
         } catch (AlreadyExistsException e) {
             return ResponseEntity.status(CONFLICT).body(new ApiResponse(e.getMessage(), null));
         } catch (IllegalArgumentException e) {

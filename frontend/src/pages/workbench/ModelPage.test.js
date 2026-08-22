@@ -121,7 +121,7 @@ describe("ModelPage - save / generate / launch", () => {
         jest.clearAllMocks();
         backendWorkflowState = NOTHING_YET;
         getWorkflowState.mockImplementation(async () => backendWorkflowState);
-        listProjects.mockResolvedValue([{ id: "7", displayName: "Project 7", name: "Project 7" }]);
+        listProjects.mockResolvedValue([{ id: "7", displayName: "RedCollar Suits", name: "redcollar_suits" }]);
         listTenants.mockResolvedValue([]);
         getModel.mockResolvedValue({ id: "m-1", name: "New Process", bpmnXml: mockModelXml });
         saveModel.mockResolvedValue({ id: "m-1", name: "New Process" });
@@ -133,6 +133,7 @@ describe("ModelPage - save / generate / launch", () => {
     describe("handleSave", () => {
         test("sends the current diagram XML and the model name", async () => {
             renderPage();
+            expect(await screen.findByRole("option", { name: "RedCollar Suits" })).toBeInTheDocument();
 
             await saveTheModel();
 

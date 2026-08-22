@@ -11,6 +11,7 @@ public class ProjectAttributesMapper {
 
     public void setCommonAttributes(ProjectDto source, Project target) {
         target.setName(source.getName());
+        target.setDisplayName(source.getDisplayName());
         target.setDescription(source.getDescription());
         target.setStatus(source.getStatus() != null ? source.getStatus() : ProjectStatus.PROJECT_CREATED);
     }

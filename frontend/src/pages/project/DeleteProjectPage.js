@@ -21,6 +21,7 @@ const DeleteProjectPage = () => {
         } finally { setLoading(false); }
     }, []);
     useEffect(() => { load(); }, [load]);
+    const projectLabel = (project) => project.displayName || project.name;
     const remove = async () => {
         if (!selected) return;
         setDeleting(true);
@@ -42,11 +43,11 @@ const DeleteProjectPage = () => {
             {loading && <ProcessSpinner message="Loading projects..." />}
             {!loading && projects.length === 0 && <NoDataAvailable dataType="projects" errorMessage="There are no projects to delete." />}
             {!loading && projects.length > 0 && <Table hover responsive><thead><tr><th>ID</th><th>Name</th><th>Display name</th><th /></tr></thead>
-                <tbody>{projects.map((project) => <tr key={project.id}><td>{project.id}</td><td>{project.name}</td><td>{project.displayName}</td>
+                <tbody>{projects.map((project) => <tr key={project.id}><td>{project.id}</td><td>{projectLabel(project)}</td><td>{projectLabel(project)}</td>
                     <td className="text-end"><Button variant="outline-danger" size="sm" onClick={() => setSelected(project)} disabled={deleting}>Delete</Button></td></tr>)}</tbody>
             </Table>}
             <DeleteConfirmationModal show={selected !== null} onHide={() => setSelected(null)} onConfirm={remove}
-                itemToDelete={selected ? `project "${selected.name}" and all of its process models` : ""} />
+                itemToDelete={selected ? `project "${projectLabel(selected)}" and all of its process models` : ""} />
         </Container>
     );
 };

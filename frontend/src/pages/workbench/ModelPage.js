@@ -449,7 +449,7 @@ const ModelPage = () => {
                         <option value="">Select project</option>
                         {projects.map((project) => (
                             <option key={project.id} value={project.id}>
-                                {project.displayName || project.name} — {project.name}
+                                {project.displayName || project.name}
                             </option>
                         ))}
                     </Form.Select>

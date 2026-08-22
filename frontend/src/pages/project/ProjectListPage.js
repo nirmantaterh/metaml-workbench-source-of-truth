@@ -24,6 +24,8 @@ const ProjectListPage = () => {
     }, []);
     useEffect(() => { load(); }, [load]);
 
+    const projectLabel = (project) => project.displayName || project.name;
+
     return (
         <Container className="pt-5 mt-4">
             <h3>Projects</h3>
@@ -32,10 +34,10 @@ const ProjectListPage = () => {
             {!loading && !error && projects.length === 0 && <NoDataAvailable dataType="projects" errorMessage="Create a project to get started." />}
             {!loading && !error && projects.length > 0 && (
                 <Table hover responsive>
-                    <thead><tr><th>Project ID</th><th>Project name</th><th>Display name</th><th>Description</th><th /></tr></thead>
+                    <thead><tr><th>Project ID</th><th>Project name</th><th>Description</th><th /></tr></thead>
                     <tbody>{projects.map((project) => (
                         <tr key={project.id}>
-                            <td>{project.id}</td><td>{project.name}</td><td>{project.displayName}</td><td>{project.description || "-"}</td>
+                            <td>{project.id}</td><td>{projectLabel(project)}</td><td>{project.description || "-"}</td>
                             <td className="text-end"><Button as={Link} size="sm" variant="outline-primary"
                                 to={WorkbenchRoutes.ProjectProcesses.path.replace(":projectId", project.id)}>View processes</Button></td>
                         </tr>
