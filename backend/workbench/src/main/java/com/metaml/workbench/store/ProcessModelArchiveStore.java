@@ -33,14 +33,23 @@ public class ProcessModelArchiveStore {
     }
 
     public ProcessModelArchive save(ProcessModel model, Path bpmnFilePath) {
-        return save(model, bpmnFilePath, null);
+        return save(model, bpmnFilePath, null, null);
     }
 
     // twinBpmnFilePath is null for the ordinary single-BPMN path. Set only alongside
     // model.hasAuthoredTwin() - see ProcessModel.authoredTwinBpmnXml.
     public ProcessModelArchive save(ProcessModel model, Path bpmnFilePath, Path twinBpmnFilePath) {
-        Project project = projectRepository.findByName(model.getName())
-                .orElseGet(() -> projectRepository.save(newProject(model.getName())));
+        return save(model, bpmnFilePath, twinBpmnFilePath, null);
+    }
+
+    // projectId is supplied by the Project UI.  A null value is retained only for legacy direct
+    // service callers and old persisted-workflow tests; new HTTP requests must provide it.
+    public ProcessModelArchive save(ProcessModel model, Path bpmnFilePath, Path twinBpmnFilePath, Long projectId) {
+        Project project = projectId == null
+                ? projectRepository.findByName(model.getName())
+                        .orElseGet(() -> createLegacyProject(model.getName()))
+                : projectRepository.findById(projectId)
+                        .orElseThrow(() -> new IllegalArgumentException("Project not found: " + projectId));
 
         ProcessModelArchive archive = new ProcessModelArchive();
         archive.setModelId(model.getId());
@@ -83,10 +92,12 @@ public class ProcessModelArchiveStore {
                 archive.getTwinBpmnXml(), createdAt, archive.getProcessDefinitionId(), archive.getTenantId());
     }
 
-    private static Project newProject(String name) {
+    private Project createLegacyProject(String name) {
         Project project = new Project();
         project.setName(name);
         project.setStatus(ProjectStatus.PROJECT_CREATED);
-        return project;
+        Project saved = projectRepository.save(project);
+        saved.setDisplayName("PROJECT-%06d".formatted(saved.getId()));
+        return projectRepository.save(saved);
     }
 }

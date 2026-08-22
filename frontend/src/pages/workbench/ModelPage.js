@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Button, Form } from "react-bootstrap";
-import { useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import DataPanel from "../../components/bpmn/DataPanel";
 import useBpmnModeler from "../../components/bpmn/useBpmnModeler";
@@ -17,9 +17,13 @@ import {
     getWorkflowState,
     listTenants,
 } from "../../services/workbench/WorkbenchService";
+import { listProjects } from "../../services/workbench/ProjectService";
+import { WorkbenchRoutes } from "../../routes";
 
 const ModelPage = () => {
     const { id: routeModelId } = useParams();
+    const location = useLocation();
+    const navigate = useNavigate();
 
     const { canvasRef, propertiesPanelRef, modelerRef, selected, importXml, currentXml } = useBpmnModeler();
 
@@ -36,6 +40,8 @@ const ModelPage = () => {
     // caller-supplied ownership, not auth; "" = unowned
     const [tenantId, setTenantId] = useState("");
     const [tenants, setTenants] = useState([]);
+    const [projects, setProjects] = useState([]);
+    const [selectedProjectId, setSelectedProjectId] = useState(location.state?.projectId || "");
 
     useEffect(() => {
         let cancelled = false;
@@ -50,6 +56,18 @@ const ModelPage = () => {
         return () => {
             cancelled = true;
         };
+    }, []);
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const response = await listProjects();
+                if (!cancelled) setProjects(response.data || response || []);
+            } catch (err) {
+                if (!cancelled) setStatus({ type: "err", text: "Could not load projects: " + (err.response?.data?.message || err.message) });
+            }
+        })();
+        return () => { cancelled = true; };
     }, []);
     const [savedModelId, setSavedModelId] = useState(null);
     // restored from workflow state on load so Launch stays usable after a reload
@@ -196,13 +214,17 @@ const ModelPage = () => {
     };
 
     const handleSave = async () => {
+        if (!selectedProjectId) {
+            setStatus({ type: "err", text: "Select a project before saving the process model." });
+            return;
+        }
         setBusy(true);
         try {
             const bpmnXml = await currentXml();
             // "" must become null; backend skips tenant governance only on strict null, not empty string
             const res = twinBpmnXml
-                ? await saveModelWithAuthoredTwin({ name: modelName, bpmnXml, twinBpmnXml, tenantId: tenantId || null })
-                : await saveModel({ name: modelName, bpmnXml, tenantId: tenantId || null });
+                ? await saveModelWithAuthoredTwin({ name: modelName, bpmnXml, twinBpmnXml, tenantId: tenantId || null, projectId: Number(selectedProjectId) })
+                : await saveModel({ name: modelName, bpmnXml, tenantId: tenantId || null, projectId: Number(selectedProjectId) });
             const saved = res.data || res;
             setSavedModelId(saved.id || null);
             // each save is a new entity; the previous project/launch no longer applies
@@ -363,6 +385,21 @@ const ModelPage = () => {
                         onChange={(e) => setModelName(e.target.value)}
                         placeholder="Model name"
                     />
+                    <Form.Select
+                        size="sm"
+                        className="bpmn-model-project"
+                        style={{ maxWidth: 220 }}
+                        value={selectedProjectId}
+                        onChange={(e) => setSelectedProjectId(e.target.value)}
+                        aria-label="Project"
+                    >
+                        <option value="">Select project</option>
+                        {projects.map((project) => (
+                            <option key={project.id} value={project.id}>
+                                {project.displayName || project.name} — {project.name}
+                            </option>
+                        ))}
+                    </Form.Select>
                     <span
                         className="text-muted small bpmn-model-tenant-label"
                         title="Tenant selection is caller-supplied ownership metadata, not a login"
@@ -385,6 +422,16 @@ const ModelPage = () => {
                     </Form.Select>
                     <div className="spacer" />
                     {status && <span className={`bpmn-status ${statusClass}`}>{status.text}</span>}
+                    {selectedProjectId && (
+                        <Button
+                            size="sm"
+                            variant="outline-secondary"
+                            onClick={() => navigate(WorkbenchRoutes.ProjectProcesses.path.replace(":projectId", selectedProjectId))}
+                            disabled={busy}
+                        >
+                            Back to project processes
+                        </Button>
+                    )}
                     {launchedUrl && (
                         <Button
                             size="sm"

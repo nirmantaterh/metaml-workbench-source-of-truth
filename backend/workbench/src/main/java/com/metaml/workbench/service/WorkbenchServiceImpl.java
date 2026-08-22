@@ -461,7 +461,12 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
     @Override
     public ProcessModel saveProcessModel(String id, String name, String bpmnXml, String tenantId) {
-        return doSaveProcessModelEntry(id, name, bpmnXml, null, tenantId);
+        return doSaveProcessModelEntry(id, name, bpmnXml, null, tenantId, null);
+    }
+
+    @Override
+    public ProcessModel saveProcessModel(String id, String name, String bpmnXml, String tenantId, Long projectId) {
+        return doSaveProcessModelEntry(id, name, bpmnXml, null, tenantId, projectId);
     }
 
     @Override
@@ -470,11 +475,20 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         if (twinBpmnXml == null || twinBpmnXml.isBlank()) {
             throw new IllegalArgumentException("Authored twin bpmnXml must not be blank");
         }
-        return doSaveProcessModelEntry(id, name, bpmnXml, twinBpmnXml, tenantId);
+        return doSaveProcessModelEntry(id, name, bpmnXml, twinBpmnXml, tenantId, null);
+    }
+
+    @Override
+    public ProcessModel saveProcessModelWithAuthoredTwin(String id, String name, String bpmnXml,
+            String twinBpmnXml, String tenantId, Long projectId) {
+        if (twinBpmnXml == null || twinBpmnXml.isBlank()) {
+            throw new IllegalArgumentException("Authored twin bpmnXml must not be blank");
+        }
+        return doSaveProcessModelEntry(id, name, bpmnXml, twinBpmnXml, tenantId, projectId);
     }
 
     private ProcessModel doSaveProcessModelEntry(String id, String name, String bpmnXml, String twinBpmnXml,
-            String tenantId) {
+            String tenantId, Long projectId) {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("Process model name must not be blank");
         }
@@ -520,7 +534,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         // next write to this model, not silently left as a stage stuck IN_PROGRESS forever.
         workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.IN_PROGRESS, null);
         try {
-            return doSaveProcessModel(modelId, name, bpmnXml, twinBpmnXml, tenantId);
+            return doSaveProcessModel(modelId, name, bpmnXml, twinBpmnXml, tenantId, projectId);
         } catch (RuntimeException e) {
             // doSaveProcessModel has several distinct throw sites (bad XML, more than one process,
             // not executable, id already exists, file-store failure) behind one outer catch - all
@@ -543,7 +557,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     // gets its own separate Camunda engine at generation time (SpringBootProjectGenerator.
     // generateWithAuthoredTwin).
     private ProcessModel doSaveProcessModel(String modelId, String name, String bpmnXml, String twinBpmnXml,
-            String tenantId) {
+            String tenantId, Long projectId) {
         Deployment deployment;
         try {
             deployment = repositoryService.createDeployment()
@@ -611,7 +625,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         }
         // H2-backed archive is the model's real persistence now; the JSON snapshot below still
         // covers twins and remains a redundant backup for models
-        processModelArchiveStore.save(model, bpmnFilePath, twinBpmnFilePath);
+        processModelArchiveStore.save(model, bpmnFilePath, twinBpmnFilePath, projectId);
         persistState();
         workflowStateTracker.record(modelId, WorkflowStage.MODEL, StageStatus.COMPLETED, null);
         logger.info("Saved process model {} and deployed process definition {}", modelId, definition.getId());
@@ -743,6 +757,20 @@ public class WorkbenchServiceImpl implements WorkbenchService {
             logger.info("Deleted process model {} and {} generated project(s); its workflow history, twins, "
                     + "Camunda state and approvals are retained", modelId, projectIds.size());
             return true;
+        }
+    }
+
+    @Override
+    public boolean canDeleteProcessModel(String modelId) {
+        if (modelId == null || modelId.isBlank()) {
+            return false;
+        }
+        synchronized (modelLockFor(modelId)) {
+            if (!processModels.containsKey(modelId)) {
+                return false;
+            }
+            return springBootProjectLauncher.runIfAllIdle(
+                    allGeneratedProjectIdsOf(workflowStateTracker.stateFor(modelId)), () -> { });
         }
     }
 

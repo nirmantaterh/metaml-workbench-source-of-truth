@@ -25,13 +25,13 @@ const Header = () => {
                     <Nav className="me-auto">
                         <Nav.Link to={"/"}>Catalog</Nav.Link>
                         <NavDropdown title="Project" id="project-nav-dropdown">
-                            <NavDropdown.Item to={"#"}>
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.CreateProject.path}>
                                 Create
                             </NavDropdown.Item>
-                            <NavDropdown.Item to={"#"}>
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.ProjectList.path}>
                                 Edit
                             </NavDropdown.Item>
-                            <NavDropdown.Item to={"#"}>
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.DeleteProject.path}>
                                 Delete
                             </NavDropdown.Item>
                         </NavDropdown>

@@ -6,6 +6,10 @@ export const CommonRoutes = {
 
 // Workbench Routes
 export const WorkbenchRoutes = {
+    CreateProject: { path: `/projects/create` },
+    ProjectList: { path: `/projects/list` },
+    DeleteProject: { path: `/projects/delete` },
+    ProjectProcesses: { path: `/projects/:projectId/processes` },
     SamplePage: { path: `/wb/sample` },
     // legacy path, kept working for anyone with it bookmarked/loaded - CreateModel below is
     // the one the Transmute menu actually links to now
