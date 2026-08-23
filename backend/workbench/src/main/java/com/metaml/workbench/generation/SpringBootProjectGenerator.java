@@ -24,6 +24,7 @@ import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.codegen.GeneratedWorker;
 import com.metaml.workbench.codegen.TargetPlatformMessagingGenerator;
 import com.metaml.workbench.codegen.TargetPlatformSourceGenerator;
+import com.metaml.workbench.codegen.TargetPlatformTwinMirrorGenerator;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -77,6 +78,7 @@ public class SpringBootProjectGenerator {
     private final ExternalTaskWorkerGenerator externalTaskWorkerGenerator;
     private final TargetPlatformSourceGenerator targetPlatformSourceGenerator;
     private final TargetPlatformMessagingGenerator targetPlatformMessagingGenerator;
+    private final TargetPlatformTwinMirrorGenerator targetPlatformTwinMirrorGenerator;
 
     @Autowired
     public SpringBootProjectGenerator(
@@ -85,7 +87,8 @@ public class SpringBootProjectGenerator {
             TwinModelGenerator twinModelGenerator, DelegateClassGenerator delegateClassGenerator,
             ExternalTaskWorkerGenerator externalTaskWorkerGenerator,
             TargetPlatformSourceGenerator targetPlatformSourceGenerator,
-            TargetPlatformMessagingGenerator targetPlatformMessagingGenerator) {
+            TargetPlatformMessagingGenerator targetPlatformMessagingGenerator,
+            TargetPlatformTwinMirrorGenerator targetPlatformTwinMirrorGenerator) {
         this.templateDirectory = Path.of(templateDirectory);
         this.outputDirectory = Path.of(outputDirectory);
         this.twinModelGenerator = twinModelGenerator;
@@ -93,6 +96,7 @@ public class SpringBootProjectGenerator {
         this.externalTaskWorkerGenerator = externalTaskWorkerGenerator;
         this.targetPlatformSourceGenerator = targetPlatformSourceGenerator;
         this.targetPlatformMessagingGenerator = targetPlatformMessagingGenerator;
+        this.targetPlatformTwinMirrorGenerator = targetPlatformTwinMirrorGenerator;
     }
 
     // Preserves the small direct-construction seam used by the existing generator tests.
@@ -101,7 +105,7 @@ public class SpringBootProjectGenerator {
             ExternalTaskWorkerGenerator externalTaskWorkerGenerator) {
         this(templateDirectory, outputDirectory, twinModelGenerator, delegateClassGenerator,
                 externalTaskWorkerGenerator, new TargetPlatformSourceGenerator(),
-                new TargetPlatformMessagingGenerator());
+                new TargetPlatformMessagingGenerator(), new TargetPlatformTwinMirrorGenerator());
     }
 
     public GeneratedProject generate(String bpmnXml, List<GeneratedDelegate> delegates) {
@@ -112,7 +116,11 @@ public class SpringBootProjectGenerator {
         BpmnModelInstance model = Bpmn.readModelFromStream(
                 new ByteArrayInputStream(bpmnXml.getBytes(StandardCharsets.UTF_8)));
         if (isTargetPlatformTemplate()) {
-            return generateTargetPlatform(bpmnXml, Bpmn.convertToString(twinModelGenerator.generate(model)));
+            // Not twinModelGenerator - that rewrite targets the older camundademo governance/
+            // evolve twin workflow (receiveTask/serviceTask pairs waiting on
+            // ${twinAutomationDelegate}, a bean this template doesn't have). RedCollarTP's own
+            // real Twin BPMN is a structural mirror of its proxy, so that's what gets derived here.
+            return generateTargetPlatform(bpmnXml, targetPlatformTwinMirrorGenerator.mirror(bpmnXml));
         }
         String processKey = extractProcessKey(model);
 
@@ -221,6 +229,9 @@ public class SpringBootProjectGenerator {
 
         // Written unconditionally; a BPMN pair without signals still needs the poller.
         writeWorkerInterface(projectDir, basePackage);
+        if (!twinWorkers.isEmpty()) {
+            writeTwinDecisionAgentInterface(projectDir, basePackage + ".worker.twin");
+        }
         writeExternalTaskPoller(projectDir, basePackage);
         writeSchedulingConfig(projectDir, basePackage);
         writeProcessStatusController(projectDir, basePackage);
@@ -279,6 +290,9 @@ public class SpringBootProjectGenerator {
         writeWorkers(projectDir, proxyWorkers);
         writeWorkers(projectDir, twinWorkers);
         writeWorkerInterface(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL);
+        if (!twinWorkers.isEmpty()) {
+            writeTwinDecisionAgentInterface(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL + ".worker.twin");
+        }
         writeExternalTaskPoller(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL);
 
         // proxy<->twin synchronization: neither BPMN throws its own signals (see SignalBroadcaster's
@@ -1616,6 +1630,55 @@ public class SpringBootProjectGenerator {
                 """.formatted(workerPackage);
         Path packageDir = projectDir.resolve("src/main/java").resolve(workerPackage.replace('.', '/'));
         writeFile(packageDir.resolve("GeneratedExternalTaskWorker.java"), source);
+    }
+
+    // Generates the pluggable decision boundary every Twin worker calls instead of hardcoding a
+    // simulation inline (see ExternalTaskWorkerGenerator.renderTwinWorkerSource). Lands in the SAME
+    // package as the twin workers themselves (twinWorkerPackage - not basePackage, which is one
+    // level up) so the generated worker source needs no import for it.
+    //
+    // Deliberately NOT paired with a @ConditionalOnMissingBean default @Component: that combination
+    // looks reasonable but silently fails to register at all - @ConditionalOnMissingBean is only
+    // reliably honored inside @Configuration/@AutoConfiguration classes, not on arbitrary
+    // component-scanned beans, so with zero other implementations on the classpath the "fallback"
+    // bean never gets created and every Twin worker's constructor injection fails at startup (found
+    // this the hard way: GenericPlatformMechanismsEndToEndTest/RabbitMqStress30ActivityTest failing
+    // with "No qualifying bean of type TwinDecisionAgent available"). The worker instead takes an
+    // ObjectProvider<TwinDecisionAgent> and calls getIfAvailable() - see renderTwinWorkerSource -
+    // which returns null cleanly with zero implementations registered and the single implementation
+    // the moment a real @Component providing one exists. No generated code to touch either way.
+    private void writeTwinDecisionAgentInterface(Path projectDir, String twinWorkerPackage) {
+        String interfaceSource = """
+                package %1$s;
+
+                import java.util.Map;
+
+                import org.camunda.bpm.engine.externaltask.LockedExternalTask;
+
+                // Pluggable decision boundary for every Twin worker. With no implementation
+                // registered, the generated worker falls back to synthetic, non-deterministic output
+                // so the twin process can still run standalone (see the worker's own execute() - it
+                // injects this via ObjectProvider, not directly, precisely so zero implementations is
+                // a supported, non-fatal case). To have the twin mirror real business intelligence -
+                // e.g. a risk-scoring model that predicts what the real (proxy) process would decide -
+                // register your own @Component implementing this interface; every generated Twin
+                // worker starts calling it instead, with no generated code to change.
+                public interface TwinDecisionAgent {
+
+                    // topic: the external-task topic being completed (e.g. "VerifyOrderTwin") - lets one
+                    // implementation branch on which BPMN activity it's deciding for.
+                    // task: the locked external task itself, for id/businessKey/variable access.
+                    // Returns the process variables to complete the task with. If this topic feeds an
+                    // exclusive gateway's condition, include that variable in the result if you can - the
+                    // calling worker fills in any the agent leaves out with a non-deterministic fallback
+                    // so the process never throws PropertyNotFoundException, but a real implementation
+                    // should be the one deciding it.
+                    Map<String, Object> decide(String topic, LockedExternalTask task);
+                }
+                """.formatted(twinWorkerPackage);
+
+        Path packageDir = projectDir.resolve("src/main/java").resolve(twinWorkerPackage.replace('.', '/'));
+        writeFile(packageDir.resolve("TwinDecisionAgent.java"), interfaceSource);
     }
 
     // Generates a scheduled poller that drives all GeneratedExternalTaskWorker beans. On each tick

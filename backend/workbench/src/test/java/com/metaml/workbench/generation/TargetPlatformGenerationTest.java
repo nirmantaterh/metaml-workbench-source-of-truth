@@ -175,6 +175,141 @@ class TargetPlatformGenerationTest {
                 .resolve("src/main/java/com/tp/TargetPlatform/signal/SignalBroadcaster.java")).exists();
     }
 
+    // The bug this test exists to prove fixed: the single-BPMN generate() entry point (no
+    // authored Twin attached - see WorkbenchService.saveProcessModel, the plain Save path) used
+    // to hand the proxy BPMN to TwinModelGenerator, which throws on any intermediateCatchEvent -
+    // exactly what a real signal-gated RedCollar proxy is built from. It now mirrors the proxy
+    // instead (see TargetPlatformTwinMirrorGenerator), so this must succeed, not throw.
+    @Test
+    void aSingleSavedBpmnWithSignalGatesAndExternalTasksAutoDerivesAMirroredTwinInsteadOfThrowing() {
+        String proxyBpmnWithSignal = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:signal id="Signal_Cutting" name="cuttingSignal" />
+                  <bpmn2:process id="rc_proxy_process" name="rc_proxy_process" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:intermediateCatchEvent id="CuttingCatch" name="Cutting Signal">
+                      <bpmn2:signalEventDefinition signalRef="Signal_Cutting" />
+                    </bpmn2:intermediateCatchEvent>
+                    <bpmn2:serviceTask id="Cutting" name="Cutting" camunda:type="external" camunda:topic="Cutting" />
+                    <bpmn2:endEvent id="End" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+
+        GeneratedProject project = generator().generate(proxyBpmnWithSignal, java.util.List.of());
+
+        Path tpRoot = project.directory().resolve("src/main/java/com/tp/TargetPlatform");
+        assertThat(tpRoot.resolve("signal/SignalBroadcaster.java")).exists();
+        // the twin BPMN written to disk must carry the mirrored (Twin-suffixed) topic, and the
+        // exact same shared signal name the proxy uses - not a rewritten one
+        assertThat(project.directory().resolve("src/main/resources/processes"))
+                .isDirectoryContaining(p -> p.getFileName().toString().endsWith("_twin.bpmn"));
+    }
+
+    // Proves TwinDecisionAgent (the pluggable decision boundary interface) gets generated right
+    // alongside the twin workers themselves - in the SAME package as the twin workers (worker/twin),
+    // which is what lets the generated worker source reference it with no import (see
+    // ExternalTaskWorkerGenerator). Deliberately does NOT generate a paired
+    // @ConditionalOnMissingBean default @Component - that combination silently fails to register at
+    // all with zero other implementations on the classpath (see writeTwinDecisionAgentInterface's
+    // own comment); the worker takes an ObjectProvider instead, so no separate fallback bean/file is
+    // needed at all.
+    @Test
+    void twinDecisionAgentInterfaceIsGeneratedAlongsideTwinWorkersWithNoFragileConditionalFallbackBean()
+            throws IOException {
+        String proxyBpmn = bpmn("rc_proxy_process",
+                "<bpmn2:serviceTask id=\"VerifyOrder\" name=\"Verify Order\" "
+                        + "camunda:type=\"external\" camunda:topic=\"VerifyOrder\" />");
+        String twinBpmn = bpmn("rc_twin_process",
+                "<bpmn2:serviceTask id=\"VerifyOrderTwin\" name=\"Verify Order\" "
+                        + "camunda:type=\"external\" camunda:topic=\"VerifyOrderTwin\" />");
+
+        GeneratedProject project = generator().generateWithAuthoredTwin(proxyBpmn, twinBpmn);
+        Path twinWorkerPackage = project.directory().resolve("src/main/java/com/tp/TargetPlatform/worker/twin");
+
+        Path agentInterface = twinWorkerPackage.resolve("TwinDecisionAgent.java");
+        assertThat(agentInterface).exists();
+        assertThat(twinWorkerPackage.resolve("DefaultSimulatedTwinAgent.java"))
+                .as("no separate fallback bean - see the comment above for why that combination is unsafe")
+                .doesNotExist();
+
+        assertThat(Files.readString(agentInterface))
+                .contains("package com.tp.TargetPlatform.worker.twin;")
+                .contains("public interface TwinDecisionAgent")
+                .contains("Map<String, Object> decide(String topic, LockedExternalTask task);");
+
+        // The generated worker itself must be the one calling through the agent (optionally, via
+        // ObjectProvider), not the other way around - and it must still work standalone with zero
+        // TwinDecisionAgent beans registered anywhere.
+        Path verifyOrderTwinWorker = twinWorkerPackage.resolve("VerifyOrderTwinWorker.java");
+        assertThat(Files.readString(verifyOrderTwinWorker))
+                .contains("ObjectProvider<TwinDecisionAgent> agentProvider")
+                .contains("agentProvider.getIfAvailable()")
+                .contains("agent.decide(\"VerifyOrderTwin\", task)")
+                .contains("No TwinDecisionAgent registered");
+    }
+
+    // The other half of "twin also needs to make decisions automatically": a real human-approval
+    // step (userTask) must NOT be touched by any of this - not mirrored into a machine-driven
+    // node, not given a generated worker or delegate on either side. It stays exactly what it was
+    // authored as, on both proxy and twin, so a real person still completes it via Tasklist; only
+    // nodes explicitly modeled as external-task get auto-driven (see RiskScoreTwin below).
+    @Test
+    void aUserTaskSurvivesGenerationUntouchedOnBothSidesAndNeverGetsAWorkerOrDelegate() throws IOException {
+        String proxyBpmnWithUserTask = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="rc_loan_process" name="rc_loan_process" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:serviceTask id="RiskScore" name="Risk Score"
+                        camunda:type="external" camunda:topic="RiskScore" />
+                    <bpmn2:userTask id="LoanOfficerApproval" name="Loan Officer Approval"
+                        camunda:candidateGroups="loan-officers" />
+                    <bpmn2:endEvent id="End" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+
+        GeneratedProject project = generator().generate(proxyBpmnWithUserTask, java.util.List.of());
+        Path processesDir = project.directory().resolve("src/main/resources/processes");
+
+        // The mirrored twin BPMN keeps the userTask verbatim - same id, same candidate group,
+        // still a bpmn2:userTask element, not rewritten into anything auto-drivable.
+        Path twinBpmnFile;
+        try (var files = Files.list(processesDir)) {
+            twinBpmnFile = files.filter(p -> p.getFileName().toString().endsWith("_twin.bpmn")).findFirst()
+                    .orElseThrow(() -> new AssertionError("no mirrored twin BPMN written to " + processesDir));
+        }
+        // Attribute order in the serialized XML isn't something the mirror generator promises to
+        // preserve (it re-serializes the whole document) - what matters is that the element is
+        // still a plain bpmn2:userTask carrying its original id and candidate group, not rewritten
+        // into anything auto-drivable.
+        String twinBpmnXml = Files.readString(twinBpmnFile);
+        assertThat(twinBpmnXml)
+                .contains("<bpmn2:userTask")
+                .contains("id=\"LoanOfficerApproval\"")
+                .contains("camunda:candidateGroups=\"loan-officers\"");
+
+        // Neither side gets a worker or a delegate generated for the userTask id - it stays a
+        // manual Tasklist step on both proxy and twin.
+        Path tpRoot = project.directory().resolve("src/main/java/com/tp/TargetPlatform");
+        try (var files = Files.walk(tpRoot)) {
+            assertThat(files.filter(p -> p.getFileName().toString().startsWith("LoanOfficerApproval")).toList())
+                    .as("no generated class of any kind for the userTask")
+                    .isEmpty();
+        }
+
+        // The external-task decision point right next to it DOES get auto-driven on both sides -
+        // proving the two coexist correctly in the same BPMN.
+        assertThat(tpRoot.resolve("worker/proxy/RiskScoreWorker.java")).exists();
+        assertThat(tpRoot.resolve("worker/twin/RiskScoreTwinWorker.java")).exists();
+    }
+
     private static void write(Path path, String content) throws IOException {
         Files.createDirectories(path.getParent());
         Files.writeString(path, content, StandardCharsets.UTF_8);

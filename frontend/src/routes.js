@@ -14,12 +14,18 @@ export const WorkbenchRoutes = {
     // legacy path, kept working for anyone with it bookmarked/loaded - CreateModel below is
     // the one the Transmute menu actually links to now
     ModelPage: { path: `/wb/model` },
-    // New scope item 1: Transmute menu is just these two now. Both land on the same editor -
-    // CreateModel always starts blank, EditModel picks a saved model first (see
-    // EditProjectListPage) then opens the editor already loaded with it.
     CreateModel: { path: `/wb/model/new` },
+    // Kept working for anyone with it bookmarked - EditProjectListPage still opens a saved model
+    // straight into the editor - but Transmute > Generate no longer links here; see
+    // GenerateModelList below for what it links to now.
     EditModel: { path: `/wb/model/edit` },
     ModelEditor: { path: `/wb/model/:id` },
+    // Transmute > Generate: every saved process across every project, one row each, with its own
+    // Generate button - not an editor. See GenerateProjectListPage.
+    GenerateModelList: { path: `/wb/model/generate` },
+    // Transmute > Launch: every process that has already been generated, one row each, with its
+    // own Launch button. See LaunchProjectListPage.
+    LaunchModelList: { path: `/wb/model/launch` },
     // Separate top-level menu per scope item 1 - Connect/Evolve/Bridge move here, out of the
     // model editor's own toolbar
     EvolvePage: { path: `/wb/evolve` },

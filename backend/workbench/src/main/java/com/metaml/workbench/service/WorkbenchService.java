@@ -1,6 +1,7 @@
 package com.metaml.workbench.service;
 
 import com.metaml.workbench.codegen.GeneratedDelegate;
+import com.metaml.workbench.dto.ProcessModelSummaryDto;
 import com.metaml.workbench.generation.GeneratedProject;
 import com.metaml.workbench.generation.LaunchedProject;
 import com.metaml.workbench.governance.Approval;
@@ -74,6 +75,11 @@ public interface WorkbenchService {
     // just a lookup by an id the user already has to know. Newest first - that's the one someone
     // just saved and is the most likely thing they're about to come back and edit.
     List<ProcessModel> listProcessModels();
+
+    // Backs the Transmute > Generate / Launch pickers: every saved process, across every
+    // project, each row carrying which project it belongs to - listProcessModels() above can't
+    // say that (ProcessModel has no project field of its own).
+    List<ProcessModelSummaryDto> listProcessModelSummaries();
 
     // New scope item 3 (BPMN Processing): one generated Java Delegate class per unique
     // delegateExpression on the saved model's service tasks. Read-only - this only generates

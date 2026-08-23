@@ -8,8 +8,6 @@ import { WorkbenchRoutes } from "../../routes";
 import UseMessageAlerts from "../hooks/UseMessageAlerts";
 import AlertMessage from "../common/AlertMessage";
 
-const TRANSMUTE_LAUNCH_EVENT = "metaml:transmute-launch-current-generated-platform";
-
 const Header = () => {
     const { errorMessage, setErrorMessage, showErrorAlert, setShowErrorAlert } = UseMessageAlerts();
     const navigate = useNavigate();
@@ -37,26 +35,20 @@ const Header = () => {
                                 Delete
                             </NavDropdown.Item>
                         </NavDropdown>
-                        {/* Model / Generate / Launch is one continuous pipeline (see WorkflowStage),
-                            not three independent pages - Generate needs a saved model id and
-                            Launch needs a generated project id, both only available once you're
-                            already in the editor for that model. So only "Model" opens straight
-                            into a blank editor; the other two entries take you to where that
-                            model/project state actually lives - pick a saved model to resume its
-                            Generate/Launch buttons, or see everything already launched. */}
+                        {/* Model / Generate / Launch is one pipeline (see WorkflowStage) but three
+                            separate pickers, not one editor with three buttons: Model always
+                            starts a blank editor (Save is the only thing it does); Generate and
+                            Launch each list every saved process across every project and act
+                            on whichever row you pick - see GenerateProjectListPage /
+                            LaunchProjectListPage. */}
                         <NavDropdown title="Transmute" id="transmute-nav-dropdown">
                             <NavDropdown.Item as={Link} to={WorkbenchRoutes.CreateModel.path}>
                                 Model
                             </NavDropdown.Item>
-                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.EditModel.path}>
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.GenerateModelList.path}>
                                 Generate
                             </NavDropdown.Item>
-                            <NavDropdown.Item
-                                onClick={(event) => {
-                                    event.preventDefault();
-                                    document.dispatchEvent(new CustomEvent(TRANSMUTE_LAUNCH_EVENT));
-                                }}
-                            >
+                            <NavDropdown.Item as={Link} to={WorkbenchRoutes.LaunchModelList.path}>
                                 Launch
                             </NavDropdown.Item>
                         </NavDropdown>

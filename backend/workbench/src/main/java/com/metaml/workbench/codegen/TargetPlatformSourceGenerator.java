@@ -95,8 +95,17 @@ public class TargetPlatformSourceGenerator {
         NodeList listeners = document.getElementsByTagNameNS(CAMUNDA_NS, "executionListener");
         for (int i = 0; i < listeners.getLength(); i++) {
             Element listener = (Element) listeners.item(i);
-            String beanName = stripExpression(listener.getAttribute("delegateExpression"));
-            if (beanName.isBlank() || !seen.add(beanName)) continue;
+            String originalBeanName = stripExpression(listener.getAttribute("delegateExpression"));
+            if (originalBeanName.isBlank()) continue;
+            // The twin side always gets its own bean name, distinct from whatever the proxy BPMN
+            // named it - proxy and twin can genuinely name the same original listener (a
+            // structural mirror of the proxy always does; see TargetPlatformTwinMirrorGenerator,
+            // and two independently authored BPMNs could too by coincidence), and Spring refuses
+            // to start with two different classes registered under one bean name. The BPMN itself
+            // gets rewritten to match, the same way activity/event delegateExpressions above do.
+            String beanName = twin ? originalBeanName + "Twin" : originalBeanName;
+            listener.setAttribute("delegateExpression", "${" + beanName + "}");
+            if (!seen.add(beanName)) continue;
             String className = pascal(beanName);
             String directory = (twin ? "twin" : "proxy") + "/listeners";
             String packageName = "com.tp.TargetPlatform." + directory.replace('/', '.');

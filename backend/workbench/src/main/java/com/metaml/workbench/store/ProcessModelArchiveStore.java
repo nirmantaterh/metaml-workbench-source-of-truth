@@ -6,10 +6,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 
 import com.metaml.workbench.constants.ProjectStatus;
+import com.metaml.workbench.dto.ProcessModelSummaryDto;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.ProcessModelArchive;
 import com.metaml.workbench.model.Project;
@@ -74,6 +76,21 @@ public class ProcessModelArchiveStore {
     public List<ProcessModel> findAll() {
         return archiveRepository.findAll().stream()
                 .map(ProcessModelArchiveStore::toProcessModel)
+                .toList();
+    }
+
+    // Unlike findAll() above, keeps the project association - toProcessModel() has to drop it
+    // (ProcessModel has no notion of a project), but the Transmute > Generate / Launch pickers
+    // need exactly that to show which project each row belongs to, so this reads straight off
+    // the archive instead of round-tripping through ProcessModel.
+    public List<ProcessModelSummaryDto> findAllSummaries() {
+        return archiveRepository.findAll().stream()
+                .sorted(Comparator.comparing(ProcessModelArchive::getCreatedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder())))
+                .map(archive -> new ProcessModelSummaryDto(archive.getModelId(), archive.getName(),
+                        archive.getCreatedAt(),
+                        archive.getProject() == null ? null : archive.getProject().getId(),
+                        archive.getProject() == null ? null : archive.getProject().getDisplayName()))
                 .toList();
     }
 

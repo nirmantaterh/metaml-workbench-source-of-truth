@@ -31,11 +31,16 @@ import java.util.regex.Pattern;
 // workers are also simpler and faster: no HTTP round-trip, no port configuration, no startup
 // race between server and client.
 //
-// simulateMlAgent decides whether the worker invokes a simulated agent boundary. Twin workers
-// call simulateAgentInvocation(), which produces runtime data — a unique invocation ID and
-// timestamp — that varies per execution, and complete the task with that data as process
-// variables. Manufacturing workers just log execution and complete. Neither is RedCollar-specific:
-// both read topics straight from the model, and the flag is the caller's.
+// simulateMlAgent decides whether the worker delegates its decision to a TwinDecisionAgent bean
+// (see SpringBootProjectGenerator.writeTwinDecisionAgentInterface) instead of just logging and
+// completing. Every generated Twin worker takes one in its constructor and calls decide(topic,
+// task) for its completion variables - which is what makes the twin side pluggable: register your
+// own @Component implementing TwinDecisionAgent (a real risk model, an ML call, whatever the twin
+// should be mirroring) and Spring wires it in ahead of the generated fallback with no generated
+// code to touch. Manufacturing (proxy) workers just log execution and complete - they're driven by
+// the real business systems the process already targets, not by a pluggable decision boundary.
+// Neither is RedCollar-specific: both read topics straight from the model, and the flag is the
+// caller's.
 //
 // Gateway variable detection: when an external task immediately precedes an exclusive gateway
 // whose condition references a process variable, the generated worker must set that variable or
@@ -138,15 +143,38 @@ public class ExternalTaskWorkerGenerator {
     private static String renderSource(String packageName, String className, String topic, String label,
             boolean simulateMlAgent, Set<String> gatewayVars) {
         return simulateMlAgent
-                ? renderTwinWorkerSource(packageName, className, topic, label)
+                ? renderTwinWorkerSource(packageName, className, topic, label, gatewayVars)
                 : renderPlainWorkerSource(packageName, className, topic, label, gatewayVars);
     }
 
-    // Twin workers invoke a simulated agent boundary that produces unique runtime data per
-    // execution, then complete the external task with that data as process variables.
-    private static String renderTwinWorkerSource(String packageName, String className, String topic, String label) {
+    // Twin workers delegate their completion variables to an OPTIONALLY injected TwinDecisionAgent
+    // (see SpringBootProjectGenerator.writeTwinDecisionAgentInterface) - the pluggable boundary a
+    // real model/agent implementation attaches to. ObjectProvider (not a directly injected
+    // TwinDecisionAgent, and deliberately not a second @ConditionalOnMissingBean fallback
+    // @Component either - that combination silently fails to register: @ConditionalOnMissingBean
+    // is only reliably honored inside @Configuration/@AutoConfiguration classes, not on arbitrary
+    // component-scanned beans, so with no other implementation on the classpath the "fallback" bean
+    // never gets created at all and the app fails to start) is what makes this pluggable AND safe
+    // with zero implementations registered: getIfAvailable() returns null cleanly when nobody has
+    // wired one in, and returns the single implementation the moment a real @Component providing
+    // one exists - no generated code to touch either way. If this topic's activity directly
+    // precedes an exclusive gateway (see detectGatewayVariables), the gateway's condition variables
+    // must ALSO land in the completion map - the twin side runs its own copy of the same BPMN
+    // structure, so the same PropertyNotFoundException risk applies here exactly as it does to the
+    // plain (proxy) worker. Rather than require every TwinDecisionAgent implementation to know
+    // which topics feed which gateways, the worker itself fills in any gateway variable that's
+    // still missing after either path runs, with the same non-deterministic fallback the proxy side
+    // uses - a real agent that DOES set the variable simply has that value win.
+    private static String renderTwinWorkerSource(String packageName, String className, String topic, String label,
+            Set<String> gatewayVars) {
         // Derive the worker base package for the GeneratedExternalTaskWorker import
         String workerBasePackage = packageName.substring(0, packageName.lastIndexOf('.'));
+        StringBuilder fallbackLines = new StringBuilder();
+        for (String varName : gatewayVars) {
+            fallbackLines.append("            if (!variables.containsKey(\"").append(varName).append("\")) {\n")
+                    .append("                variables.put(\"").append(varName)
+                    .append("\", Math.random() > 0.5);\n            }\n");
+        }
         return """
                 package %1$s;
 
@@ -158,6 +186,7 @@ public class ExternalTaskWorkerGenerator {
                 import org.camunda.bpm.engine.externaltask.LockedExternalTask;
                 import org.slf4j.Logger;
                 import org.slf4j.LoggerFactory;
+                import org.springframework.beans.factory.ObjectProvider;
                 import org.springframework.stereotype.Component;
 
                 import %5$s.GeneratedExternalTaskWorker;
@@ -168,6 +197,12 @@ public class ExternalTaskWorkerGenerator {
 
                     private static final Logger logger = LoggerFactory.getLogger(%4$s.class);
 
+                    private final ObjectProvider<TwinDecisionAgent> agentProvider;
+
+                    public %4$s(ObjectProvider<TwinDecisionAgent> agentProvider) {
+                        this.agentProvider = agentProvider;
+                    }
+
                     @Override
                     public String topic() {
                         return "%2$s";
@@ -175,25 +210,29 @@ public class ExternalTaskWorkerGenerator {
 
                     @Override
                     public void execute(LockedExternalTask task, ExternalTaskService externalTaskService) {
-                        logger.info("[Twin] Invoking simulated ML agent for activity \\"%3$s\\" "
-                                + "(process instance {})", task.getProcessInstanceId());
-                        Map<String, Object> agentResult = simulateAgentInvocation(task);
-                        logger.info("[Twin] Agent invocation result: {}", agentResult);
-                        externalTaskService.complete(task.getId(), "generated-worker", agentResult);
-                    }
-
-                    // Simulated agent invocation boundary. Produces runtime data that varies per
-                    // execution rather than a predetermined outcome. Replace this method body with
-                    // real agent/ML integration when ready.
-                    private Map<String, Object> simulateAgentInvocation(LockedExternalTask task) {
-                        Map<String, Object> output = new HashMap<>();
-                        output.put("agentTopic", task.getTopicName());
-                        output.put("agentInvocationId", UUID.randomUUID().toString());
-                        output.put("agentTimestamp", System.currentTimeMillis());
-                        return output;
+                        TwinDecisionAgent agent = agentProvider.getIfAvailable();
+                        Map<String, Object> variables;
+                        if (agent != null) {
+                            logger.info("[Twin] Invoking decision agent {} for activity \\"%3$s\\" "
+                                    + "(process instance {})", agent.getClass().getSimpleName(), task.getProcessInstanceId());
+                            variables = new HashMap<>(agent.decide("%2$s", task));
+                        } else {
+                            // No TwinDecisionAgent registered - built-in fallback. Produces synthetic,
+                            // runtime-varying output rather than a predetermined business outcome so
+                            // the twin can still run standalone; register a @Component implementing
+                            // TwinDecisionAgent to replace this with a real model/agent call.
+                            logger.info("[Twin] No TwinDecisionAgent registered, using built-in simulated output "
+                                    + "for activity \\"%3$s\\" (process instance {})", task.getProcessInstanceId());
+                            variables = new HashMap<>();
+                            variables.put("agentTopic", "%2$s");
+                            variables.put("agentInvocationId", UUID.randomUUID().toString());
+                            variables.put("agentTimestamp", System.currentTimeMillis());
+                        }
+                %6$s        logger.info("[Twin] Completion variables: {}", variables);
+                        externalTaskService.complete(task.getId(), "generated-worker", variables);
                     }
                 }
-                """.formatted(packageName, topic, label, className, workerBasePackage);
+                """.formatted(packageName, topic, label, className, workerBasePackage, fallbackLines);
     }
 
     private static String renderPlainWorkerSource(String packageName, String className, String topic, String label,

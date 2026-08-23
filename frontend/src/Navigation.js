@@ -11,6 +11,8 @@ import Home from "./pages/Home";
 import SamplPage from "./pages/workbench/SamplePage";
 import ModelPage from "./pages/workbench/ModelPage";
 import EditProjectListPage from "./pages/workbench/EditProjectListPage";
+import GenerateProjectListPage from "./pages/workbench/GenerateProjectListPage";
+import LaunchProjectListPage from "./pages/workbench/LaunchProjectListPage";
 import CreateProjectPage from "./pages/project/CreateProjectPage";
 import ProjectListPage from "./pages/project/ProjectListPage";
 import ProjectProcessListPage from "./pages/project/ProjectProcessListPage";
@@ -34,6 +36,8 @@ const router = createBrowserRouter(
                 <Route path={WorkbenchRoutes.CreateModel.path} element={<ModelPage/>} />
                 <Route path={WorkbenchRoutes.ModelEditor.path} element={<ModelPage/>} />
                 <Route path={WorkbenchRoutes.EditModel.path} element={<EditProjectListPage/>} />
+                <Route path={WorkbenchRoutes.GenerateModelList.path} element={<GenerateProjectListPage/>} />
+                <Route path={WorkbenchRoutes.LaunchModelList.path} element={<LaunchProjectListPage/>} />
                 <Route path={WorkbenchRoutes.CreateProject.path} element={<CreateProjectPage/>} />
                 <Route path={WorkbenchRoutes.ProjectList.path} element={<ProjectListPage/>} />
                 <Route path={WorkbenchRoutes.ProjectProcesses.path} element={<ProjectProcessListPage/>} />

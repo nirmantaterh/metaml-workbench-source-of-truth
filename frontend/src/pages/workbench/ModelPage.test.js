@@ -5,16 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import ModelPage from "./ModelPage";
 import { listProjects } from "../../services/workbench/ProjectService";
-import {
-    saveModel,
-    getModel,
-    generateDelegates,
-    generateProject,
-    launchProject,
-    getWorkflowState,
-    listTenants,
-} from "../../services/workbench/WorkbenchService";
-import { openCockpitUrl } from "../../components/workbench/openCockpitUrl";
+import { saveModel, getModel, getWorkflowState, listTenants } from "../../services/workbench/WorkbenchService";
 
 // name has to start with "mock" to be referenced from a jest.mock factory below
 const mockModelXml = "<definitions id=\"test-model\" />";
@@ -22,9 +13,6 @@ const mockModelXml = "<definitions id=\"test-model\" />";
 jest.mock("../../services/workbench/WorkbenchService", () => ({
     saveModel: jest.fn(),
     getModel: jest.fn(),
-    generateDelegates: jest.fn(),
-    generateProject: jest.fn(),
-    launchProject: jest.fn(),
     getWorkflowState: jest.fn(),
     listTenants: jest.fn(),
 }));
@@ -34,8 +22,8 @@ jest.mock("../../services/workbench/ProjectService", () => ({
 }));
 
 // the real hook boots bpmn-js, which ships untransformed ESM and wants a live canvas to attach to -
-// neither belongs in a test of this page's save/generate/launch rules. currentXml is the only part
-// these tests actually depend on: it's what handleSave sends to the backend.
+// neither belongs in a test of this page's save rules. currentXml is the only part these tests
+// actually depend on: it's what handleSave sends to the backend.
 jest.mock("../../components/bpmn/useBpmnModeler", () => ({
     __esModule: true,
     default: () => ({
@@ -53,11 +41,6 @@ jest.mock("../../components/bpmn/useBpmnModeler", () => ({
 jest.mock("../../components/bpmn/DataPanel", () => ({
     __esModule: true,
     default: () => null,
-}));
-
-jest.mock("../../components/workbench/openCockpitUrl", () => ({
-    __esModule: true,
-    openCockpitUrl: jest.fn(),
 }));
 
 // omitting timestamp keeps WorkflowProgress's title exactly the status string, so a title query
@@ -78,15 +61,9 @@ const SAVED = {
     },
 };
 
-const GENERATING = {
-    currentStage: "GENERATE",
-    stages: {
-        MODEL: stage("COMPLETED", "model saved"),
-        GENERATE: stage("IN_PROGRESS"),
-        LAUNCH: stage("PENDING"),
-    },
-};
-
+// Generate/Launch are triggered from their own Transmute pickers now (see
+// GenerateProjectListPage / LaunchProjectListPage), not from this page - this fixture is what
+// reopening a model already generated elsewhere looks like.
 const GENERATED = {
     currentStage: "LAUNCH",
     stages: {
@@ -116,7 +93,7 @@ const saveTheModel = async () => {
     await waitFor(() => expect(button("Save")).toBeEnabled());
 };
 
-describe("ModelPage - save / generate / launch", () => {
+describe("ModelPage - save", () => {
     beforeEach(() => {
         jest.clearAllMocks();
         backendWorkflowState = NOTHING_YET;
@@ -125,9 +102,6 @@ describe("ModelPage - save / generate / launch", () => {
         listTenants.mockResolvedValue([]);
         getModel.mockResolvedValue({ id: "m-1", name: "New Process", bpmnXml: mockModelXml });
         saveModel.mockResolvedValue({ id: "m-1", name: "New Process" });
-        generateDelegates.mockResolvedValue([]);
-        generateProject.mockResolvedValue({ projectId: "p-9", processKey: "order-process" });
-        launchProject.mockResolvedValue({ port: 8091, processKey: "order-process" });
     });
 
     describe("handleSave", () => {
@@ -158,8 +132,6 @@ describe("ModelPage - save / generate / launch", () => {
             userEvent.click(button("Save"));
 
             await waitFor(() => expect(button("Save")).toBeDisabled());
-            // still pending - nothing has come back to enable the next stage yet
-            expect(button("Generate")).toBeDisabled();
 
             backendWorkflowState = SAVED;
             await act(async () => {
@@ -169,161 +141,34 @@ describe("ModelPage - save / generate / launch", () => {
             await waitFor(() => expect(button("Save")).toBeEnabled());
         });
 
-        test("reports a failed save instead of advancing the pipeline", async () => {
+        test("reports a failed save", async () => {
             saveModel.mockRejectedValue(new Error("Boom"));
 
             renderPage();
             userEvent.click(button("Save"));
 
             expect(await screen.findByText(/Save failed: Boom/)).toBeInTheDocument();
-            expect(button("Generate")).toBeDisabled();
-        });
-    });
-
-    describe("handleGenerate", () => {
-        test("is disabled until the model has been saved", async () => {
-            renderPage();
-
-            const generate = button("Generate");
-            expect(generate).toBeDisabled();
-            expect(generate).toHaveAttribute("title", "Save the model first");
-
-            userEvent.click(generate);
-            expect(generateDelegates).not.toHaveBeenCalled();
-            expect(generateProject).not.toHaveBeenCalled();
         });
 
-        test("becomes enabled once a save succeeds, and loses its explanatory title", async () => {
-            renderPage();
-            backendWorkflowState = SAVED;
+        test("only Back to project processes and Save appear - no Generate or Launch button here",
+            async () => {
+                renderPage();
+                await screen.findByRole("option", { name: "RedCollar Suits" });
 
-            await saveTheModel();
-
-            await waitFor(() => expect(button("Generate")).toBeEnabled());
-            expect(button("Generate")).not.toHaveAttribute("title");
-        });
-
-        // generateDelegates used to run before generateProject here, but it records no workflow
-        // state - a failure raised there aborted the click before the FAILED stage carrying
-        // bpmnElementId was ever written, which is exactly what kept "Go to error" from appearing
-        // on an element-specific generation failure. generateProject regenerates the delegates
-        // itself anyway (against the right package - see doGenerateSpringBootProject), so the
-        // preview call was only ever duplicating work outside the recorded path. Removed.
-        test("generates the project for the saved model id", async () => {
-            renderPage();
-            backendWorkflowState = SAVED;
-            await saveTheModel();
-            await waitFor(() => expect(button("Generate")).toBeEnabled());
-
-            userEvent.click(button("Generate"));
-
-            await waitFor(() => expect(generateProject).toHaveBeenCalledWith({ modelId: "m-1" }));
-            expect(generateDelegates).not.toHaveBeenCalled();
-        });
-
-        test("stops at generation and leaves Launch for the existing generated project id", async () => {
-            renderPage();
-            backendWorkflowState = SAVED;
-            await saveTheModel();
-            await waitFor(() => expect(button("Generate")).toBeEnabled());
-
-            userEvent.click(button("Generate"));
-
-            await waitFor(() => expect(generateProject).toHaveBeenCalledWith({ modelId: "m-1" }));
-            expect(launchProject).not.toHaveBeenCalled();
-            expect(await screen.findByText(/Generated Target Harness Platform for process "order-process" \(id p-9\)\./)).toBeInTheDocument();
-            await waitFor(() => expect(button("Launch")).toBeEnabled());
-        });
-
-        test("reports a failed generate instead of launching", async () => {
-            generateProject.mockRejectedValue(new Error("Kaboom"));
-
-            renderPage();
-            backendWorkflowState = SAVED;
-            await saveTheModel();
-            await waitFor(() => expect(button("Generate")).toBeEnabled());
-
-            userEvent.click(button("Generate"));
-
-            expect(await screen.findByText(/Generate failed: Kaboom/)).toBeInTheDocument();
-            expect(launchProject).not.toHaveBeenCalled();
-        });
-    });
-
-    describe("handleLaunch", () => {
-        test("is disabled until a project has been generated", async () => {
-            renderPage();
-            backendWorkflowState = SAVED;
-            await saveTheModel();
-            await waitFor(() => expect(button("Generate")).toBeEnabled());
-
-            const launch = button("Launch");
-            expect(launch).toBeDisabled();
-            expect(launch).toHaveAttribute("title", "Generate a project first");
-
-            userEvent.click(launch);
-            expect(launchProject).not.toHaveBeenCalled();
-        });
-
-        test("launches when the Transmute Launch event is dispatched", async () => {
-            renderPage();
-            backendWorkflowState = SAVED;
-            await saveTheModel();
-            await waitFor(() => expect(button("Generate")).toBeEnabled());
-
-            userEvent.click(button("Generate"));
-            await waitFor(() => expect(button("Launch")).toBeEnabled());
-
-            act(() => {
-                document.dispatchEvent(new CustomEvent("metaml:transmute-launch-current-generated-platform"));
+                expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+                expect(screen.getByRole("button", { name: "Back to project processes" })).toBeInTheDocument();
+                expect(screen.queryByRole("button", { name: "Generate" })).not.toBeInTheDocument();
+                expect(screen.queryByRole("button", { name: "Launch" })).not.toBeInTheDocument();
             });
 
-            await waitFor(() => expect(launchProject).toHaveBeenCalledWith({ projectId: "p-9" }));
-            await waitFor(() =>
-                expect(openCockpitUrl).toHaveBeenCalledWith(
-                    "http://localhost:8091/camunda/app/cockpit/engine/"
-                )
-            );
-        });
-
-        test("launches the generated project id and opens Cockpit directly", async () => {
-            renderPage();
-            backendWorkflowState = SAVED;
-            await saveTheModel();
-            await waitFor(() => expect(button("Generate")).toBeEnabled());
-
-            userEvent.click(button("Generate"));
-            await waitFor(() => expect(button("Launch")).toBeEnabled());
-
-            userEvent.click(button("Launch"));
-
-            await waitFor(() => expect(launchProject).toHaveBeenCalledWith({ projectId: "p-9" }));
-            await waitFor(() =>
-                expect(openCockpitUrl).toHaveBeenCalledWith(
-                    "http://localhost:8091/camunda/app/cockpit/engine/",
-                )
-            );
-            expect(await screen.findByText(/Launched on port 8091 \(process "order-process"\)\./)).toBeInTheDocument();
-        });
-
-        // the projectId that makes Launch usable is restored from the backend's own record, so
-        // reopening an already-generated model doesn't force a pointless second Generate
-        test("is enabled from backend state alone when GENERATE already completed", async () => {
-            backendWorkflowState = GENERATED;
-
+        test("a status message never shares its row with the action buttons", async () => {
             renderPage();
             await saveTheModel();
 
-            await waitFor(() => expect(button("Launch")).toBeEnabled());
-            expect(generateProject).not.toHaveBeenCalled();
-
-            userEvent.click(button("Launch"));
-            await waitFor(() => expect(launchProject).toHaveBeenCalledWith({ projectId: "proj-9" }));
-            await waitFor(() =>
-                expect(openCockpitUrl).toHaveBeenCalledWith(
-                    "http://localhost:8091/camunda/app/cockpit/engine/",
-                )
-            );
+            const message = await screen.findByText(/Saved model "New Process" \(id m-1\)/);
+            const messageRow = message.closest(".bpmn-toolbar-row");
+            const saveButtonRow = button("Save").closest(".bpmn-toolbar-row");
+            expect(messageRow).not.toBe(saveButtonRow);
         });
     });
 
@@ -331,8 +176,6 @@ describe("ModelPage - save / generate / launch", () => {
         test("starts with every stage pending", async () => {
             renderPage();
 
-            // scoped to the breadcrumb: "Generate" and "Launch" are also button labels in the row
-            // above it, so an unscoped text query matches two elements each
             const progress = within(screen.getByRole("navigation", { name: /progress/i }));
             expect(progress.getByText("Model")).toBeInTheDocument();
             expect(progress.getByText("Generate")).toBeInTheDocument();
@@ -342,34 +185,25 @@ describe("ModelPage - save / generate / launch", () => {
             expect(getWorkflowState).not.toHaveBeenCalled();
         });
 
-        test("advances as each stage completes, from backend state rather than local clicks", async () => {
+        test("shows MODEL completed right after a save", async () => {
             renderPage();
             backendWorkflowState = SAVED;
             await saveTheModel();
 
-            // MODEL done, GENERATE is now the current stage
             await waitFor(() => expect(screen.getByTitle("COMPLETED: model saved")).toBeInTheDocument());
+        });
 
-            // a generate that hasn't come back yet: polling picks up IN_PROGRESS on its own, with
-            // no second click and nothing inferred from the in-flight request
-            let resolveGenerateProject;
-            generateProject.mockReturnValue(new Promise((resolve) => {
-                resolveGenerateProject = resolve;
-            }));
-            backendWorkflowState = GENERATING;
-
-            userEvent.click(button("Generate"));
-
-            await waitFor(() => expect(screen.getByTitle("IN_PROGRESS")).toBeInTheDocument());
-            expect(screen.getByText("In progress")).toBeInTheDocument();
-
+        // Generate/Launch happen on their own pages now (see GenerateProjectListPage /
+        // LaunchProjectListPage) - this page only ever learns their outcome by loading the
+        // model, which is exactly what reopening it for editing does.
+        test("reopening a model that was already generated (from the Generate picker, elsewhere) "
+            + "shows GENERATE completed without ever clicking anything here", async () => {
             backendWorkflowState = GENERATED;
-            await act(async () => {
-                resolveGenerateProject({ projectId: "p-9", processKey: "order-process" });
-            });
+
+            renderPage();
+            await saveTheModel();
 
             await waitFor(() => expect(screen.getByTitle("COMPLETED: proj-9")).toBeInTheDocument());
-            expect(screen.queryByText("In progress")).not.toBeInTheDocument();
         });
 
         test("View details is disabled until there is workflow state to show", async () => {

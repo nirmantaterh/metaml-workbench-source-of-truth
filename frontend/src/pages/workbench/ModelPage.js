@@ -7,22 +7,21 @@ import useBpmnModeler from "../../components/bpmn/useBpmnModeler";
 import "../../components/bpmn/BpmnEditor.css";
 import WorkflowProgress from "../../components/workbench/WorkflowProgress";
 import WorkflowDetailsPanel from "../../components/workbench/WorkflowDetailsPanel";
-import { openCockpitUrl } from "../../components/workbench/openCockpitUrl";
 
 import {
     saveModel,
     saveModelWithAuthoredTwin,
     getModel,
-    generateProject,
-    launchProject,
     getWorkflowState,
     listTenants,
 } from "../../services/workbench/WorkbenchService";
 import { listProjects } from "../../services/workbench/ProjectService";
 import { WorkbenchRoutes } from "../../routes";
 
-const TRANSMUTE_LAUNCH_EVENT = "metaml:transmute-launch-current-generated-platform";
-
+// Model is only the first third of Model -> Generate -> Launch: this page just edits and saves a
+// BPMN. Generate and Launch both moved out to their own Transmute pickers (see
+// GenerateProjectListPage / LaunchProjectListPage) - each needs to list every saved process
+// across every project before acting on one, which this single-model editor has no reason to do.
 const ModelPage = () => {
     const { id: routeModelId } = useParams();
     const location = useLocation();
@@ -72,66 +71,21 @@ const ModelPage = () => {
         })();
         return () => { cancelled = true; };
     }, []);
-    const [savedModelId, setSavedModelId] = useState(null);
-    // restored from workflow state on load so Launch stays usable after a reload. This is the
-    // generated Target Platform id, not the persisted Workbench Project id or Process Model id.
-    const [generatedProjectId, setGeneratedProjectId] = useState(null);
     const [workflowState, setWorkflowState] = useState(null);
 
     const [status, setStatus] = useState(null); // { type: 'ok'|'err'|'info', text }
     const [busy, setBusy] = useState(false);
     const [detailsOpen, setDetailsOpen] = useState(false);
-    // The generated Target Platform's own base URL (a separate standalone Spring Boot app - see
-    // SpringBootProjectLauncher), set once Launch actually succeeds. Only RedCollarTP-style
-    // platforms expose /api/proxy/start and /api/twin/start, so this is what "Start Proxy + Twin"
-    // below calls directly - never through the Workbench's own `api` axios instance, which points
-    // at a completely different host:port. Reset on every new Launch so a stale base URL is never
-    // used against a platform that isn't running there anymore.
-    const [launchedBaseUrl, setLaunchedBaseUrl] = useState(null);
-    // { businessKey, proxy: {processInstanceId, role}, twin: {processInstanceId, role} } once
-    // Start Proxy + Twin succeeds; null before that, and reset on every new Launch so a stale
-    // pairing from a previous run is never shown against a newly launched instance.
-    const [pairResult, setPairResult] = useState(null);
-    const [pairing, setPairing] = useState(false);
 
     const refreshWorkflowState = async (modelId) => {
         if (!modelId) return;
         try {
             const res = await getWorkflowState(modelId);
-            const state = res.data || res;
-            setWorkflowState(state);
-            // restore the generated platform id so Launch stays available after a reload
-            const generateStage = state.stages?.GENERATE;
-            if (generateStage?.status === "COMPLETED" && generateStage.detail) {
-                setGeneratedProjectId(generateStage.detail);
-            }
+            setWorkflowState(res.data || res);
         } catch (err) {
             // ignore: workflow breadcrumb failing shouldn't block the rest of the page
         }
     };
-
-    // boolean not the full object; prevents effect restart on every workflowState tick
-    const currentStageInProgress =
-        workflowState?.stages?.[workflowState?.currentStage]?.status === "IN_PROGRESS";
-
-    // busy starts polling immediately; waiting for IN_PROGRESS alone misses the gap before the first poll
-    const shouldPoll = (busy || currentStageInProgress) && Boolean(savedModelId);
-
-    useEffect(() => {
-        if (!shouldPoll) return undefined;
-        let cancelled = false;
-        const modelId = savedModelId;
-        refreshWorkflowState(modelId);
-        const interval = setInterval(() => {
-            if (cancelled) return;
-            refreshWorkflowState(modelId);
-        }, 1000);
-        return () => {
-            cancelled = true;
-            clearInterval(interval);
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [shouldPoll, savedModelId]);
 
     useEffect(() => {
         if (!routeModelId) return;
@@ -147,7 +101,6 @@ const ModelPage = () => {
                 }
                 await importXml(model.bpmnXml);
                 setModelName(model.name || "Untitled");
-                setSavedModelId(model.id || routeModelId);
                 setTenantId(model.tenantId || "");
                 // Restore a previously-attached Twin so re-saving (e.g. after editing Main) keeps
                 // persisting both, rather than silently dropping back to single-BPMN.
@@ -237,9 +190,6 @@ const ModelPage = () => {
                 ? await saveModelWithAuthoredTwin({ name: modelName, bpmnXml, twinBpmnXml, tenantId: tenantId || null, projectId: Number(selectedProjectId) })
                 : await saveModel({ name: modelName, bpmnXml, tenantId: tenantId || null, projectId: Number(selectedProjectId) });
             const saved = res.data || res;
-            setSavedModelId(saved.id || null);
-            // each save is a new entity; the previous project/launch no longer applies
-            setGeneratedProjectId(null);
             setStatus({
                 type: "ok",
                 text: twinBpmnXml
@@ -251,114 +201,6 @@ const ModelPage = () => {
             setStatus({ type: "err", text: "Save failed: " + (err.response?.data?.message || err.message) });
         } finally {
             setBusy(false);
-        }
-    };
-
-    // Launch the already-generated standalone runtime for the current persisted model/process.
-    const launchGeneratedProjectId = async (idToLaunch) => {
-        setLaunchedBaseUrl(null);
-        setPairResult(null);
-        try {
-            const res = await launchProject({ projectId: idToLaunch });
-            const launched = res.data || res;
-            if (!launched.port) {
-                throw new Error("Launch succeeded but no port was returned");
-            }
-            // Same host as this Workbench frontend, launched port - never a hardcoded host/port.
-            // The target is a fully separate standalone application.
-            const baseUrl = `${window.location.protocol}//${window.location.hostname}:${launched.port}/`;
-            const cockpitUrl = `${baseUrl}camunda/app/cockpit/engine/`;
-            setLaunchedBaseUrl(baseUrl);
-            setStatus({
-                type: "ok",
-                text: `Launched on port ${launched.port} (process "${launched.processKey || "?"}").`,
-            });
-            openCockpitUrl(cockpitUrl);
-        } catch (err) {
-            setStatus({ type: "err", text: "Launch failed: " + (err.response?.data?.message || err.message) });
-        }
-    };
-
-    const handleGenerate = async () => {
-        if (!savedModelId) {
-            setStatus({ type: "err", text: "Save the model before generating a Target Harness Platform." });
-            return;
-        }
-        setBusy(true);
-        try {
-            const res = await generateProject({ modelId: savedModelId });
-            const project = res.data || res;
-            const newProjectId = project.projectId || null;
-            setGeneratedProjectId(newProjectId);
-            setStatus({
-                type: "ok",
-                text: newProjectId
-                    ? `Generated Target Harness Platform for process "${project.processKey || "?"}" (id ${newProjectId}).`
-                    : "Generated Target Harness Platform.",
-            });
-        } catch (err) {
-            setStatus({ type: "err", text: "Generate failed: " + (err.response?.data?.message || err.message) });
-        } finally {
-            await refreshWorkflowState(savedModelId);
-            setBusy(false);
-        }
-    };
-
-    const handleLaunch = async () => {
-        if (!generatedProjectId) {
-            setStatus({ type: "err", text: "Generate a project before launching it." });
-            return;
-        }
-        setBusy(true);
-        await launchGeneratedProjectId(generatedProjectId);
-        await refreshWorkflowState(savedModelId);
-        setBusy(false);
-    };
-
-    useEffect(() => {
-        const onLaunchRequest = () => {
-            void handleLaunch();
-        };
-        document.addEventListener(TRANSMUTE_LAUNCH_EVENT, onLaunchRequest);
-        return () => {
-            document.removeEventListener(TRANSMUTE_LAUNCH_EVENT, onLaunchRequest);
-        };
-    }, [handleLaunch]);
-
-    // Starts a proxy instance and a twin instance under the SAME businessKey on the launched
-    // Target Platform's own REST API (not the workbench backend - a fully separate app, see
-    // launchedBaseUrl's own comment) - that shared key is what SignalBroadcaster/PairRegistry use
-    // to recognize the two as partners and actually synchronize their shared signals over
-    // RabbitMQ, instead of each running unpaired. Only RedCollarTP-style generated platforms
-    // expose /api/proxy/start and /api/twin/start; a generic Target Harness Platform does not,
-    // and this fails with a clear message rather than a confusing 404 if pointed at one of those.
-    const handleStartPair = async () => {
-        if (!launchedBaseUrl) return;
-        setPairing(true);
-        setPairResult(null);
-        const businessKey = `sync-${Date.now()}`;
-        try {
-            const startSide = async (side) => {
-                const response = await fetch(`${launchedBaseUrl}api/${side}/start?businessKey=${businessKey}`, {
-                    method: "POST",
-                });
-                if (!response.ok) {
-                    throw new Error(`${side} start failed (HTTP ${response.status}) - this generated platform may `
-                        + "not support proxy/twin pairing");
-                }
-                return response.json();
-            };
-            const [proxy, twin] = await Promise.all([startSide("proxy"), startSide("twin")]);
-            setPairResult({ businessKey, proxy, twin });
-            setStatus({
-                type: "ok",
-                text: `Started proxy (${proxy.role}) and twin (${twin.role}) paired on businessKey `
-                    + `"${businessKey}" - open Cockpit to watch them synchronize.`,
-            });
-        } catch (err) {
-            setStatus({ type: "err", text: "Start Proxy + Twin failed: " + err.message });
-        } finally {
-            setPairing(false);
         }
     };
 
@@ -382,6 +224,14 @@ const ModelPage = () => {
     return (
         <div className="bpmn-editor">
             <div className="bpmn-toolbar">
+                {/* Own row, above the buttons - a status message never shares a line with the
+                    controls that produced it, so a long message never pushes a button off screen
+                    or the other way around. */}
+                {status && (
+                    <div className="bpmn-toolbar-row bpmn-toolbar-message">
+                        <span className={`bpmn-status ${statusClass}`}>{status.text}</span>
+                    </div>
+                )}
                 <div className="bpmn-toolbar-row bpmn-toolbar-actions">
                     <input
                         ref={bpmnFileInputRef}
@@ -474,7 +324,6 @@ const ModelPage = () => {
                         ))}
                     </Form.Select>
                     <div className="spacer" />
-                    {status && <span className={`bpmn-status ${statusClass}`}>{status.text}</span>}
                     {selectedProjectId && (
                         <Button
                             size="sm"
@@ -485,37 +334,8 @@ const ModelPage = () => {
                             Back to project processes
                         </Button>
                     )}
-                    {launchedBaseUrl && (
-                        <Button
-                            size="sm"
-                            variant="outline-success"
-                            onClick={handleStartPair}
-                            disabled={pairing}
-                            title="Starts a proxy instance and a twin instance under the same businessKey so they synchronize over RabbitMQ"
-                        >
-                            {pairing ? "Starting…" : "Start Proxy + Twin"}
-                        </Button>
-                    )}
                     <Button size="sm" variant="outline-primary" onClick={handleSave} disabled={busy}>
                         Save
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="outline-primary"
-                        onClick={handleGenerate}
-                        disabled={busy || !savedModelId}
-                        title={!savedModelId ? "Save the model first" : undefined}
-                    >
-                        Generate
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="primary"
-                        onClick={handleLaunch}
-                        disabled={busy || !generatedProjectId}
-                        title={!generatedProjectId ? "Generate a project first" : undefined}
-                    >
-                        Launch
                     </Button>
                 </div>
 
@@ -542,24 +362,6 @@ const ModelPage = () => {
                         )}
                     </div>
                 </div>
-
-                {pairResult && (
-                    <div className="bpmn-toolbar-row bpmn-toolbar-status">
-                        <span className="text-muted small">
-                            businessKey <code>{pairResult.businessKey}</code> — proxy:{" "}
-                            <code>{pairResult.proxy.processInstanceId}</code> ({pairResult.proxy.role}), twin:{" "}
-                            <code>{pairResult.twin.processInstanceId}</code> ({pairResult.twin.role})
-                        </span>
-                        <div className="spacer" />
-                        <Button
-                            size="sm"
-                            variant="outline-secondary"
-                            onClick={() => openCockpitUrl(`${launchedBaseUrl}camunda/app/cockpit/engine/`)}
-                        >
-                            Open Cockpit
-                        </Button>
-                    </div>
-                )}
             </div>
 
             <div className="bpmn-main">

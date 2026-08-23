@@ -21,6 +21,7 @@ import com.metaml.workbench.generation.GeneratedProject;
 import com.metaml.workbench.generation.LaunchedProject;
 import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.workflow.WorkflowState;
+import com.metaml.workbench.dto.ProcessModelSummaryDto;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinProcess;
 import com.metaml.workbench.service.WorkbenchService;
@@ -104,6 +105,17 @@ public class WorkbenchController {
         try {
             List<ProcessModel> models = workbenchService.listProcessModels();
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, models));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    // Backs the Transmute > Generate / Launch pickers - see WorkbenchService.listProcessModelSummaries.
+    @GetMapping(WorkbenchUrlMapping.TRANSMUTE_MODEL_SUMMARIES)
+    public ResponseEntity<ApiResponse> listModelSummaries() {
+        try {
+            List<ProcessModelSummaryDto> summaries = workbenchService.listProcessModelSummaries();
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, summaries));
         } catch (Exception e) {
             return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
         }

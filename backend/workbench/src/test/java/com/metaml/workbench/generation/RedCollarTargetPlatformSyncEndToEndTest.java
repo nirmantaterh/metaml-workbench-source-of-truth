@@ -175,6 +175,95 @@ class RedCollarTargetPlatformSyncEndToEndTest {
         }
     }
 
+    // Same acceptance test as above, but proving the OTHER path that was previously broken: no
+    // Twin-camunda.bpmn is read or supplied here at all - only Manuf-camunda.bpmn goes in, through
+    // the plain single-BPMN generate() entry point (what a user gets from Save without ever
+    // clicking Attach Twin BPMN). TwinModelGenerator used to throw on this exact file
+    // (intermediateCatchEvent unsupported); TargetPlatformTwinMirrorGenerator now derives a
+    // structural mirror instead, and this proves that mirror is not just non-throwing but a real,
+    // working Twin that synchronizes with its proxy the same way an authored one does.
+    @Test
+    void proxyAndAutoDerivedTwinSynchronizeOnSharedSignalsOverARealRabbitMqBroker() throws Exception {
+        assumeFixturesPresent();
+        assertThat(Files.isDirectory(REAL_TEMPLATE)).as("RedCollarTP template must exist at %s",
+                REAL_TEMPLATE.toAbsolutePath()).isTrue();
+        HttpClient http = HttpClient.newHttpClient();
+        Assumptions.assumeTrue(rabbitMqReachable(http), "no RabbitMQ broker reachable at localhost:15672 - "
+                + "start one with 'docker run -d -p 5672:5672 -p 15672:15672 rabbitmq:3-management'");
+
+        String manufBpmnXml = Files.readString(REPO_ROOT.resolve("Manuf-camunda.bpmn"));
+
+        Path outputDir = tempDir.resolve("generated-target-platforms");
+        SpringBootProjectGenerator generator = new SpringBootProjectGenerator(REAL_TEMPLATE.toString(),
+                outputDir.toString(), new TwinModelGenerator(), new DelegateClassGenerator(),
+                new ExternalTaskWorkerGenerator());
+        // The single-BPMN entry point - no authored Twin passed in anywhere.
+        GeneratedProject project = generator.generate(manufBpmnXml, List.of());
+
+        Path tpRoot = project.directory().resolve("src/main/java/com/tp/TargetPlatform");
+        assertThat(tpRoot.resolve("messaging/RabbitMqConfig.java")).exists();
+        assertThat(tpRoot.resolve("signal/SignalBroadcaster.java")).exists();
+
+        SpringBootProjectLauncher launcher = new SpringBootProjectLauncher();
+        try {
+            LaunchedProject launched;
+            try {
+                launched = launcher.launch(project);
+            } catch (Exception launchEx) {
+                Path launchLog = project.directory().resolve("launch.log");
+                Path buildLog = project.directory().resolve("build.log");
+                String logContent = Files.exists(launchLog) ? Files.readString(launchLog) : "(no launch.log found)";
+                String buildContent = Files.exists(buildLog) ? Files.readString(buildLog) : "(no build.log found)";
+                throw new AssertionError("Launch failed. build.log:\n" + buildContent + "\nlaunch.log:\n"
+                        + logContent, launchEx);
+            }
+
+            String proxyBase = "http://localhost:" + launched.port() + "/api/proxy";
+            String twinBase = "http://localhost:" + launched.port() + "/api/twin";
+            String statusBase = "http://localhost:" + launched.port() + "/api/v1/process";
+            String businessKey = "auto-twin-test-" + UUID.randomUUID();
+
+            HttpResponse<String> proxyStart = http.send(
+                    HttpRequest.newBuilder(URI.create(proxyBase + "/start?businessKey=" + businessKey))
+                            .POST(HttpRequest.BodyPublishers.noBody()).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(proxyStart.statusCode()).as("proxy start failed: %s", proxyStart.body()).isEqualTo(200);
+            String proxyInstanceId = extractField(proxyStart.body(), "processInstanceId");
+
+            HttpResponse<String> twinStart = http.send(
+                    HttpRequest.newBuilder(URI.create(twinBase + "/start?businessKey=" + businessKey))
+                            .POST(HttpRequest.BodyPublishers.noBody()).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(twinStart.statusCode()).as("twin start failed: %s", twinStart.body()).isEqualTo(200);
+
+            // --- Application-log evidence: real publish over the real broker, on the mirrored twin ---
+            String publishLog = awaitLogContaining(project.directory(), "TASK: published signal",
+                    Duration.ofSeconds(60));
+            assertThat(publishLog).contains("TASK: published signal").contains("to RabbitMQ exchange");
+
+            String consumeLog = awaitLogContaining(project.directory(), "delivered signal",
+                    Duration.ofSeconds(30));
+            assertThat(consumeLog).as("a RabbitMQ listener must have actually delivered a real Camunda signal")
+                    .contains("via RabbitMQ");
+
+            // --- Causal proof the proxy actually advanced, via real engine state ---
+            assertThat(awaitInstanceInactive(http, statusBase, proxyInstanceId, Duration.ofSeconds(120))
+                    || awaitDistinctActiveActivity(http, statusBase, proxyInstanceId, Duration.ofSeconds(5)))
+                    .as("proxy instance must have advanced past its start")
+                    .isTrue();
+
+            // --- Broker-level evidence, independent of the application's own logs ---
+            String allQueuesJson = listRabbitQueues(http);
+            List<String> ownQueues = queueSegmentsMatchingPrefix(allQueuesJson, project.projectId());
+            assertThat(ownQueues).as("broker must report this project's own sync queues").isNotEmpty();
+            long publishCount = ownQueues.stream().mapToLong(q -> extractLongField(q, "publish")).sum();
+            assertThat(publishCount).as("aggregate broker-reported publish count across this project's queues")
+                    .isGreaterThan(0);
+        } finally {
+            launcher.stop(project.projectId());
+        }
+    }
+
     private static boolean awaitDistinctActiveActivity(HttpClient http, String statusBase, String processInstanceId,
             Duration wait) throws IOException, InterruptedException {
         Thread.sleep(wait.toMillis());

@@ -128,9 +128,40 @@ class TargetPlatformSourceGeneratorTest {
                 .contains("package com.tp.TargetPlatform.proxy.listeners;")
                 .contains("@Component(\"manufTaskCompletionListener\")")
                 .contains("implements ExecutionListener");
-        // the BPMN itself is left untouched - unlike the activity/event rewrite above, a listener
-        // reference is already a clean bean name and needs no normalisation
+        // the BPMN itself is left untouched on the proxy side - unlike the activity/event rewrite
+        // above, a listener reference is already a clean bean name and needs no normalisation
         assertThat(result.bpmnXml()).contains("delegateExpression=\"${manufTaskCompletionListener}\"");
+    }
+
+    // The bug this exists to catch: a Twin structurally mirrored from its proxy (see
+    // TargetPlatformTwinMirrorGenerator) carries the exact same executionListener reference the
+    // proxy has. Without renaming, scanning both sides would generate two DIFFERENT classes
+    // registered under the identical Spring bean name "manufTaskCompletionListener" - proxy's own
+    // and twin's own - and the application would fail to start at all.
+    @Test
+    void theTwinSidesListenerBeanIsRenamedSoItNeverCollidesWithTheProxysOwnBeanOfTheSameOriginalName() {
+        String xml = bpmn("""
+                <bpmn2:serviceTask id="CuttingTwin" name="Cutting Twin" camunda:type="external" camunda:topic="CuttingTwin">
+                  <bpmn2:extensionElements>
+                    <camunda:executionListener event="end" delegateExpression="${manufTaskCompletionListener}" />
+                  </bpmn2:extensionElements>
+                </bpmn2:serviceTask>
+                """);
+
+        TargetPlatformSourceGenerator.Result result = generator.generate(xml, true);
+
+        assertThat(result.sources()).hasSize(1);
+        TargetPlatformSourceGenerator.GeneratedSource source = result.sources().get(0);
+        assertThat(source.relativeDirectory()).isEqualTo("twin/listeners");
+        assertThat(source.className()).isEqualTo("ManufTaskCompletionListenerTwin");
+        assertThat(source.source())
+                .contains("package com.tp.TargetPlatform.twin.listeners;")
+                .contains("@Component(\"manufTaskCompletionListenerTwin\")");
+        // the twin BPMN IS rewritten (unlike the proxy-side case above) - it has to stop pointing
+        // at the bare original name, which only the proxy's own bean is now registered under
+        assertThat(result.bpmnXml())
+                .doesNotContain("delegateExpression=\"${manufTaskCompletionListener}\"")
+                .contains("delegateExpression=\"${manufTaskCompletionListenerTwin}\"");
     }
 
     @Test

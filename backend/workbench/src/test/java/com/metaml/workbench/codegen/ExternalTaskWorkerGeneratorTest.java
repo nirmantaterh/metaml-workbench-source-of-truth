@@ -46,7 +46,7 @@ class ExternalTaskWorkerGeneratorTest {
     }
 
     @Test
-    void generatesOneMlSimulatingWorkerPerTwinTopic() throws Exception {
+    void generatesOneAgentDelegatingWorkerPerTwinTopic() throws Exception {
         assumeFixturesPresent();
         String twinBpmn = Files.readString(REPO_ROOT.resolve("Twin-camunda.bpmn"));
 
@@ -63,11 +63,19 @@ class ExternalTaskWorkerGeneratorTest {
                 .contains("package com.metaml.targetplatform.twin.worker;")
                 .contains("implements GeneratedExternalTaskWorker")
                 .contains("return \"SamplingTwin\"")
-                .contains("[Twin] Invoking simulated ML agent")
-                .contains("simulateAgentInvocation(task)")
-                .contains("externalTaskService.complete(task.getId(), \"generated-worker\", agentResult)")
-                .contains("UUID.randomUUID()")
-                .contains("agentTimestamp")
+                // The decision is delegated to an OPTIONALLY injected, pluggable TwinDecisionAgent -
+                // not hardcoded inline - so a real model/agent can be wired in with no generated
+                // code to touch (see SpringBootProjectGenerator.writeTwinDecisionAgentInterface).
+                // ObjectProvider (not TwinDecisionAgent directly) is what makes zero implementations
+                // a safe, non-fatal case - see renderTwinWorkerSource's own comment for why.
+                .contains("private final ObjectProvider<TwinDecisionAgent> agentProvider")
+                .contains("public SamplingTwinWorker(ObjectProvider<TwinDecisionAgent> agentProvider)")
+                .contains("agentProvider.getIfAvailable()")
+                .contains("[Twin] Invoking decision agent")
+                .contains("agent.decide(\"SamplingTwin\", task)")
+                // ...and the built-in fallback still exists for when nobody has registered one.
+                .contains("No TwinDecisionAgent registered")
+                .contains("externalTaskService.complete(task.getId(), \"generated-worker\", variables)")
                 .doesNotContain("\"PASS\"")
                 .doesNotContain("\"FAIL\"");
     }
@@ -143,6 +151,61 @@ class ExternalTaskWorkerGeneratorTest {
         // Other topics do not precede gateways
         assertThat(gatewayVars).doesNotContainKey("Sampling");
         assertThat(gatewayVars).doesNotContainKey("OrderMgmtInitialization");
+    }
+
+    // The bug this exists to catch: RedCollar's own hand-authored Twin-camunda.bpmn happens to have
+    // no gateways at all (see twinBpmnHasNoGatewayVariables above), so the RedCollar fixture tests
+    // never exercised a twin worker that precedes an exclusive gateway. TargetPlatformTwinMirrorGenerator
+    // auto-derives a twin by preserving the proxy's gateway structure verbatim (only topics get a
+    // "Twin" suffix), so a mirrored twin worker CAN precede a gateway - and simulateMlAgent=true
+    // workers were rendered from a template that never wrote the condition variable at all, so the
+    // gateway threw "Cannot resolve identifier" the moment a real instance reached it. Regression
+    // test for that: this incident was only found live, in Cockpit, on a real generated
+    // RedCollarTP instance - not by any prior automated test.
+    @Test
+    void twinWorkerPrecedingAGatewaySetsTheSameConditionVariablesAsTheProxyWorkerWould() {
+        String xml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+                  <bpmn2:process id="rc_twin_process" name="Process_twin" isExecutable="true">
+                    <bpmn2:startEvent id="Start" />
+                    <bpmn2:sequenceFlow id="f1" sourceRef="Start" targetRef="VerifyOrderTwin" />
+                    <bpmn2:serviceTask id="VerifyOrderTwin" name="Verify Order Details"
+                        camunda:type="external" camunda:topic="VerifyOrderTwin" />
+                    <bpmn2:sequenceFlow id="f2" sourceRef="VerifyOrderTwin" targetRef="Gateway_1" />
+                    <bpmn2:exclusiveGateway id="Gateway_1">
+                      <bpmn2:incoming>f2</bpmn2:incoming>
+                      <bpmn2:outgoing>f3</bpmn2:outgoing>
+                      <bpmn2:outgoing>f4</bpmn2:outgoing>
+                    </bpmn2:exclusiveGateway>
+                    <bpmn2:sequenceFlow id="f3" sourceRef="Gateway_1" targetRef="End1">
+                      <bpmn2:conditionExpression xsi:type="bpmn2:tFormalExpression">${!orderApproved}</bpmn2:conditionExpression>
+                    </bpmn2:sequenceFlow>
+                    <bpmn2:sequenceFlow id="f4" sourceRef="Gateway_1" targetRef="End2">
+                      <bpmn2:conditionExpression xsi:type="bpmn2:tFormalExpression">${orderApproved}</bpmn2:conditionExpression>
+                    </bpmn2:sequenceFlow>
+                    <bpmn2:endEvent id="End1" />
+                    <bpmn2:endEvent id="End2" />
+                  </bpmn2:process>
+                </bpmn2:definitions>
+                """;
+
+        List<GeneratedWorker> workers = generator.generate(xml, "com.tp.TargetPlatform.worker.twin", true);
+
+        GeneratedWorker verifyOrderTwin = workers.stream().filter(w -> w.topic().equals("VerifyOrderTwin"))
+                .findFirst().orElseThrow();
+        assertThat(verifyOrderTwin.sourceCode())
+                .contains("[Twin] Invoking decision agent")
+                .contains("agent.decide(\"VerifyOrderTwin\", task)")
+                // The fallback only fires when the agent itself didn't set the variable - a real
+                // TwinDecisionAgent implementation that DOES return "orderApproved" has that value
+                // win, since containsKey is false only when the agent left it out.
+                .contains("if (!variables.containsKey(\"orderApproved\")) {")
+                .contains("variables.put(\"orderApproved\", Math.random() > 0.5);")
+                .contains("externalTaskService.complete(task.getId(), \"generated-worker\", variables)");
     }
 
     @Test

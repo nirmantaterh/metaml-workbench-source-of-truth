@@ -37,6 +37,14 @@ export async function listModels() {
     return result.data;
 }
 
+// Every saved process across every project, each row carrying its own project id/display name -
+// backs the Transmute > Generate / Launch pickers, which listModels() above can't (it has no
+// notion of a project at all).
+export async function listModelSummaries() {
+    const result = await api.get(`/wb/transmute/model/summaries`);
+    return result.data;
+}
+
 // preview only — nothing written to disk; see generateProject
 export async function generateDelegates(payload) {
     const result = await api.post(`/wb/transmute/generate`, payload);

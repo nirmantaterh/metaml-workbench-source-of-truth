@@ -11,6 +11,10 @@ public class WorkbenchUrlMapping {
     public static final String TRANSMUTE_CREATE = WB_TRANSMUTE + "/create";
     public static final String TRANSMUTE_CONNECT = WB_TRANSMUTE + "/connect";
     public static final String TRANSMUTE_MODELE = WB_TRANSMUTE + "/model";
+    // Backs the Transmute > Generate / Launch pickers - every saved process across every
+    // project, each row carrying its own project id/display name (TRANSMUTE_MODELE's plain list
+    // can't say that; see WorkbenchService.listProcessModelSummaries).
+    public static final String TRANSMUTE_MODEL_SUMMARIES = TRANSMUTE_MODELE + "/summaries";
     // First-class alternative to TRANSMUTE_MODELE for a model with its own independently authored
     // second BPMN (e.g. a Manufacturing + Twin pair supplied as two separate files), routed to
     // WorkbenchService.saveProcessModelWithAuthoredTwin - see that method's own comment. Generation

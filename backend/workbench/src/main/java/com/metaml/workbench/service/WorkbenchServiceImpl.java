@@ -24,6 +24,7 @@ import com.metaml.workbench.client.AgentAvailabilityResult;
 import com.metaml.workbench.codegen.DelegateClassGenerator;
 import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.codegen.InvalidDelegateExpressionException;
+import com.metaml.workbench.dto.ProcessModelSummaryDto;
 import com.metaml.workbench.client.NodeManagerClient;
 import com.metaml.workbench.client.NodeManagerUnavailableException;
 import com.metaml.workbench.generation.DelegateWriteException;
@@ -779,6 +780,16 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         return processModels.values().stream()
                 .sorted(Comparator.comparing(ProcessModel::getCreatedAt).reversed())
                 .toList();
+    }
+
+    @Override
+    public List<ProcessModelSummaryDto> listProcessModelSummaries() {
+        // Reads straight off the archive store rather than the in-memory processModels map above
+        // - the map has no notion of a project either. This omits the rare legacy model restored
+        // from the JSON snapshot in restoreState() (saved before the H2 archive existed, never
+        // re-saved since) - such a model was never assigned a project to begin with, so it has
+        // nothing to show in a picker organised by project anyway.
+        return processModelArchiveStore.findAllSummaries();
     }
 
     @Override
