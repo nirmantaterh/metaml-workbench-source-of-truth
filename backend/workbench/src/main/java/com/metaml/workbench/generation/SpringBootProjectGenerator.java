@@ -267,7 +267,8 @@ public class SpringBootProjectGenerator {
         clearTargetPlatformGeneratedSources(projectDir);
 
         TargetPlatformSourceGenerator.Result proxy = targetPlatformSourceGenerator.generate(proxyBpmnXml, false);
-        TargetPlatformSourceGenerator.Result twin = targetPlatformSourceGenerator.generate(twinBpmnXml, true);
+        TargetPlatformSourceGenerator.Result twin = targetPlatformSourceGenerator.generate(twinBpmnXml, true,
+                proxy.syncActivityIds());
         writeProcessFile(projectDir, proxyKey, proxy.bpmnXml());
         writeProcessFile(projectDir, twinKey, twin.bpmnXml());
         writeTargetPlatformSources(projectDir, proxy.sources());
@@ -295,12 +296,15 @@ public class SpringBootProjectGenerator {
         }
         writeExternalTaskPoller(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL);
 
-        // proxy<->twin synchronization: neither BPMN throws its own signals (see SignalBroadcaster's
-        // own comment), so a signal shared by both sides is the only place they actually agree to
-        // meet - everything else here just gets that meeting delivered over a real broker instead of
-        // an in-process call.
+        // proxy<->twin synchronization: signals come from two sources -
+        //   1. Original BPMN signal declarations (the old external-task pipeline's signal gates)
+        //   2. Lockstep sync signals injected by TargetPlatformSourceGenerator for delegate-
+        //      expression BPMNs (sync_<activityId> on both proxy and twin sides)
+        // Both sets are combined so SignalBroadcaster polls every signal that either side waits on.
         Set<String> proxySignals = extractSignalNames(proxyModel);
+        proxySignals.addAll(proxy.syncSignalNames());
         Set<String> twinSignals = extractSignalNames(twinModel);
+        twinSignals.addAll(twin.syncSignalNames());
         Set<String> sharedSignals = new LinkedHashSet<>(proxySignals);
         sharedSignals.retainAll(twinSignals);
         Set<String> allSignals = new LinkedHashSet<>(proxySignals);
@@ -1463,6 +1467,13 @@ public class SpringBootProjectGenerator {
                     // True once the responder has provably moved past the gated task behind signalName -
                     // subscribed to a different signal, or completed entirely - rather than merely having
                     // received the signal itself, which happens before its gated task ever runs.
+                    //
+                    // Relies on the responder's own JavaDelegate.execute() running synchronously, inside
+                    // the same Camunda command/transaction as the signal delivery that triggers it - only
+                    // that makes "no longer subscribed to signalName" (checked below via a separate query,
+                    // on a later broadcaster tick) proof that the gated task actually finished, rather than
+                    // merely that it started. A delegate that hands work to another thread and returns
+                    // early would make this method return true before the real work is done.
                     private boolean responderHasAdvancedPast(String signalName, String responderInstanceId) {
                         ProcessInstance stillActive = runtimeService.createProcessInstanceQuery()
                                 .processInstanceId(responderInstanceId)

@@ -639,6 +639,16 @@ public class TargetPlatformMessagingGenerator {
                         return false;
                     }
 
+                    // True once the responder has provably moved past the gated task behind signalName -
+                    // subscribed to a different signal, or completed entirely - rather than merely having
+                    // received the signal itself, which happens before its gated task ever runs.
+                    //
+                    // Relies on the responder's own JavaDelegate.execute() running synchronously, inside
+                    // the same Camunda command/transaction as the signal delivery that triggers it - only
+                    // that makes "no longer subscribed to signalName" (checked here via a separate query,
+                    // on a later broadcaster tick) proof that the gated task actually finished, rather than
+                    // merely that it started. A delegate that hands work to another thread and returns
+                    // early would make this method return true before the real work is done.
                     private boolean responderHasAdvancedPast(String signalName, String responderInstanceId) {
                         ProcessInstance stillActive = runtimeService.createProcessInstanceQuery()
                                 .processInstanceId(responderInstanceId)
