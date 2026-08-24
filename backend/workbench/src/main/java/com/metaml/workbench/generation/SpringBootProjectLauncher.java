@@ -456,15 +456,40 @@ public class SpringBootProjectLauncher {
     // interactive terminal.  Resolve the standard Maven locations before falling back to PATH so
     // a RedCollar-derived template without mvnw still launches on macOS/Homebrew and Linux.
     private static String mavenExecutable() {
-        String mavenHome = System.getenv("MAVEN_HOME");
+        boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        return resolveMavenExecutable(System.getenv("MAVEN_HOME"), windows);
+    }
+
+    // Split out from mavenExecutable() so a test can drive both branches without needing to fake
+    // the real environment - mavenExecutable() itself just reads System.getenv/getProperty and
+    // calls straight through.
+    //
+    // Confirmed by direct reproduction on Windows with MAVEN_HOME set to a real install: the old
+    // logic here looked for a file literally named "mvn" on every OS, including Windows - but
+    // Windows has no such launcher, only "mvn.cmd". The official distribution's zip ships an
+    // extensionless "mvn" in the same bin/ folder regardless of platform (the POSIX shell script,
+    // inert on Windows), and Files.isExecutable() has no POSIX-permission concept on Windows, so
+    // it reports that file as executable too - meaning MAVEN_HOME/bin/mvn was found and returned
+    // before MAVEN_HOME/bin/mvn.cmd was ever checked. ProcessBuilder then fails inside start()
+    // itself (CreateProcess error=193, "%1 is not a valid Win32 application") before any child
+    // process exists, which is why the resulting build.log/launch.log is empty rather than
+    // containing a Maven error - reproduced verbatim against this exact failure mode before this
+    // fix. mvn.cmd needs no special wrapping to run correctly via ProcessBuilder once it's the one
+    // actually resolved - confirmed directly, not assumed.
+    static String resolveMavenExecutable(String mavenHome, boolean windows) {
+        String mvnName = windows ? "mvn.cmd" : "mvn";
         if (mavenHome != null && !mavenHome.isBlank()) {
-            Path candidate = Path.of(mavenHome, "bin", "mvn");
+            Path candidate = Path.of(mavenHome, "bin", mvnName);
             if (Files.isExecutable(candidate)) return candidate.toString();
         }
-        for (String candidate : List.of("/opt/homebrew/bin/mvn", "/usr/local/bin/mvn", "/usr/bin/mvn")) {
-            if (Files.isExecutable(Path.of(candidate))) return candidate;
+        // Homebrew/Linux install locations only - meaningless on Windows, where Maven is never
+        // installed at a Unix absolute path.
+        if (!windows) {
+            for (String candidate : List.of("/opt/homebrew/bin/mvn", "/usr/local/bin/mvn", "/usr/bin/mvn")) {
+                if (Files.isExecutable(Path.of(candidate))) return candidate;
+            }
         }
-        return "mvn";
+        return mvnName;
     }
 
     // polls rather than trusting a fixed sleep - a cold Maven dependency download takes nothing

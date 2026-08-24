@@ -83,7 +83,16 @@ public class TargetPlatformSourceGenerator {
                 if ((!activity && !event) || (expression.isBlank() && javaClass.isBlank())) continue;
                 String id = element.getAttribute("id");
                 if (id == null || id.isBlank()) throw new IllegalArgumentException("Delegated BPMN element has no id");
-                String beanName = camel(id);
+                // The twin side always gets its own bean name, distinct from whatever id the proxy
+                // BPMN uses - an authored twin (see saveModelWithAuthoredTwin) is free to reuse the
+                // exact same activity/event id as its proxy (a hand-mirrored twin naturally would),
+                // and Spring's @Component("...") registers by that literal string regardless of the
+                // proxy/twin package split below, so two different classes claiming the same bean
+                // name make the generated app fail to start with ConflictingBeanDefinitionException.
+                // Same fix already applied to executionListener beans below; className is left
+                // unqualified since Java tolerates identical simple class names across packages -
+                // only the Spring bean name actually collides.
+                String beanName = twin ? camel(id) + "Twin" : camel(id);
                 String className = pascal(id);
                 // A fixed template needs a deterministic, component-scanned bean name. Normalising
                 // also makes a camunda:class task usable without requiring an arbitrary FQCN.

@@ -29,7 +29,7 @@ Recorded as the standing engineering discipline for this entire build and reaffi
 - **Derive, don't duplicate.** State that Camunda's own runtime or history tables already contain is read from there, not shadowed in a second, app-owned structure that can drift or fail to survive a restart.
 - **Recomputation over persistence.** The only persisted cross-reference this system keeps is the Original-activity-id ↔ Twin-activity-id link ([ADR-006](adr/ADR-006-runtime-derived-execution-identity.md)); everything else about "which visit, which execution, which loop iteration" is recomputed fresh from Camunda's runtime tables on every synchronization event.
 - **Explicit validation over silent acceptance.** An unsupported BPMN construct fails twin generation loudly ([ADR-011](adr/ADR-011-unsupported-bpmn-construct-policy.md)); a many-to-one activity link is rejected at creation time, not discovered later as corrupted state.
-- **Event-driven, not polling.** The Twin never asks "has the Original moved yet?" — it is told, once, when it has.
+- **Event-driven, not polling.** The Twin never asks "has the Original moved yet?" — it is told, once, when it has. (Scoped to this document's subject, the in-process Original↔Twin bridge — see the Scope line above. The separately-generated, cross-process Target Platform pipeline, Proxy/Twin synchronized over RabbitMQ, uses a different mechanism: signal-driven advancement with a 1-second polling coordinator — see `TEAM_DEMO_GUIDE.md` §14.4.)
 - **Fail fast, surface incidents.** An automation failure becomes a real, operator-visible Camunda Incident, never a silently swallowed exception and never an automatic blind retry.
 - **Camunda-native mechanisms over custom infrastructure**, exhausted before any deviation is accepted, and every deviation justified with the empirical evidence that ruled out the native alternative.
 
@@ -47,7 +47,7 @@ Recorded as the standing engineering discipline for this entire build and reaffi
 | Original controls progression | The Original's own user-task/token movement is never blocked, delayed, or altered by anything the Twin does. |
 | Twin observes and automates | The Twin has no independent agency; every step it takes is a reaction to an Original event. |
 | Shared runtime is the source of truth | One Camunda engine, one datasource, backs both instances; nothing about "did this already happen" is trusted from app memory when Camunda's own tables can answer it. |
-| Event-driven, not polling | `AFTER_COMMIT` transaction synchronization, not a scheduled poll, is what moves the Twin. |
+| Event-driven, not polling (this subsystem only) | `AFTER_COMMIT` transaction synchronization, not a scheduled poll, is what moves the in-process Twin. The generated Target Platform's cross-process Proxy/Twin sync is a separate mechanism and does use a 1-second polling coordinator — see `TEAM_DEMO_GUIDE.md` §14.4. |
 | Fail fast, surface incidents | Failures become Camunda Incidents or thrown exceptions with a precise diagnostic, never a silent warn-and-continue. |
 | Derive, don't duplicate | New state is introduced only when derivation from existing Camunda state is proven impossible. |
 | Restart-safe by design | Anything that must survive an app restart either lives in Camunda's own durable tables or is explicitly, deliberately excluded with a documented reason (governance quotas). |

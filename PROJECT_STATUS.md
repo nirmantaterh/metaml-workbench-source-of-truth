@@ -128,7 +128,11 @@ Re-run `git status --short backend/ frontend/ demo/` in a fresh session to confi
 
 ## 5. Test status (last confirmed)
 
-Full backend suite: **234 tests, 0 failures** (152 `workbench`, 76 `wbapi`, 6 `nodemanager`), measured 2026-08-12.
+Full backend suite: **299 tests, 1 failure** (216 `workbench`, 77 `wbapi`, 6 `nodemanager`), re-measured
+2026-08-24. The `workbench` count excludes 17 additional `@Tag("slow")` tests (real Maven
+builds/JVM launches) not re-run for this measurement. The 1 failure
+(`SpringBootProjectLauncherMavenInstallTest`) is environment-dependent (no system-wide `mvn` on this
+machine) and unrelated to product code.
 Real dev data unchanged by a full run: 70 models, 33 twins, 70 workflow histories, 0 orphaned histories.
 Frontend: no new automated tests added (existing baseline lint/build failures are pre-existing, unrelated — confirmed via `git stash` comparison in an earlier phase).
 

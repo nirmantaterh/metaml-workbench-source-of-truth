@@ -7,7 +7,7 @@ Fifteen ADRs recording the major architectural decisions behind the Digital Twin
 | [001](ADR-001-original-bpmn-is-sole-authority.md) | The Original process instance is the sole authority |
 | [002](ADR-002-continuously-running-twin-bpmn.md) | The Twin runs a continuously-live, separately generated BPMN definition |
 | [003](ADR-003-shared-h2-runtime-as-source-of-truth.md) | One shared Camunda runtime database is the source of truth |
-| [004](ADR-004-event-driven-synchronization.md) | Event-driven synchronization via `AFTER_COMMIT`, never polling |
+| [004](ADR-004-event-driven-synchronization.md) | Event-driven synchronization via `AFTER_COMMIT`, never polling (in-process Original↔Twin bridge only — the separate, generated Target Platform pipeline uses a 1-second polling coordinator, see `TEAM_DEMO_GUIDE.md` §14.4) |
 | [005](ADR-005-receive-service-task-separation.md) | Synchronization and automation are two separate BPMN elements |
 | [006](ADR-006-runtime-derived-execution-identity.md) | Execution identity is recomputed at runtime, never cached — except one mapping |
 | [007](ADR-007-execution-targeted-messaging.md) | Parallel multi-instance siblings are disambiguated by direct execution-targeted messaging |

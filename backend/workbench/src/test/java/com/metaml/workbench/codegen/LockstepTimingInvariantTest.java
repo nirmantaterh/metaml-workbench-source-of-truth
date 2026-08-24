@@ -129,17 +129,20 @@ class LockstepTimingInvariantTest {
                 proxyResult.syncActivityIds());
 
         // 2. Test-only delegate substitutes, registered directly under the bean names
-        // TargetPlatformSourceGenerator normalized the transformed BPMNs' delegateExpressions to
-        // (camel(activityId) for proxy tasks, camel(activityId + "_automate") for twin tasks - see
-        // generate()'s own normalisation). No Spring context, no component scanning: a standalone
-        // engine resolves "${beanName}" against this map directly.
+        // TargetPlatformSourceGenerator normalized the transformed BPMNs' delegateExpressions to:
+        // camel(activityId) for proxy tasks, camel(activityId + "_automate") + "Twin" for twin
+        // tasks - the "Twin" suffix keeps a twin bean name distinct from a proxy bean name even
+        // when both sides reference the same underlying activity id (see generate()'s own
+        // normalisation and its ConflictingBeanDefinitionException-avoidance comment). No Spring
+        // context, no component scanning: a standalone engine resolves "${beanName}" against this
+        // map directly.
         CountDownLatch releaseLatch = new CountDownLatch(1);
         LatchedDelegate twinTaskADelegate = new LatchedDelegate(releaseLatch);
         Map<Object, Object> beans = Map.of(
                 "taskA", new InstantDelegate(),
                 "taskB", new InstantDelegate(),
-                "taskA_automate", twinTaskADelegate,
-                "taskB_automate", new InstantDelegate());
+                "taskA_automateTwin", twinTaskADelegate,
+                "taskB_automateTwin", new InstantDelegate());
 
         ProcessEngineConfigurationImpl config = (ProcessEngineConfigurationImpl)
                 ProcessEngineConfiguration.createStandaloneInMemProcessEngineConfiguration();

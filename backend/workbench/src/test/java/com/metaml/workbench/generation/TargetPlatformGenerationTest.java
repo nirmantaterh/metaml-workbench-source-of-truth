@@ -95,6 +95,48 @@ class TargetPlatformGenerationTest {
         assertThat(tpRoot.resolve("twin/events")).isEmptyDirectory();
     }
 
+    // Regression coverage for a real production failure: generated-target-platforms\ca9204af-...
+    // built successfully but failed at Spring context startup with ConflictingBeanDefinitionException
+    // for bean "add_rice" - proxy.delegates.Add_rice and twin.delegates.Add_rice both registered
+    // under the same bean name. That project's authored twin reused the proxy's own activity id
+    // verbatim (unlike the auto-derived TwinModelGenerator path, which always suffixes with
+    // "_automate" and so never collides) - exactly the shape reproduced here: an authored twin
+    // whose activity id intentionally matches the proxy's, through the real
+    // generateWithAuthoredTwin() entry point, not just TargetPlatformSourceGenerator directly.
+    @Test
+    void anAuthoredTwinReusingTheProxysOwnActivityIdGetsADistinctBeanNameInsteadOfCollidingAtStartup()
+            throws IOException {
+        String proxyBpmn = bpmn("rc_proxy_process", """
+                <bpmn2:serviceTask id="add_rice" name="Add Rice" camunda:delegateExpression="${add_rice}" />
+                """);
+        // Deliberately reuses "add_rice" - an independently authored twin naming its own steps
+        // after the same business activity, not the "_automate" suffix TwinModelGenerator would add.
+        String twinBpmn = bpmn("rc_twin_process", """
+                <bpmn2:serviceTask id="add_rice" name="Add Rice" camunda:delegateExpression="${add_rice}" />
+                """);
+
+        GeneratedProject project = generator().generateWithAuthoredTwin(proxyBpmn, twinBpmn);
+
+        Path tpRoot = project.directory().resolve("src/main/java/com/tp/TargetPlatform");
+        Path proxyDelegate = tpRoot.resolve("proxy/delegates/Add_rice.java");
+        Path twinDelegate = tpRoot.resolve("twin/delegates/Add_rice.java");
+        assertThat(proxyDelegate).exists();
+        assertThat(twinDelegate).exists();
+
+        String proxySource = Files.readString(proxyDelegate, StandardCharsets.UTF_8);
+        String twinSource = Files.readString(twinDelegate, StandardCharsets.UTF_8);
+        assertThat(proxySource).contains("@Component(\"add_rice\")");
+        assertThat(twinSource).contains("@Component(\"add_riceTwin\")");
+        assertThat(twinSource).doesNotContain("@Component(\"add_rice\")\n");
+
+        // The twin BPMN's own delegateExpression must point at its own (renamed) bean, not the
+        // proxy's - otherwise the engine would fail at runtime with "Cannot resolve identifier".
+        String twinBpmnOut = Files.readString(
+                project.directory().resolve("src/main/resources/processes/rc_twin_process.bpmn"),
+                StandardCharsets.UTF_8);
+        assertThat(twinBpmnOut).contains("camunda:delegateExpression=\"${add_riceTwin}\"");
+    }
+
     @Test
     void regeneratingTheSameProjectStyleReplacesStaleGeneratedSourcesRatherThanAccumulatingThem() {
         // clearTargetPlatformGeneratedSources() only matters within a single generate() call today

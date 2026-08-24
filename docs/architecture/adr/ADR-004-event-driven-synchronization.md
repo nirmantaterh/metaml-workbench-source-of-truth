@@ -2,6 +2,13 @@
 
 **Status:** Accepted (Version 1.0)
 
+**Scope:** This decision covers only the in-process Original↔Twin bridge described in
+[ARCHITECTURE.md](../ARCHITECTURE.md) (one shared Camunda engine, one JVM). It does not describe
+and is not a claim about the separately-generated, cross-process Target Platform pipeline (Proxy/Twin
+synchronized over RabbitMQ via a generated `SignalBroadcaster`), which did not exist when this ADR
+was written and uses a different mechanism: signal-driven advancement with a 1-second polling
+coordinator (`@Scheduled(fixedDelay = 1000)`). See `TEAM_DEMO_GUIDE.md` §14.4 for that mechanism.
+
 ## Context
 
 The Twin needs to learn "the Original just did something" as close to instantaneously as possible, without the two instances being coupled by shared application state, and without introducing a scheduled poll that would add latency, load, and a whole class of "did I already handle this" bugs.

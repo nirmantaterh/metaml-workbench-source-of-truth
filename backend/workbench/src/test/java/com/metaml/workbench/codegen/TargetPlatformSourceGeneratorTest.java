@@ -184,6 +184,47 @@ class TargetPlatformSourceGeneratorTest {
         assertThat(result.sources()).hasSize(1);
     }
 
+    // The bug this exists to catch: an AUTHORED twin (see saveModelWithAuthoredTwin) is free to
+    // reuse the exact same activity id as its proxy - a hand-mirrored twin naturally would, and
+    // TwinModelGenerator's own auto-derived "_automate" suffix only avoids this by accident for the
+    // auto-derive path. Before the fix, generate(xml, false) and generate(xml, true) on BPMNs that
+    // share an activity id produced two DIFFERENT classes both registered under the identical
+    // Spring bean name - the application would fail to start with ConflictingBeanDefinitionException
+    // the same way the executionListener case above already guards against.
+    @Test
+    void theTwinSidesDelegateBeanIsRenamedSoItNeverCollidesWithTheProxysOwnBeanOfTheSameActivityId() {
+        String sharedActivityId = "add_rice";
+        String xml = bpmn("""
+                <bpmn2:serviceTask id="%s" name="Add Rice"
+                    camunda:delegateExpression="${%s}" />
+                """.formatted(sharedActivityId, sharedActivityId));
+
+        TargetPlatformSourceGenerator.Result proxyResult = generator.generate(xml, false);
+        TargetPlatformSourceGenerator.Result twinResult = generator.generate(xml, true);
+
+        assertThat(proxyResult.sources()).hasSize(1);
+        assertThat(twinResult.sources()).hasSize(1);
+        TargetPlatformSourceGenerator.GeneratedSource proxySource = proxyResult.sources().get(0);
+        TargetPlatformSourceGenerator.GeneratedSource twinSource = twinResult.sources().get(0);
+
+        // Both sides still discover the same activity id and land in their own directory...
+        assertThat(proxySource.relativeDirectory()).isEqualTo("proxy/delegates");
+        assertThat(twinSource.relativeDirectory()).isEqualTo("twin/delegates");
+
+        // ...but the twin's Spring bean name must be distinct from the proxy's, so both classes
+        // can be component-scanned into the same application context without colliding.
+        assertThat(proxySource.source()).contains("@Component(\"add_rice\")");
+        assertThat(twinSource.source()).contains("@Component(\"add_riceTwin\")");
+        assertThat(proxySource.source()).doesNotContain("@Component(\"add_riceTwin\")");
+
+        // Each BPMN's own delegateExpression is rewritten to match its own bean, not the other
+        // side's - the twin BPMN must stop pointing at the bare name the proxy bean now owns alone.
+        assertThat(proxyResult.bpmnXml()).contains("camunda:delegateExpression=\"${add_rice}\"");
+        assertThat(twinResult.bpmnXml())
+                .doesNotContain("camunda:delegateExpression=\"${add_rice}\"")
+                .contains("camunda:delegateExpression=\"${add_riceTwin}\"");
+    }
+
     @Test
     void anElementWithNeitherClassNorDelegateExpressionIsSkipped() {
         String xml = bpmn("""

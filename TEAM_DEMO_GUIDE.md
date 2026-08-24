@@ -231,7 +231,11 @@ RED covers both "governance said no" and "something broke" — the banner text d
 resolution flow, DENY end-to-end, platform quota exhaustion, generated-app liveness after an
 external JVM kill, and model deletion / ID retirement.
 
-Backend suite: **234 tests, 0 failures** (152 workbench, 76 wbapi, 6 nodemanager).
+Backend suite, re-measured 2026-08-24: **299 tests, 1 failure** (216 `workbench`, 77 `wbapi`,
+6 `nodemanager`; `workbench` count excludes 17 additional `@Tag("slow")` tests — real Maven
+builds/JVM launches — not re-run for this count). The 1 failure
+(`SpringBootProjectLauncherMavenInstallTest`) is environment-dependent (no system-wide `mvn` on
+this machine) and unrelated to product code.
 
 ---
 
@@ -282,3 +286,96 @@ demo/                            fixtures + DEMO_PROTOCOL.md (regression script)
 docs/architecture/               ARCHITECTURE.md, DIAGRAMS.md, ADRs
 PROJECT_STATUS.md                cross-session status - read this first
 ```
+
+---
+
+## 14. DEMO 5 — Proxy/Twin synchronization (RabbitMQ)
+
+This is a **generated Target Platform** demo, not a Workbench-UI demo — it runs against a
+`RedCollar.Manuf` project already generated and launched (Generate → Launch, see DEMO 1). It needs
+RabbitMQ up (`docker start metaml-rabbitmq`) and the launch started with `METAML_MESSAGING_ENABLED=true`
+(the Workbench's own Launch button already sets this for you).
+
+**Terminology, unchanged from the architecture docs:** **Proxy** = the original/user-authored BPMN
+side (`RedCollar.Manuf`, reached under `/api/v1/manufacturing/...` because RedCollar Manufacturing is
+the demonstration process — the path name does not rename the architectural role). **Twin** =
+the corresponding digital-twin side (`RedCollar.Manuf_twin`, reached under `/api/v1/twin/...`).
+
+The Target Platform's own port is **dynamically allocated per Launch** — read it from the Launch
+response or **Evolve ▸ Deployed Applications**, and substitute it below as `<TARGET_PLATFORM_PORT>`.
+
+### 14.1 Start Proxy and Twin
+
+```bash
+BASE_URL="http://localhost:<TARGET_PLATFORM_PORT>"
+BK=demo-$(date +%s)
+
+curl -s -X POST "$BASE_URL/api/v1/manufacturing/start?businessKey=$BK"; echo   # Proxy
+curl -s -X POST "$BASE_URL/api/v1/twin/start?businessKey=$BK";           echo   # Twin
+```
+
+Expect `"role":"initiator"` (Proxy) and `"role":"responder"` (Twin), each with its own
+`processInstanceId`, both carrying the same `businessKey`.
+
+> **Start Proxy and Twin back-to-back with the same businessKey.** A Proxy-only run reports
+> `"role":"initiator"`, executes every activity, and completes normally — that is expected,
+> supported single-process behavior, **not** a Proxy/Twin synchronization demo. It also never
+> touches RabbitMQ, so a slow operator can accidentally show an audience a "successful" run that
+> proves nothing.
+
+### 14.2 Watch the pair advance
+
+```bash
+PROXY=<proxy processInstanceId>
+TWIN=<twin processInstanceId>
+
+watch -n1 "curl -s $BASE_URL/api/v1/process/$PROXY/status; echo; \
+           curl -s $BASE_URL/api/v1/process/$TWIN/status"
+```
+
+(No `watch` on Windows — loop `curl` + `Start-Sleep -Seconds 1` in PowerShell instead.)
+
+Look for: Proxy's `activeActivityIds` holding the **same value across consecutive samples**
+(it's waiting) while Twin's `agentTopic`/`agentInvocationId` change (it's executing) — then Proxy's
+`activeActivityIds` advancing right after. Both end at `{"active":false}`.
+
+### 14.3 Application-log evidence
+
+```bash
+cd <GENERATED_TARGET_PLATFORMS_ROOT>/<PROJECT_ID>
+tail -f launch.log | grep -E "TASK: published|TASK: delivered|RESPONSE: published|RESPONSE: delivered|\[Twin\] Invoking"
+```
+
+Each RabbitMQ-carried activity produces, in order: `TASK: published activity '<X>Twin' (signal
+'<y>Signal') ... (processInstanceId=<TWIN>)` → `TASK: delivered signal ... via RabbitMQ` →
+`[Twin] Invoking simulated ML agent for activity "<X> Twin"` → `RESPONSE: published activity
+'<X>Twin' ... (processInstanceId=<PROXY>)` → `RESPONSE: delivered signal ... via RabbitMQ` →
+`Executing generated external-task worker for activity "<X>" (process instance <PROXY>)`. The
+Proxy's worker line only ever appears *after* the response line — that ordering is the evidence.
+
+**Not every activity crosses RabbitMQ every run.** `SignalBroadcaster` only routes through the
+queue pair when both sides are concurrently waiting on the same signal; a signal with no live
+counterpart on the other side (e.g. a rework-loop revisit) is released in-process and logs as
+`DELIVERED: delivered signal ...` instead. That is intentional deadlock-avoidance, not a bug, and
+which activities take which path can legitimately differ between otherwise-identical runs.
+
+### 14.4 Architecture this demonstrates
+
+- **H2** (`jdbc:h2:mem:process-engine`) persists both Proxy and Twin — same embedded engine, which
+  is what `/status` and `/recent-instances` read from.
+- **RabbitMQ** carries the Proxy↔Twin task/response handoff for activities that cross that
+  boundary — one task queue + one response queue per activity, on a per-project exchange
+  (`redcollar.<projectId>.exchange`), so two generated platforms can never collide.
+- **`SignalBroadcaster`** is the coordinator that decides *when* each handoff fires — a
+  generated `@Scheduled(fixedDelay = 1000)` bean that polls Camunda's own event-subscription state
+  once a second to detect "both sides are now waiting on the same signal" or "the responder has
+  moved on." Accurate framing for this mechanism: **signal-driven lockstep synchronization with a
+  lightweight 1-second polling coordinator** — not "event-driven, not polling." (That phrase
+  describes a different, in-process mechanism used by the Workbench's own Original/Twin bridge —
+  see [ADR-004](docs/architecture/adr/ADR-004-event-driven-synchronization.md).) Each handoff costs
+  up to ~1s of added latency for this reason; RabbitMQ delivery itself is near-instant (single-digit
+  to low-double-digit milliseconds) once `SignalBroadcaster` decides to send it.
+
+**Verified by hand on 2026-08-23** (`RedCollar.Manuf` project, port 8099, `businessKey=demo-1787512050`):
+Proxy `pid 619` / Twin `pid 627`, 7 activities round-tripped over RabbitMQ (published = delivered =
+7 each), 9/9 Twin workers executed, both instances completed with no incidents.
