@@ -12,6 +12,9 @@ backend/**/target/
 backend/data/
 backend/**/data/
 
+# runtime logs written by spring-boot:run, local output only
+*.log
+
 # Word's lock files, left behind whenever a .md in here gets opened in Office
 ~$*
 
