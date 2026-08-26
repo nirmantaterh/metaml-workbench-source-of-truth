@@ -32,7 +32,9 @@ is still future work.
 
 ## Running it
 
-Three processes, in this order:
+Three processes, in this order.
+
+**macOS / Linux**
 
 ```bash
 # 1. backend API + Camunda (http://localhost:8082)
@@ -47,12 +49,52 @@ cd backend
 npm start --prefix frontend
 ```
 
+**Windows (PowerShell)**
+
+```powershell
+# 1. backend API + Camunda (http://localhost:8082)
+cd backend
+.\run-wbapi.cmd
+
+# 2. node manager / agent catalogue (http://localhost:8083) — needed for Evolve
+cd backend
+.\mvnw.cmd -pl nodemanager spring-boot:run
+
+# 3. frontend (http://localhost:3000)
+cd frontend
+npm start
+```
+
+[backend/run-wbapi.cmd](backend/run-wbapi.cmd) is the recommended way in on Windows: it `cd`s to its
+own directory, installs `workbench` into the local repo, then runs `wbapi` alone. Running the
+equivalent by hand is fine too —
+
+```powershell
+cd backend
+.\mvnw.cmd -pl workbench install -DskipTests
+.\mvnw.cmd -pl wbapi spring-boot:run
+```
+
+— but two Windows-specific traps are worth knowing, both confirmed empirically and both explained in
+the script's own comments:
+
+- **Keep the `.\` prefix.** With `NoDefaultCurrentDirectoryInExePath=1` set, a bare `mvnw.cmd`
+  fails with *"not recognized as an internal or external command"* even when the file is right there
+  and the working directory is correct.
+- **Don't add `-am` to the `spring-boot:run` invocation.** Maven runs the same goal against every
+  module `-am` pulls in, including `workbench` — a library with no main class — which fails with
+  *"Unable to find a suitable main class"* before `wbapi` is ever reached. Install `workbench`
+  first, then run `wbapi` with no `-am`.
+
 Then open <http://localhost:3000>.
 
 If you changed anything under `backend/workbench/`, install it first:
 
 ```bash
-cd backend && ./mvnw -pl workbench install -DskipTests
+cd backend && ./mvnw -pl workbench install -DskipTests          # macOS / Linux
+```
+```powershell
+cd backend; .\mvnw.cmd -pl workbench install -DskipTests        # Windows
 ```
 
 The backend binds to `127.0.0.1` deliberately: port 8082 also serves the Camunda webapp
@@ -109,7 +151,10 @@ Two things worth knowing before you present any of these:
 
 For Demo 5, start the Proxy and the Twin back-to-back with the same `businessKey`. A Proxy-only run
 completes normally and never touches RabbitMQ — supported behaviour, but it proves nothing about
-synchronization.
+synchronization. Its verification commands are written as bash `curl`; on Windows there is no
+`watch`, so poll with `Invoke-RestMethod` plus `Start-Sleep -Seconds 1` in a loop instead.
+[demo-test.ps1](demo-test.ps1) drives the Save → Generate → Launch REST API from PowerShell if you
+want the pipeline exercised without the UI.
 
 ---
 
@@ -133,7 +178,10 @@ PLATFORM_CONTEXT.md   scope and ownership: what this team built vs. what MetaML 
 ## Tests
 
 ```bash
-cd backend && ./mvnw test
+cd backend && ./mvnw test          # macOS / Linux
+```
+```powershell
+cd backend; .\mvnw.cmd test        # Windows
 ```
 
 Last measured 2026-08-24: **299 tests, 1 failure** — 216 `workbench`, 77 `wbapi`, 6 `nodemanager`.
