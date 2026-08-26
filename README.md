@@ -153,8 +153,6 @@ For Demo 5, start the Proxy and the Twin back-to-back with the same `businessKey
 completes normally and never touches RabbitMQ — supported behaviour, but it proves nothing about
 synchronization. Its verification commands are written as bash `curl`; on Windows there is no
 `watch`, so poll with `Invoke-RestMethod` plus `Start-Sleep -Seconds 1` in a loop instead.
-[demo-test.ps1](demo-test.ps1) drives the Save → Generate → Launch REST API from PowerShell if you
-want the pipeline exercised without the UI.
 
 ---
 
