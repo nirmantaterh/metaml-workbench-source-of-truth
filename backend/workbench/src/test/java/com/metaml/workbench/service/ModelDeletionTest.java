@@ -149,7 +149,10 @@ class ModelDeletionTest {
     }
 
     private Path directoryOf(GeneratedProject project) {
-        return outputDir.resolve(project.projectId());
+        // Folder name is a slug of the model's display name now, not the bare projectId (see
+        // SpringBootProjectGenerator.resolveProjectDirectory) - project.directory() is the actual
+        // source of truth for where it landed.
+        return project.directory();
     }
 
     private Path bpmnFileOf(String modelId) {

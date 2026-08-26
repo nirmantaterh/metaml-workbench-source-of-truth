@@ -205,7 +205,10 @@ class AuthoredTwinLifecycleTest {
     void deletingAnAuthoredTwinModelRemovesBothBpmnFilesAndTheGeneratedProject() {
         service.saveProcessModelWithAuthoredTwin("acme-4", "Acme", acmeManufBpmn(), acmeTwinBpmn(), null);
         GeneratedProject project = service.generateSpringBootProject("acme-4");
-        Path projectDir = outputDir.resolve(project.projectId());
+        // Folder name is a slug of the model's display name now, not the bare projectId (see
+        // SpringBootProjectGenerator.resolveProjectDirectory) - project.directory() is the actual
+        // source of truth for where it landed.
+        Path projectDir = project.directory();
         assertThat(projectDir).exists();
 
         assertThat(service.deleteProcessModel("acme-4")).isTrue();

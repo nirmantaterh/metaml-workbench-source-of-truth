@@ -821,7 +821,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                 // else below this branch - bookkeeping, workflow-stage recording, retention - is
                 // identical to the single-BPMN path; only which generator method runs differs.
                 project = springBootProjectGenerator.generateWithAuthoredTwin(model.getBpmnXml(),
-                        model.getAuthoredTwinBpmnXml());
+                        model.getAuthoredTwinBpmnXml(), model.getName());
             } else {
                 // regenerated here rather than reusing generateDelegates' output - that method renders
                 // against DelegateClassGenerator's own default package, which is fine for previewing
@@ -830,7 +830,7 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                 // Spring's component scan never finds it (see that constant's own comment).
                 List<GeneratedDelegate> delegates = delegateClassGenerator.generate(model.getBpmnXml(),
                         SpringBootProjectGenerator.DELEGATE_PACKAGE);
-                project = springBootProjectGenerator.generate(model.getBpmnXml(), delegates);
+                project = springBootProjectGenerator.generate(model.getBpmnXml(), delegates, model.getName());
             }
             generatedProjects.put(project.projectId(), project);
             modelIdByProjectId.put(project.projectId(), modelId);

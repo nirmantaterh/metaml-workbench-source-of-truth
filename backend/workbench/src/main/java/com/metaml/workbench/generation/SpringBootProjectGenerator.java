@@ -109,6 +109,15 @@ public class SpringBootProjectGenerator {
     }
 
     public GeneratedProject generate(String bpmnXml, List<GeneratedDelegate> delegates) {
+        return generate(bpmnXml, delegates, null);
+    }
+
+    // displayName is the model's own human-chosen name (ProcessModel.name), purely cosmetic - it
+    // only ever influences the on-disk folder name (see resolveProjectDirectory); projectId stays
+    // the real identity everywhere else (map keys, RabbitMQ namespacing, persisted workflow
+    // history). null/blank falls back to processKey, which is still far more readable than a bare
+    // UUID, so every existing caller that doesn't know about a display name keeps working as-is.
+    public GeneratedProject generate(String bpmnXml, List<GeneratedDelegate> delegates, String displayName) {
         if (!Files.isDirectory(templateDirectory)) {
             throw new IllegalStateException("No template project at " + templateDirectory.toAbsolutePath()
                     + " - workbench.generation.template-directory must point at the camundademo template");
@@ -120,7 +129,7 @@ public class SpringBootProjectGenerator {
             // evolve twin workflow (receiveTask/serviceTask pairs waiting on
             // ${twinAutomationDelegate}, a bean this template doesn't have). RedCollarTP's own
             // real Twin BPMN is a structural mirror of its proxy, so that's what gets derived here.
-            return generateTargetPlatform(bpmnXml, targetPlatformTwinMirrorGenerator.mirror(bpmnXml));
+            return generateTargetPlatform(bpmnXml, targetPlatformTwinMirrorGenerator.mirror(bpmnXml), displayName);
         }
         String processKey = extractProcessKey(model);
 
@@ -128,12 +137,12 @@ public class SpringBootProjectGenerator {
         // Twin uses; a plain Main falls through unchanged to the governance/Evolve path below.
         String derivedTwinXml = OperationalTwinGenerator.deriveTwinXml(model, processKey);
         if (derivedTwinXml != null) {
-            return generateWithAuthoredTwin(bpmnXml, derivedTwinXml);
+            return generateWithAuthoredTwin(bpmnXml, derivedTwinXml, displayName);
         }
 
         List<BpmnActivities.Activity> activities = BpmnActivities.eligible(model);
         String projectId = UUID.randomUUID().toString();
-        Path projectDir = resolveProjectDirectory(projectId);
+        Path projectDir = resolveProjectDirectory(projectId, labelFor(displayName, processKey));
         String basePackage = TARGET_PLATFORM_BASE_PACKAGE + "." + packageSlugFor(processKey);
 
         copyTemplate(projectDir);
@@ -147,7 +156,7 @@ public class SpringBootProjectGenerator {
                 "/api/v1/manufacturing", processKey, activities, "notifyTwin");
         generateTwinResources(projectDir, basePackage, model, processKey);
         writeProcessStatusController(projectDir, basePackage);
-        writeProjectMetadata(projectDir, processKey);
+        writeProjectMetadata(projectDir, projectId, processKey);
 
         logger.info(
                 "Generated Target Harness Platform {} for process key '{}' with {} manufacturing activity "
@@ -158,12 +167,16 @@ public class SpringBootProjectGenerator {
 
     // Like generate(), but uses an independently authored Twin BPMN instead of deriving one.
     public GeneratedProject generateWithAuthoredTwin(String manufBpmnXml, String twinBpmnXml) {
+        return generateWithAuthoredTwin(manufBpmnXml, twinBpmnXml, null);
+    }
+
+    public GeneratedProject generateWithAuthoredTwin(String manufBpmnXml, String twinBpmnXml, String displayName) {
         if (!Files.isDirectory(templateDirectory)) {
             throw new IllegalStateException("No template project at " + templateDirectory.toAbsolutePath()
                     + " - workbench.generation.template-directory must point at the camundademo template");
         }
         if (isTargetPlatformTemplate()) {
-            return generateTargetPlatform(manufBpmnXml, twinBpmnXml);
+            return generateTargetPlatform(manufBpmnXml, twinBpmnXml, displayName);
         }
 
         BpmnModelInstance manufModel = Bpmn.readModelFromStream(
@@ -174,7 +187,7 @@ public class SpringBootProjectGenerator {
         String manufProcessKey = extractProcessKey(manufModel);
         String twinProcessKey = extractProcessKey(twinModel);
         String projectId = UUID.randomUUID().toString();
-        Path projectDir = resolveProjectDirectory(projectId);
+        Path projectDir = resolveProjectDirectory(projectId, labelFor(displayName, manufProcessKey));
         String basePackage = TARGET_PLATFORM_BASE_PACKAGE + "." + packageSlugFor(manufProcessKey);
 
         copyTemplate(projectDir);
@@ -235,7 +248,7 @@ public class SpringBootProjectGenerator {
         writeExternalTaskPoller(projectDir, basePackage);
         writeSchedulingConfig(projectDir, basePackage);
         writeProcessStatusController(projectDir, basePackage);
-        writeProjectMetadata(projectDir, manufProcessKey);
+        writeProjectMetadata(projectDir, projectId, manufProcessKey);
 
         logger.info("Generated Target Harness Platform {} with authored Twin for process keys '{}' + '{}', "
                 + "{} manufacturing workers, {} twin workers, {} total signals, {} Main<->Twin communication "
@@ -254,7 +267,7 @@ public class SpringBootProjectGenerator {
         return Files.isDirectory(templateDirectory.resolve("src/main/java/com/tp/TargetPlatform"));
     }
 
-    private GeneratedProject generateTargetPlatform(String proxyBpmnXml, String twinBpmnXml) {
+    private GeneratedProject generateTargetPlatform(String proxyBpmnXml, String twinBpmnXml, String displayName) {
         BpmnModelInstance proxyModel = Bpmn.readModelFromStream(
                 new ByteArrayInputStream(proxyBpmnXml.getBytes(StandardCharsets.UTF_8)));
         BpmnModelInstance twinModel = Bpmn.readModelFromStream(
@@ -262,7 +275,7 @@ public class SpringBootProjectGenerator {
         String proxyKey = extractProcessKey(proxyModel);
         String twinKey = extractProcessKey(twinModel);
         String projectId = UUID.randomUUID().toString();
-        Path projectDir = resolveProjectDirectory(projectId);
+        Path projectDir = resolveProjectDirectory(projectId, labelFor(displayName, proxyKey));
         copyTemplate(projectDir);
         clearTargetPlatformGeneratedSources(projectDir);
 
@@ -316,7 +329,7 @@ public class SpringBootProjectGenerator {
         writeSchedulingConfig(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL);
         writeProcessStatusController(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL);
 
-        writeProjectMetadata(projectDir, proxyKey);
+        writeProjectMetadata(projectDir, projectId, proxyKey);
         logger.info("Generated TargetPlatform {} at {} with {} proxy and {} twin source bean(s), {} shared "
                         + "sync signal(s) of {} total", projectId, projectDir.toAbsolutePath(), proxy.sources().size(),
                 twin.sources().size(), sharedSignals.size(), allSignals.size());
@@ -481,21 +494,67 @@ public class SpringBootProjectGenerator {
     // then that becomes your updated generated set."
     // copyTemplate() + rewritePackage() handle the rest; nothing is generated here.
 
-    // projectId is always a freshly minted UUID (see the two call sites above), never user input,
-    // so this can't actually be walked outside outputDirectory today - but ProcessModelFileStore
-    // guards the same shape of path for the same reason: the check is cheap, and "trusted for now"
-    // is exactly the kind of assumption that stops being true the next time a caller changes.
-    private Path resolveProjectDirectory(String projectId) {
+    // Human-readable on disk (slug of the process display name, falling back to processKey when
+    // there is no display name), with a numeric suffix only when that name is already taken -
+    // re-Generating the same process, or two different processes sharing a display name, are both
+    // "cosmetic" collisions here, never an identity problem: projectId (always a freshly minted
+    // UUID) stays the real identity everywhere else (generatedProjects map key, RabbitMQ
+    // messagingNamespace, persisted workflow history), recorded inside PROJECT_METADATA_FILE - see
+    // writeProjectMetadata/findProjectDirectoryById, which is how delete()/scanExisting() find the
+    // right directory again without the folder name having to equal projectId any more.
+    private Path resolveProjectDirectory(String projectId, String label) {
         Path root = outputDirectory.toAbsolutePath().normalize();
-        Path resolved = root.resolve(projectId).normalize();
-        if (!resolved.startsWith(root)) {
-            throw new IllegalArgumentException("projectId must not resolve outside the output directory: " + projectId);
+        String base = slugify(label);
+        if (base.isEmpty()) {
+            base = projectId;
+        }
+        Path candidate = safeChildOf(root, base);
+        int suffix = 2;
+        while (Files.exists(candidate)) {
+            candidate = safeChildOf(root, base + "-" + suffix);
+            suffix++;
+        }
+        return candidate;
+    }
+
+    // label is a human display name - user input, unlike the old bare-UUID folder name - so it is
+    // never trusted as a raw path segment. Strips anything outside the safe charset, then strips
+    // leading dots/hyphens too so a label that would otherwise slugify to ".." (or "-", "-2", ...)
+    // can never be mistaken for a filesystem special segment; safeChildOf below is the second,
+    // independent check on the same risk.
+    private static String slugify(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String cleaned = raw.trim()
+                .replaceAll("[^A-Za-z0-9._-]+", "-")
+                .replaceAll("-{2,}", "-")
+                .replaceAll("^[.-]+", "")
+                .replaceAll("[.-]+$", "");
+        return cleaned.length() > 60 ? cleaned.substring(0, 60) : cleaned;
+    }
+
+    private static String labelFor(String displayName, String processKeyFallback) {
+        return (displayName != null && !displayName.isBlank()) ? displayName : processKeyFallback;
+    }
+
+    // Same guard resolveProjectDirectory always had for the bare-projectId folder name, applied
+    // here to a slug instead: cheap, and "trusted for now" is exactly the kind of assumption that
+    // stops being true the next time a caller changes.
+    private static Path safeChildOf(Path root, String segment) {
+        Path resolved = root.resolve(segment).normalize();
+        if (!resolved.startsWith(root) || resolved.equals(root)) {
+            throw new IllegalArgumentException(
+                    "Generated project folder name must not resolve outside the output directory: " + segment);
         }
         return resolved;
     }
 
     // Reconstructs the in-memory registry from disk rather than a separate store that could drift.
-    // Directories without exactly one non-twin .bpmn file are skipped, not guessed at.
+    // Directories without exactly one non-twin .bpmn file are skipped, not guessed at. projectId
+    // comes from the directory's own declared identity (PROJECT_METADATA_FILE) now that the folder
+    // name is a human label, not the id itself - falls back to the folder name only for a
+    // directory generated before that field existed, whose folder name still literally IS its id.
     public List<GeneratedProject> scanExisting() {
         if (!Files.isDirectory(outputDirectory)) {
             // nothing has ever been generated against this output directory - a fresh install, or
@@ -505,7 +564,8 @@ public class SpringBootProjectGenerator {
         List<GeneratedProject> found = new ArrayList<>();
         try (Stream<Path> children = Files.list(outputDirectory)) {
             for (Path projectDir : (Iterable<Path>) children.filter(Files::isDirectory)::iterator) {
-                String projectId = projectDir.getFileName().toString();
+                String declaredProjectId = readDeclaredProjectId(projectDir);
+                String projectId = declaredProjectId != null ? declaredProjectId : projectDir.getFileName().toString();
                 String processKey = findProcessKey(projectDir);
                 if (processKey == null) {
                     logger.warn("Skipping {} while restoring generated projects - could not determine a single "
@@ -522,14 +582,43 @@ public class SpringBootProjectGenerator {
         return found;
     }
 
-    // Takes projectId, not Path - validates direct-child relationship before deletion to prevent
+    // Directory lookup by declared identity now that the folder name is a human label rather than
+    // the projectId itself (see resolveProjectDirectory) - mirrors scanExisting()'s own fallback to
+    // the folder name for a directory generated before PROJECT_METADATA_FILE carried a projectId.
+    // Only ever returns a direct child of outputDirectory (Files.list never descends), so callers
+    // inherit the same path-traversal guarantee the old bare root.resolve(projectId) had.
+    private Path findProjectDirectoryById(String projectId) {
+        Path root = outputDirectory.toAbsolutePath().normalize();
+        if (!Files.isDirectory(root)) {
+            return null;
+        }
+        try (Stream<Path> children = Files.list(root)) {
+            for (Path candidate : (Iterable<Path>) children.filter(Files::isDirectory)::iterator) {
+                String declared = readDeclaredProjectId(candidate);
+                String effectiveId = declared != null ? declared : candidate.getFileName().toString();
+                if (projectId.equals(effectiveId)) {
+                    return candidate;
+                }
+            }
+        } catch (IOException e) {
+            logger.warn("Could not scan {} while resolving generated project '{}': {}",
+                    root.toAbsolutePath(), projectId, e.toString());
+        }
+        return null;
+    }
+
+    // Takes projectId, not Path - resolves it through findProjectDirectoryById (declared identity,
+    // not the folder name) and validates the direct-child relationship before deletion to prevent
     // path traversal (id comes from a persisted event; "../../data" would otherwise escape the tree).
     public boolean delete(String projectId) {
         if (projectId == null || projectId.isBlank()) {
             return false;
         }
         Path root = outputDirectory.toAbsolutePath().normalize();
-        Path projectDir = root.resolve(projectId).normalize();
+        Path projectDir = findProjectDirectoryById(projectId);
+        if (projectDir == null) {
+            return false;
+        }
         if (!root.equals(projectDir.getParent())) {
             logger.warn("Refusing to delete generated project '{}' - {} is not a direct child of {}",
                     projectId, projectDir, root);
@@ -560,9 +649,10 @@ public class SpringBootProjectGenerator {
     // PROJECT_METADATA_FILE's own comment for why this exists instead of inferring identity from
     // the .bpmn files a mode happens to write. Root of the project, not under src/, so it is never
     // touched by rewritePackage() and never ships as part of the generated application itself.
-    private void writeProjectMetadata(Path projectDir, String processKey) {
+    private void writeProjectMetadata(Path projectDir, String projectId, String processKey) {
         java.util.Properties properties = new java.util.Properties();
         properties.setProperty("processKey", processKey);
+        properties.setProperty("projectId", projectId);
         Path target = projectDir.resolve(PROJECT_METADATA_FILE);
         try (java.io.Writer writer = Files.newBufferedWriter(target, StandardCharsets.UTF_8)) {
             properties.store(writer, "Generated by SpringBootProjectGenerator - do not hand-edit");
@@ -614,6 +704,27 @@ public class SpringBootProjectGenerator {
     }
 
     private static String readDeclaredProcessKey(Path projectDir) {
+        java.util.Properties properties = loadProjectMetadata(projectDir);
+        if (properties == null) {
+            return null;
+        }
+        String processKey = properties.getProperty("processKey");
+        return (processKey == null || processKey.isBlank()) ? null : processKey;
+    }
+
+    // Absent for a directory generated before PROJECT_METADATA_FILE carried a projectId - callers
+    // (scanExisting/findProjectDirectoryById) fall back to the folder name in that case, which for
+    // one of those older directories still literally IS its id (see resolveProjectDirectory).
+    private static String readDeclaredProjectId(Path projectDir) {
+        java.util.Properties properties = loadProjectMetadata(projectDir);
+        if (properties == null) {
+            return null;
+        }
+        String projectId = properties.getProperty("projectId");
+        return (projectId == null || projectId.isBlank()) ? null : projectId;
+    }
+
+    private static java.util.Properties loadProjectMetadata(Path projectDir) {
         Path metadataFile = projectDir.resolve(PROJECT_METADATA_FILE);
         if (!Files.isRegularFile(metadataFile)) {
             return null;
@@ -625,8 +736,7 @@ public class SpringBootProjectGenerator {
             logger.warn("Could not read project metadata at {}: {}", metadataFile.toAbsolutePath(), e.toString());
             return null;
         }
-        String processKey = properties.getProperty("processKey");
-        return (processKey == null || processKey.isBlank()) ? null : processKey;
+        return properties;
     }
 
     private static String extractProcessKey(BpmnModelInstance model) {

@@ -155,7 +155,10 @@ class GeneratedProjectRetentionTest {
     }
 
     private Path directoryOf(GeneratedProject project) {
-        return outputDir.resolve(project.projectId());
+        // Folder name is a slug of the model's display name now, not the bare projectId (see
+        // SpringBootProjectGenerator.resolveProjectDirectory) - project.directory() is the actual
+        // source of truth for where it landed.
+        return project.directory();
     }
 
     // "the directory still exists" is NOT enough to claim a project was retained, and this was
