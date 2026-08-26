@@ -4,7 +4,7 @@
 **Scope:** `backend/workbench` (domain/runtime logic) and `backend/wbapi` (Spring Boot host, REST API, embedded Camunda 7.22.0 engine)
 **Companion documents:** [Architecture Decision Records](adr/) · [Evolution Timeline](EVOLUTION_TIMELINE.md) · [Runtime Diagrams](DIAGRAMS.md)
 
-This document is the permanent architectural record for the MetaML Workbench Digital Twin runtime. It describes the system exactly as implemented as of Phase 7.5's completion — no proposed changes, no alternative designs, no aspirational future state. Every claim below is backed by either source code (cited by file and method) or an empirical investigation recorded in [PROF_QA_PREP.md](../../PROF_QA_PREP.md) and summarized in the [Evolution Timeline](EVOLUTION_TIMELINE.md).
+This document is the permanent architectural record for the MetaML Workbench Digital Twin runtime. It describes the system exactly as implemented as of Phase 7.5's completion — no proposed changes, no alternative designs, no aspirational future state. Every claim below is backed by either source code (cited by file and method) or an empirical investigation recorded in the [Evolution Timeline](EVOLUTION_TIMELINE.md).
 
 ---
 
@@ -295,7 +295,7 @@ Classified per the same standard used throughout Phase 7's review: **Architectur
 - Phase 7: a three-way parallel independent red-team review across Runtime, Synchronization, Execution Identity, BPMN Coverage, Failure Recovery, Performance, and Maintainability — 8 findings (W1–W8) plus the confirmed `AdHocSubProcess` limitation.
 - Phase 7.5: implementation of the three highest-priority findings (W1, W2, W4), each followed by its own independent adversarial review — which found and required fixing a real concurrency race in W1's first fix, and two successive wrong turns in W4's dedup-derivation logic before the corrected version held.
 
-**Key empirical investigations** (full record in [PROF_QA_PREP.md](../../PROF_QA_PREP.md), summarized in the [Evolution Timeline](EVOLUTION_TIMELINE.md)): message-correlation disambiguation options for parallel Multi-Instance; the non-local/local `loopCounter` scope asymmetry; `createIncident`'s leaf-execution requirement; `HistoricDetail.variableUpdates()` vs `HistoricVariableInstance` behavior; a cosmetic `ProcessDefinition.getId()` formatting quirk found and ruled functionally irrelevant during Phase 7.5's final validation pass.
+**Key empirical investigations** (recorded in the [Evolution Timeline](EVOLUTION_TIMELINE.md)): message-correlation disambiguation options for parallel Multi-Instance; the non-local/local `loopCounter` scope asymmetry; `createIncident`'s leaf-execution requirement; `HistoricDetail.variableUpdates()` vs `HistoricVariableInstance` behavior; a cosmetic `ProcessDefinition.getId()` formatting quirk found and ruled functionally irrelevant during Phase 7.5's final validation pass.
 
 **Regression coverage:** every corrected finding has a dedicated test proving the specific defect it closes, confirmed to fail against the pre-fix code before the fix was written. The full backend suite (`wbapi` + `nodemanager`) passed clean, twice consecutively, as of the last change described in this document.
 

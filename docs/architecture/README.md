@@ -8,5 +8,3 @@ Permanent architectural record for the MetaML Workbench Digital Twin runtime, Ve
 4. **[Runtime Diagrams](DIAGRAMS.md)** — 7 Mermaid diagrams: runtime components, runtime sequence, synchronization sequence, BPMN transformation, execution identity resolution, failure recovery, multi-instance synchronization.
 
 This documentation was written entirely after implementation — it describes the system exactly as it exists, verified directly against the current source of `backend/workbench` and `backend/wbapi` at the time of writing, not as a plan or a proposal. No code was changed to produce it.
-
-For the informal, in-progress engineering log this documentation was distilled from (every probe, every wrong turn, every "why" in more narrative form), see [PROF_QA_PREP.md](../../PROF_QA_PREP.md) at the repository root.

@@ -1,6 +1,6 @@
 # Platform Context
 
-**Purpose:** this document exists so nobody reading our showcase material, our code, or this repo mistakes our team's contribution for the whole MetaML platform, or the whole platform for something we invented. It's a companion to [`PROF_QA_PREP.md`](PROF_QA_PREP.md) (the empirical Q&A record) and [`docs/architecture/`](docs/architecture/) (the runtime architecture itself) — this document is about scope and ownership, not implementation detail.
+**Purpose:** this document exists so nobody reading our showcase material, our code, or this repo mistakes our team's contribution for the whole MetaML platform, or the whole platform for something we invented. It's a companion to [`docs/architecture/`](docs/architecture/) (the runtime architecture itself) — this document is about scope and ownership, not implementation detail.
 
 ---
 
@@ -58,4 +58,4 @@ Concretely, what we built — the **MetaML Workbench** — is a React BPMN model
 
 ---
 
-*For the empirical detail behind any claim above, see [`PROF_QA_PREP.md`](PROF_QA_PREP.md) and [`docs/architecture/`](docs/architecture/). For terminology and messaging guidance when writing about this project externally, see the companion `MetaML Ground Truth` reference.*
+*For the empirical detail behind any claim above, see [`docs/architecture/`](docs/architecture/). For terminology and messaging guidance when writing about this project externally, see the companion `MetaML Ground Truth` reference.*
