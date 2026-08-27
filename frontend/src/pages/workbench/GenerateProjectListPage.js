@@ -36,7 +36,7 @@ const GenerateProjectListPage = () => {
                 [modelId]: {
                     type: "ok",
                     text: project.projectId
-                        ? `Generate successful (process "${project.processKey || "?"}", id ${project.projectId})`
+                        ? `Generate successful ("${project.displayName || project.processKey || "?"}")`
                         : "Generate successful",
                 },
             }));

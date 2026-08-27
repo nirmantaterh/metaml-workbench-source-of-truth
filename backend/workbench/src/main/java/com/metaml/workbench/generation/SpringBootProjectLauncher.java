@@ -80,7 +80,7 @@ public class SpringBootProjectLauncher {
 
             // modelId filled in by WorkbenchServiceImpl, not here - this class only ever sees a GeneratedProject, which has no notion of "model"
             LaunchedProject info = new LaunchedProject(project.projectId(), project.processKey(), port,
-                    Instant.now(), null);
+                    Instant.now(), null, project.displayName());
             running.put(project.projectId(), new Running(info, process));
             logger.info("Launched generated project {} (process key '{}') on port {}",
                     project.projectId(), project.processKey(), port);

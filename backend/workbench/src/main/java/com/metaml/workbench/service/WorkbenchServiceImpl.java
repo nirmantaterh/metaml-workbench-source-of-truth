@@ -711,9 +711,10 @@ public class WorkbenchServiceImpl implements WorkbenchService {
                 workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.COMPLETED,
                         "port " + launched.port());
             }
-            // the launcher itself never knows a modelId (see LaunchedProject's own comment) - this is the one place that fills it back in before anything sees the result
+            ProcessModel model = modelId != null ? processModels.get(modelId) : null;
+            String displayName = model != null ? model.getName() : project.displayName();
             return new LaunchedProject(launched.projectId(), launched.processKey(), launched.port(),
-                    launched.launchedAt(), modelId);
+                    launched.launchedAt(), modelId, displayName != null ? displayName : launched.processKey());
         } catch (RuntimeException e) {
             if (modelId != null) {
                 workflowStateTracker.record(modelId, WorkflowStage.LAUNCH, StageStatus.FAILED, e.getMessage(),
@@ -777,10 +778,15 @@ public class WorkbenchServiceImpl implements WorkbenchService {
 
     @Override
     public List<LaunchedProject> listRunningProjects() {
-        // same enrichment launchGeneratedProject does for a single launch - the launcher's own list never carries a modelId, and New scope item 5 (Evolve Workflow) needs one to point "connect to an existing deployed application" back at the model that produced it. Null only for a project whose own modelId genuinely can't be identified (see restoreGeneratedProjects()) - not merely "launched before this backend session" anymore, since a restart now reconstructs this mapping for anything still resolvable on disk.
         return springBootProjectLauncher.listRunning().stream()
-                .map(launched -> new LaunchedProject(launched.projectId(), launched.processKey(), launched.port(),
-                        launched.launchedAt(), modelIdByProjectId.get(launched.projectId())))
+                .map(launched -> {
+                    String modelId = modelIdByProjectId.get(launched.projectId());
+                    ProcessModel model = modelId != null ? processModels.get(modelId) : null;
+                    GeneratedProject gp = generatedProjects.get(launched.projectId());
+                    String displayName = model != null ? model.getName() : (gp != null ? gp.displayName() : launched.displayName());
+                    return new LaunchedProject(launched.projectId(), launched.processKey(), launched.port(),
+                            launched.launchedAt(), modelId, displayName != null ? displayName : launched.processKey());
+                })
                 .toList();
     }
 

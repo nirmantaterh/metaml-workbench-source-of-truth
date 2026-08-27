@@ -146,13 +146,20 @@ public class SpringBootProjectGenerator {
                 "/api/v1/manufacturing", processKey, activities, "notifyTwin");
         generateTwinResources(projectDir, basePackage, model, processKey);
         writeProcessStatusController(projectDir, basePackage);
-        writeProjectMetadata(projectDir, projectId, processKey);
+        writeProjectMetadata(projectDir, projectId, processKey, displayName);
+        String projectSlug = projectDir.getFileName().toString();
+        String appClassName = toJavaClassName(projectSlug);
+        rewritePomArtifactId(projectDir, projectSlug);
+        rewriteApplicationClassName(projectDir, basePackage, appClassName);
 
         logger.info(
                 "Generated Target Harness Platform {} for process key '{}' with {} manufacturing activity "
                         + "endpoint(s), package {}, at {}",
                 projectId, processKey, activities.size(), basePackage, projectDir.toAbsolutePath());
-        return new GeneratedProject(projectId, projectDir, processKey);
+        String effectiveDisplayName = (displayName != null && !displayName.isBlank())
+                ? displayName
+                : (processKey != null && !processKey.isBlank() ? processKey : "Target Platform");
+        return new GeneratedProject(projectId, projectDir, processKey, effectiveDisplayName);
     }
 
     // Like generate(), but uses an independently authored Twin BPMN instead of deriving one.
@@ -238,7 +245,11 @@ public class SpringBootProjectGenerator {
         writeExternalTaskPoller(projectDir, basePackage);
         writeSchedulingConfig(projectDir, basePackage);
         writeProcessStatusController(projectDir, basePackage);
-        writeProjectMetadata(projectDir, projectId, manufProcessKey);
+        writeProjectMetadata(projectDir, projectId, manufProcessKey, displayName);
+        String projectSlug = projectDir.getFileName().toString();
+        String appClassName = toJavaClassName(projectSlug);
+        rewritePomArtifactId(projectDir, projectSlug);
+        rewriteApplicationClassName(projectDir, basePackage, appClassName);
 
         logger.info("Generated Target Harness Platform {} with authored Twin for process keys '{}' + '{}', "
                 + "{} manufacturing workers, {} twin workers, {} total signals, {} Main<->Twin communication "
@@ -247,7 +258,10 @@ public class SpringBootProjectGenerator {
                 allSignals.size(), twinTopics.size(), twinTopics.size(), twinTopics.size(), twinTopics.size() * 2,
                 basePackage, projectDir.toAbsolutePath());
 
-        return new GeneratedProject(projectId, projectDir, manufProcessKey);
+        String effectiveDisplayName = (displayName != null && !displayName.isBlank())
+                ? displayName
+                : (manufProcessKey != null && !manufProcessKey.isBlank() ? manufProcessKey : "Target Platform");
+        return new GeneratedProject(projectId, projectDir, manufProcessKey, effectiveDisplayName);
     }
 
     // The RedCollar-derived template deliberately keeps its package fixed at com.tp.TargetPlatform. It owns its proxy/twin controllers and configuration already; generation only supplies the two BPMNs and the source beans those BPMNs name.
@@ -305,11 +319,18 @@ public class SpringBootProjectGenerator {
         writeSchedulingConfig(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL);
         writeProcessStatusController(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL);
 
-        writeProjectMetadata(projectDir, projectId, proxyKey);
+        writeProjectMetadata(projectDir, projectId, proxyKey, displayName);
+        String projectSlug = projectDir.getFileName().toString();
+        String appClassName = toJavaClassName(projectSlug);
+        rewritePomArtifactId(projectDir, projectSlug);
+        rewriteApplicationClassName(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL, appClassName);
         logger.info("Generated TargetPlatform {} at {} with {} proxy and {} twin source bean(s), {} shared "
                         + "sync signal(s) of {} total", projectId, projectDir.toAbsolutePath(), proxy.sources().size(),
                 twin.sources().size(), sharedSignals.size(), allSignals.size());
-        return new GeneratedProject(projectId, projectDir, proxyKey);
+        String effectiveDisplayName = (displayName != null && !displayName.isBlank())
+                ? displayName
+                : (proxyKey != null && !proxyKey.isBlank() ? proxyKey : "Target Platform");
+        return new GeneratedProject(projectId, projectDir, proxyKey, effectiveDisplayName);
     }
 
     private void clearTargetPlatformGeneratedSources(Path projectDir) {
@@ -468,7 +489,7 @@ public class SpringBootProjectGenerator {
         Path root = outputDirectory.toAbsolutePath().normalize();
         String base = slugify(label);
         if (base.isEmpty()) {
-            base = projectId;
+            base = "target-platform";
         }
         Path candidate = safeChildOf(root, base);
         int suffix = 2;
@@ -485,15 +506,115 @@ public class SpringBootProjectGenerator {
             return "";
         }
         String cleaned = raw.trim()
-                .replaceAll("[^A-Za-z0-9._-]+", "-")
+                .toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9._-]+", "-")
                 .replaceAll("-{2,}", "-")
                 .replaceAll("^[.-]+", "")
                 .replaceAll("[.-]+$", "");
         return cleaned.length() > 60 ? cleaned.substring(0, 60) : cleaned;
     }
 
+    public static String toJavaClassName(String rawLabel) {
+        if (rawLabel == null || rawLabel.isBlank()) {
+            return "TargetPlatformApplication";
+        }
+        String cleaned = rawLabel.trim();
+        String[] parts = cleaned.split("[^A-Za-z0-9]+");
+        StringBuilder sb = new StringBuilder();
+        for (String part : parts) {
+            if (part.isEmpty()) continue;
+            if (part.equals(part.toUpperCase()) && part.length() <= 4 && part.matches("[A-Za-z]+")) {
+                sb.append(Character.toUpperCase(part.charAt(0)));
+                sb.append(part.substring(1).toLowerCase());
+            } else {
+                sb.append(Character.toUpperCase(part.charAt(0)));
+                if (part.length() > 1) {
+                    sb.append(part.substring(1));
+                }
+            }
+        }
+        if (sb.length() == 0) {
+            return "TargetPlatformApplication";
+        }
+        if (!Character.isJavaIdentifierStart(sb.charAt(0))) {
+            sb.insert(0, "App");
+        }
+        if (!sb.toString().endsWith("Application")) {
+            sb.append("Application");
+        }
+        String className = sb.toString();
+        StringBuilder valid = new StringBuilder();
+        for (int i = 0; i < className.length(); i++) {
+            char ch = className.charAt(i);
+            if (i == 0) {
+                valid.append(Character.isJavaIdentifierStart(ch) ? ch : 'A');
+            } else {
+                valid.append(Character.isJavaIdentifierPart(ch) ? ch : '_');
+            }
+        }
+        return valid.toString();
+    }
+
+    private void rewritePomArtifactId(Path projectDir, String artifactId) {
+        Path pom = projectDir.resolve("pom.xml");
+        if (!Files.exists(pom)) {
+            return;
+        }
+        try {
+            String content = Files.readString(pom, StandardCharsets.UTF_8);
+            String updated = content.replaceAll("<artifactId>(camundademo|TargetPlatform|red-collar-tp)</artifactId>",
+                    "<artifactId>" + artifactId + "</artifactId>");
+            Files.writeString(pom, updated, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            logger.warn("Could not rewrite pom.xml artifactId in {}: {}", projectDir, e.toString());
+        }
+    }
+
+    private void rewriteApplicationClassName(Path projectDir, String basePackage, String newClassName) {
+        if (newClassName == null || newClassName.isBlank() || "CamundademoApplication".equals(newClassName) || "TargetPlatformApplication".equals(newClassName)) {
+            return;
+        }
+        List<Path> roots = List.of(
+                projectDir.resolve("src/main/java"),
+                projectDir.resolve("src/test/java"));
+
+        for (Path root : roots) {
+            if (!Files.isDirectory(root)) continue;
+            Path pkgDir = isTargetPlatformTemplate()
+                    ? root.resolve("com/tp/TargetPlatform")
+                    : root.resolve(basePackage.replace('.', '/'));
+            if (!Files.isDirectory(pkgDir)) continue;
+
+            try (Stream<Path> stream = Files.list(pkgDir)) {
+                List<Path> files = stream.filter(p -> p.getFileName().toString().endsWith("Application.java")
+                        || p.getFileName().toString().endsWith("ApplicationTests.java")).toList();
+                for (Path appFile : files) {
+                    String oldFileName = appFile.getFileName().toString();
+                    String oldClassName = oldFileName.substring(0, oldFileName.length() - ".java".length());
+                    String targetClassName = oldClassName.endsWith("Tests") ? newClassName + "Tests" : newClassName;
+                    Path targetFile = appFile.getParent().resolve(targetClassName + ".java");
+
+                    String content = Files.readString(appFile, StandardCharsets.UTF_8);
+                    String updatedContent = content.replace(oldClassName, targetClassName);
+                    Files.writeString(targetFile, updatedContent, StandardCharsets.UTF_8);
+                    if (!appFile.equals(targetFile)) {
+                        Files.deleteIfExists(appFile);
+                    }
+                }
+            } catch (IOException e) {
+                logger.warn("Could not rewrite Application class name in {}: {}", pkgDir, e.toString());
+            }
+        }
+    }
+
     private static String labelFor(String displayName, String processKeyFallback) {
-        return (displayName != null && !displayName.isBlank()) ? displayName : processKeyFallback;
+        if (displayName != null && !displayName.isBlank()) {
+            return displayName;
+        }
+        if (processKeyFallback != null && !processKeyFallback.isBlank()) {
+            return processKeyFallback;
+        }
+        return "Target Platform";
     }
 
     // Same guard resolveProjectDirectory always had for the bare-projectId folder name, applied here to a slug instead: cheap, and "trusted for now" is exactly the kind of assumption that stops being true the next time a caller changes.
@@ -523,7 +644,9 @@ public class SpringBootProjectGenerator {
                             + "process key under {}", projectId, projectDir.resolve(PROCESSES_PATH));
                     continue;
                 }
-                found.add(new GeneratedProject(projectId, projectDir, processKey));
+                String declaredDisplayName = readDeclaredDisplayName(projectDir);
+                String displayName = declaredDisplayName != null ? declaredDisplayName : processKey;
+                found.add(new GeneratedProject(projectId, projectDir, processKey, displayName));
             }
         } catch (IOException e) {
             logger.warn("Could not scan {} for existing generated projects: {}", outputDirectory.toAbsolutePath(),
@@ -534,7 +657,7 @@ public class SpringBootProjectGenerator {
     }
 
     // Directory lookup by declared identity now that the folder name is a human label rather than the projectId itself (see resolveProjectDirectory) - mirrors scanExisting()'s own fallback to the folder name for a directory generated before PROJECT_METADATA_FILE carried a projectId. Only ever returns a direct child of outputDirectory (Files.list never descends), so callers inherit the same path-traversal guarantee the old bare root.resolve(projectId) had.
-    private Path findProjectDirectoryById(String projectId) {
+    Path findProjectDirectoryById(String projectId) {
         Path root = outputDirectory.toAbsolutePath().normalize();
         if (!Files.isDirectory(root)) {
             return null;
@@ -589,9 +712,16 @@ public class SpringBootProjectGenerator {
 
     // Writes this project's own declared identity, generic across every generation mode. See PROJECT_METADATA_FILE's own comment for why this exists instead of inferring identity from the .bpmn files a mode happens to write. Root of the project, not under src/, so it is never touched by rewritePackage() and never ships as part of the generated application itself.
     private void writeProjectMetadata(Path projectDir, String projectId, String processKey) {
+        writeProjectMetadata(projectDir, projectId, processKey, null);
+    }
+
+    private void writeProjectMetadata(Path projectDir, String projectId, String processKey, String displayName) {
         java.util.Properties properties = new java.util.Properties();
         properties.setProperty("processKey", processKey);
         properties.setProperty("projectId", projectId);
+        if (displayName != null && !displayName.isBlank()) {
+            properties.setProperty("displayName", displayName);
+        }
         Path target = projectDir.resolve(PROJECT_METADATA_FILE);
         try (java.io.Writer writer = Files.newBufferedWriter(target, StandardCharsets.UTF_8)) {
             properties.store(writer, "Generated by SpringBootProjectGenerator - do not hand-edit");
@@ -646,6 +776,15 @@ public class SpringBootProjectGenerator {
         }
         String projectId = properties.getProperty("projectId");
         return (projectId == null || projectId.isBlank()) ? null : projectId;
+    }
+
+    private static String readDeclaredDisplayName(Path projectDir) {
+        java.util.Properties properties = loadProjectMetadata(projectDir);
+        if (properties == null) {
+            return null;
+        }
+        String displayName = properties.getProperty("displayName");
+        return (displayName == null || displayName.isBlank()) ? null : displayName;
     }
 
     private static java.util.Properties loadProjectMetadata(Path projectDir) {

@@ -74,12 +74,12 @@ const DeployedAppsPage = () => {
                         {running.map((project) => (
                             <tr key={project.projectId}>
                                 <td>
-                                    {project.processKey || "?"}{" "}
+                                    {project.displayName || project.processKey || "?"}{" "}
                                     <Badge bg="success">running</Badge>
                                 </td>
                                 <td>{project.port}</td>
                                 <td>{project.launchedAt ? new Date(project.launchedAt).toLocaleString() : "-"}</td>
-                                <td className="text-muted small">{project.projectId}</td>
+                                <td className="text-muted small" title={`Backend ID: ${project.projectId}`}>{project.projectId}</td>
                                 <td className="text-end">
                                     {project.port && (
                                         <Button
