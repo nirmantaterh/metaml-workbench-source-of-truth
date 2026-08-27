@@ -9,8 +9,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,18 +24,20 @@ import org.slf4j.LoggerFactory;
 @EnableConfigurationProperties({ CamundaDataSourceProperties.class, CamundaProcessProperties.class })
 @AllArgsConstructor
 public class CamundaConfig {
+
+    private static final Logger logger = LoggerFactory.getLogger(CamundaConfig.class);
+
     private final CamundaDataSourceProperties camundaDataSourceProperties;
     private final CamundaProcessProperties camundaProcessProperties;
-    private static final Logger logger = LoggerFactory.getLogger(CamundaConfig.class);
 
     @Bean
     public DataSource dataSource() {
-        DriverManagerDataSource dataSource = new DriverManagerDataSource();
-        dataSource.setDriverClassName(camundaDataSourceProperties.getDriverClassName());
-        dataSource.setUrl(camundaDataSourceProperties.getUrl());
-        dataSource.setUsername(camundaDataSourceProperties.getUsername());
-        dataSource.setPassword(camundaDataSourceProperties.getPassword());
-        return dataSource;
+        return DataSourceBuilder.create()
+                .driverClassName(camundaDataSourceProperties.getDriverClassName())
+                .url(camundaDataSourceProperties.getUrl())
+                .username(camundaDataSourceProperties.getUsername())
+                .password(camundaDataSourceProperties.getPassword())
+                .build();
     }
 
     @Bean
@@ -57,20 +59,17 @@ public class CamundaConfig {
         configuration.setJobExecutorActivate(camundaProcessProperties.isJobExecutorActivate());
         configuration.setDeploymentResources(deploymentResources);
 
-        // Added configurations configuration.setHistory("full"); configuration.setSkipHistoryOptimisticLockingExceptions(true);
-        configuration.setSkipIsolationLevelCheck(camundaProcessProperties.isSkipIsolationLevelCheck()); // Ensure this
-                                                                                                        // property is set to true
+        configuration.setSkipIsolationLevelCheck(camundaProcessProperties.isSkipIsolationLevelCheck());
         configuration.setEnforceHistoryTimeToLive(camundaProcessProperties.isEnforceHistoryTimeToLive());
 
-        // Load BPMN files from the classpath
+        // Load BPMN process models from the classpath
         PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
-        Resource[] resources;
         try {
-            resources = resolver.getResources(camundaProcessProperties.getDeploymentResourcePattern());
+            Resource[] resources = resolver.getResources(camundaProcessProperties.getDeploymentResourcePattern());
             configuration.setDeploymentResources(resources);
         } catch (IOException e) {
-            logger.error("An error occurred loading process models: ", e);
-            // e.printStackTrace();
+            logger.error("Error loading process models from pattern: {}",
+                    camundaProcessProperties.getDeploymentResourcePattern(), e);
         }
         return configuration;
     }

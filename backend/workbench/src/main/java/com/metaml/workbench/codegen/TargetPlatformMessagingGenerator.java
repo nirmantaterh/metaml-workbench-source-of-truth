@@ -154,13 +154,14 @@ public class TargetPlatformMessagingGenerator {
                 .map(q -> "Map.entry(\"" + escapeJavaStringLiteral(q.signal()) + "\", \"" + q.responseRoutingKey()
                         + "\")")
                 .collect(Collectors.joining(",\n            "));
-        // Every task/response queue is dead-letter-wired to this project's own DLX (see dlxExchangeName above) rather than left to drop a message that exhausts its consumer retries (spring.rabbitmq.listener.simple.retry.* in this project's application.properties) silently. QueueBuilder, not the plain Queue(name) constructor, so the x-dead-letter-* arguments actually reach the broker at declaration time.
+        // Every task/response queue is dead-letter-wired to this project's own DLX (see dlxExchangeName above) and declared as a RabbitMQ quorum queue (x-queue-type=quorum) for high availability across broker clusters.
         String queueBeans = queues.stream()
                 .map(q -> """
 
                         @Bean
                         public Queue %1$sTaskQueue() {
                             return QueueBuilder.durable("%2$s")
+                                    .withArgument("x-queue-type", "quorum")
                                     .withArgument("x-dead-letter-exchange", DLX_EXCHANGE)
                                     .withArgument("x-dead-letter-routing-key", DLQ_TASKS_ROUTING_KEY)
                                     .build();
@@ -174,6 +175,7 @@ public class TargetPlatformMessagingGenerator {
                         @Bean
                         public Queue %1$sResponseQueue() {
                             return QueueBuilder.durable("%4$s")
+                                    .withArgument("x-queue-type", "quorum")
                                     .withArgument("x-dead-letter-exchange", DLX_EXCHANGE)
                                     .withArgument("x-dead-letter-routing-key", DLQ_RESPONSES_ROUTING_KEY)
                                     .build();
@@ -187,7 +189,7 @@ public class TargetPlatformMessagingGenerator {
                         q.responseRoutingKey()))
                 .collect(Collectors.joining());
 
-        // DLX + the two shared DLQs (one for TASK messages, one for RESPONSE messages) - only generated when there is at least one shared signal to protect. A project with no shared signals has no queues at all (see hasQueues below), so a DLQ topology for it would be unused infrastructure, not a safety net.
+        // DLX + the two shared DLQs (one for TASK messages, one for RESPONSE messages) - declared as quorum queues for HA replication.
         String dlqSection = hasQueuesForDlq ? """
 
                 @Bean
@@ -197,7 +199,9 @@ public class TargetPlatformMessagingGenerator {
 
                 @Bean
                 public Queue syncDlqTasks() {
-                    return QueueBuilder.durable(DLQ_TASKS_QUEUE).build();
+                    return QueueBuilder.durable(DLQ_TASKS_QUEUE)
+                            .withArgument("x-queue-type", "quorum")
+                            .build();
                 }
 
                 @Bean
@@ -207,7 +211,9 @@ public class TargetPlatformMessagingGenerator {
 
                 @Bean
                 public Queue syncDlqResponses() {
-                    return QueueBuilder.durable(DLQ_RESPONSES_QUEUE).build();
+                    return QueueBuilder.durable(DLQ_RESPONSES_QUEUE)
+                            .withArgument("x-queue-type", "quorum")
+                            .build();
                 }
 
                 @Bean
