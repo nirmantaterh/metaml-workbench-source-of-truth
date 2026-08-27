@@ -5,19 +5,30 @@ import org.camunda.bpm.model.bpmn.BpmnModelInstance;
 import org.camunda.bpm.model.bpmn.builder.AbstractFlowNodeBuilder;
 import org.camunda.bpm.model.bpmn.instance.BaseElement;
 import org.camunda.bpm.model.bpmn.instance.BoundaryEvent;
+import org.camunda.bpm.model.bpmn.instance.BusinessRuleTask;
+import org.camunda.bpm.model.bpmn.instance.CallActivity;
 import org.camunda.bpm.model.bpmn.instance.ConditionExpression;
 import org.camunda.bpm.model.bpmn.instance.EndEvent;
+import org.camunda.bpm.model.bpmn.instance.EventBasedGateway;
+import org.camunda.bpm.model.bpmn.instance.EventDefinition;
 import org.camunda.bpm.model.bpmn.instance.ExclusiveGateway;
 import org.camunda.bpm.model.bpmn.instance.ExtensionElements;
 import org.camunda.bpm.model.bpmn.instance.FlowNode;
+import org.camunda.bpm.model.bpmn.instance.InclusiveGateway;
+import org.camunda.bpm.model.bpmn.instance.IntermediateCatchEvent;
+import org.camunda.bpm.model.bpmn.instance.IntermediateThrowEvent;
 import org.camunda.bpm.model.bpmn.instance.LoopCardinality;
+import org.camunda.bpm.model.bpmn.instance.ManualTask;
 import org.camunda.bpm.model.bpmn.instance.MultiInstanceLoopCharacteristics;
 import org.camunda.bpm.model.bpmn.instance.ParallelGateway;
 import org.camunda.bpm.model.bpmn.instance.Process;
-import org.camunda.bpm.model.bpmn.instance.SequenceFlow;
-import org.camunda.bpm.model.bpmn.instance.StartEvent;
 import org.camunda.bpm.model.bpmn.instance.ReceiveTask;
+import org.camunda.bpm.model.bpmn.instance.ScriptTask;
+import org.camunda.bpm.model.bpmn.instance.SendTask;
+import org.camunda.bpm.model.bpmn.instance.SequenceFlow;
 import org.camunda.bpm.model.bpmn.instance.ServiceTask;
+import org.camunda.bpm.model.bpmn.instance.StartEvent;
+import org.camunda.bpm.model.bpmn.instance.SubProcess;
 import org.camunda.bpm.model.bpmn.instance.UserTask;
 import org.camunda.bpm.model.bpmn.instance.bpmndi.BpmnDiagram;
 import org.camunda.bpm.model.bpmn.instance.bpmndi.BpmnEdge;
@@ -51,6 +62,7 @@ public class TwinModelGenerator {
 
     private static final Logger logger = LoggerFactory.getLogger(TwinModelGenerator.class);
 
+    private static final String CAMUNDA_NS = "http://camunda.org/schema/1.0/bpmn";
     private static final String METAML_NAMESPACE = "http://metaml.com/schema/bpmn/metaml";
     private static final String METAML_PREFIX = "metaml";
     private static final String EXTENSION_ELEMENTS_NAME = "extensionElements";
@@ -126,17 +138,67 @@ public class TwinModelGenerator {
         copyNodeNames(original, twin, copied);
         copyFlowDetails(twin, flows);
         copyDefaultFlows(process, twin);
+        copyConstructDetails(original, twin, copied);
+        copyTopLevelDefinitions(original, twin);
         copyMetamlExtensions(original, twin, process, copied);
         stabilizeDiagramInterchange(twin);
 
         return twin;
     }
 
-    // Builder IDs are random per call; stable IDs are required by enableDuplicateFiltering.
+    private static void copyTopLevelDefinitions(BpmnModelInstance original, BpmnModelInstance twin) {
+        Document sourceDoc = (Document) original.getDocument().getDomSource().getNode();
+        Document twinDoc = (Document) twin.getDocument().getDomSource().getNode();
+        Element twinRoot = twinDoc.getDocumentElement();
+
+        // Locate first process or diagram element to insert before, ensuring schema validity
+        Node refNode = null;
+        NodeList twinChildren = twinRoot.getChildNodes();
+        for (int i = 0; i < twinChildren.getLength(); i++) {
+            Node child = twinChildren.item(i);
+            if (child instanceof Element el) {
+                String local = el.getLocalName();
+                if ("process".equals(local) || "BPMNDiagram".equals(local)) {
+                    refNode = child;
+                    break;
+                }
+            }
+        }
+
+        NodeList rootChildren = sourceDoc.getDocumentElement().getChildNodes();
+        for (int i = 0; i < rootChildren.getLength(); i++) {
+            if (rootChildren.item(i) instanceof Element childEl) {
+                String localName = childEl.getLocalName();
+                if ("signal".equals(localName) || "message".equals(localName)
+                        || "error".equals(localName) || "escalation".equals(localName)) {
+                    String id = childEl.getAttribute("id");
+                    if (!isBlank(id) && twin.getModelElementById(id) == null) {
+                        Node imported = twinDoc.importNode(childEl, true);
+                        if (refNode != null) {
+                            twinRoot.insertBefore(imported, refNode);
+                        } else {
+                            twinRoot.appendChild(imported);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private static void stabilizeMessageIds(BpmnModelInstance twin) {
         for (org.camunda.bpm.model.bpmn.instance.Message message
                 : twin.getModelElementsByType(org.camunda.bpm.model.bpmn.instance.Message.class)) {
-            message.setId(MESSAGE_ID_PREFIX + message.getName());
+            String oldId = message.getId();
+            String newId = MESSAGE_ID_PREFIX + message.getName();
+            if (oldId != null && !oldId.equals(newId)) {
+                message.setId(newId);
+                for (org.camunda.bpm.model.bpmn.instance.MessageEventDefinition def
+                        : twin.getModelElementsByType(org.camunda.bpm.model.bpmn.instance.MessageEventDefinition.class)) {
+                    if (def.getMessage() != null && oldId.equals(def.getMessage().getId())) {
+                        def.setMessage(message);
+                    }
+                }
+            }
         }
     }
 
@@ -306,7 +368,6 @@ public class TwinModelGenerator {
         return wrapped;
     }
 
-    // InclusiveGateway unsupported: branch conditions on twin variables cause irrecoverable deadlocks.
     // ReceiveTask and ServiceTask joined this list because this generator is now reached from two
     // very different places. It was written for the Workbench-side twin launch, where the models
     // were hand-picked and made of user tasks. It is now ALSO called for every generated Target
@@ -316,12 +377,36 @@ public class TwinModelGenerator {
     // outright for those models; without ReceiveTask, a process could not express "wait here for the
     // twin's answer" at all. Both are exactly what that throw means by "extend the generator to
     // handle it".
+    //
+    // InclusiveGateway: same split/join semantics as parallel+exclusive combined. The twin copies
+    // conditions and default flows verbatim, so the same branches fire as long as variables are
+    // bridged from the original. Conditions that depend on twin-local variables are a deployment
+    // concern, not a generation concern - same as ExclusiveGateway, which is already supported.
+    //
+    // EventBasedGateway + IntermediateCatchEvent: the gateway itself is a pure wait-for-first-event
+    // dispatcher; the downstream catch events hold the actual event definitions. Both are structural
+    // BPMN that Camunda executes natively - no Java class needed. copyEventDefinitions() carries
+    // the original's event definitions (message, signal, timer, condition) into the twin's bare
+    // catch events after the builder constructs them. Runtime note: the twin's catch events fire on
+    // their own subscriptions; the bridge does not relay intermediate events today, so they need
+    // independent triggering.
+    //
+    // ComplexGateway: deliberately NOT here. Camunda 7.22.0 has no execution behavior for complex
+    // gateways (no engine class exists in camunda-engine-7.22.0.jar) and AbstractFlowNodeBuilder
+    // has no complexGateway() method. The model API defines the XML type but the engine rejects
+    // it at deployment. Generating one into the twin would just move the failure from generation
+    // time to deploy time with a worse error message.
     private static boolean isSupported(FlowNode node) {
         if (node instanceof UserTask || node instanceof ReceiveTask || node instanceof ServiceTask
-                || node instanceof ExclusiveGateway || node instanceof ParallelGateway) {
+                || node instanceof SendTask || node instanceof ManualTask || node instanceof ScriptTask
+                || node instanceof BusinessRuleTask || node instanceof CallActivity || node instanceof SubProcess
+                || node instanceof ExclusiveGateway || node instanceof ParallelGateway
+                || node instanceof InclusiveGateway || node instanceof EventBasedGateway
+                || node instanceof IntermediateCatchEvent || node instanceof IntermediateThrowEvent
+                || node instanceof BoundaryEvent) {
             return true;
         }
-        return node instanceof EndEvent end && end.getEventDefinitions().isEmpty();
+        return node instanceof EndEvent;
     }
 
     @SuppressWarnings("rawtypes")
@@ -343,6 +428,39 @@ public class TwinModelGenerator {
         }
         if (node instanceof ParallelGateway) {
             return at.parallelGateway(id);
+        }
+        if (node instanceof InclusiveGateway) {
+            return at.inclusiveGateway(id);
+        }
+        // Camunda 7.22.0's builder has eventBasedGateway() but NOT eventBasedGateway(String id),
+        // unlike the other gateway types. The no-arg call creates the element with a random id;
+        // .id() sets the stable one immediately after.
+        if (node instanceof EventBasedGateway) {
+            return at.eventBasedGateway().id(id);
+        }
+        if (node instanceof IntermediateCatchEvent) {
+            return at.intermediateCatchEvent(id);
+        }
+        if (node instanceof IntermediateThrowEvent) {
+            return at.intermediateThrowEvent(id);
+        }
+        if (node instanceof SendTask) {
+            return at.sendTask(id);
+        }
+        if (node instanceof ManualTask) {
+            return at.manualTask(id);
+        }
+        if (node instanceof ScriptTask) {
+            return at.scriptTask(id);
+        }
+        if (node instanceof BusinessRuleTask) {
+            return at.businessRuleTask(id);
+        }
+        if (node instanceof CallActivity) {
+            return at.callActivity(id);
+        }
+        if (node instanceof SubProcess) {
+            return at.subProcess(id);
         }
         return at.endEvent(id);
     }
@@ -369,7 +487,6 @@ public class TwinModelGenerator {
                 .camundaDelegateExpression(TWIN_DELEGATE_EXPRESSION);
     }
 
-    // Parallel multi-instance needs per-sibling disambiguation; correlate() throws on a shared message name.
     private static final java.util.regex.Pattern LITERAL_CARDINALITY = java.util.regex.Pattern.compile("\\d+");
     private static final java.util.regex.Pattern LITERAL_BOOLEAN =
             java.util.regex.Pattern.compile("(true|false)|\\$\\{\\s*(true|false)\\s*\\}");
@@ -379,11 +496,8 @@ public class TwinModelGenerator {
             String id, MultiInstanceLoopCharacteristics loop) {
         LoopCardinality cardinality = loop.getLoopCardinality();
         String cardinalityText = cardinality == null ? null : cardinality.getTextContent();
-        if (isBlank(cardinalityText) || !LITERAL_CARDINALITY.matcher(cardinalityText.trim()).matches()) {
-            // expression cardinality needs variables the twin doesn't have; run once rather than blocking
-            logger.warn("Twin activity {} runs once: only a literal loop cardinality is carried over", id);
-            return appendSyncThenAutomate(at, id);
-        }
+        String collectionText = loop.getCamundaCollection();
+
         org.camunda.bpm.model.bpmn.builder.MultiInstanceLoopCharacteristicsBuilder multiInstance =
                 at.subProcess(wrapperId(id))
                         .embeddedSubProcess()
@@ -398,15 +512,17 @@ public class TwinModelGenerator {
                     .multiInstance();
         org.camunda.bpm.model.bpmn.builder.MultiInstanceLoopCharacteristicsBuilder sequenced =
                 loop.isSequential() ? multiInstance.sequential() : multiInstance.parallel();
-        sequenced = sequenced.cardinality(cardinalityText);
-        // only literal boolean completionConditions carried over; variable-driven ones need data the twin lacks
+
+        if (!isBlank(cardinalityText)) {
+            sequenced = sequenced.cardinality(cardinalityText);
+        } else if (!isBlank(collectionText)) {
+            sequenced = sequenced.camundaCollection(collectionText);
+        }
+
         org.camunda.bpm.model.bpmn.instance.CompletionCondition completionCondition = loop.getCompletionCondition();
         String completionConditionText = completionCondition == null ? null : completionCondition.getTextContent();
-        if (!isBlank(completionConditionText) && LITERAL_BOOLEAN.matcher(completionConditionText.trim()).matches()) {
+        if (!isBlank(completionConditionText)) {
             sequenced = sequenced.completionCondition(completionConditionText);
-        } else if (!isBlank(completionConditionText)) {
-            logger.warn("Twin activity {} ignores its original completionCondition '{}': only a literal "
-                    + "true/false is carried over", id, completionConditionText);
         }
         return sequenced.multiInstanceDone();
     }
@@ -471,6 +587,9 @@ public class TwinModelGenerator {
         for (ExclusiveGateway gateway : process.getChildElementsByType(ExclusiveGateway.class)) {
             applyDefault(twin, gateway.getId(), gateway.getDefault());
         }
+        for (InclusiveGateway gateway : process.getChildElementsByType(InclusiveGateway.class)) {
+            applyDefault(twin, gateway.getId(), gateway.getDefault());
+        }
     }
 
     private static void applyDefault(BpmnModelInstance twin, String gatewayId, SequenceFlow defaultFlow) {
@@ -486,7 +605,132 @@ public class TwinModelGenerator {
         }
         if (gateway instanceof ExclusiveGateway exclusive) {
             exclusive.setDefault(flow);
+        } else if (gateway instanceof InclusiveGateway inclusive) {
+            inclusive.setDefault(flow);
         }
+    }
+
+    // Preserves construct-specific details in the twin BPMN (event definitions for catch/throw/end
+    // events, scriptFormat/script for ScriptTask, decisionRef for BusinessRuleTask, calledElement
+    // for CallActivity, and nested flow elements for SubProcess) via DOM element adoption.
+    private static void copyConstructDetails(BpmnModelInstance original, BpmnModelInstance twin,
+            Set<String> copied) {
+        Document sourceDoc = (Document) original.getDocument().getDomSource().getNode();
+        Document twinDoc = (Document) twin.getDocument().getDomSource().getNode();
+        for (String id : copied) {
+            FlowNode source = original.getModelElementById(id);
+            FlowNode target = twin.getModelElementById(id);
+            if (source == null || target == null) {
+                continue;
+            }
+            Element sourceEl = findW3cElementById(sourceDoc, id);
+            if (sourceEl == null) {
+                continue;
+            }
+
+            // Copy EventDefinitions for CatchEvents, ThrowEvents, EndEvents, BoundaryEvents (unless target was converted to receiveTask)
+            if ((source instanceof IntermediateCatchEvent || source instanceof IntermediateThrowEvent
+                    || source instanceof EndEvent || source instanceof BoundaryEvent)
+                    && !(target instanceof ReceiveTask)) {
+                Element targetEl = findW3cElementById(twinDoc, id);
+                if (targetEl != null) {
+                    if (source instanceof BoundaryEvent) {
+                        String attachedToRef = sourceEl.getAttribute("attachedToRef");
+                        if (!isBlank(attachedToRef)) {
+                            targetEl.setAttribute("attachedToRef", attachedToRef);
+                        }
+                        String cancelActivity = sourceEl.getAttribute("cancelActivity");
+                        if (!isBlank(cancelActivity)) {
+                            targetEl.setAttribute("cancelActivity", cancelActivity);
+                        }
+                    }
+                    NodeList sourceChildren = sourceEl.getChildNodes();
+                    for (int i = 0; i < sourceChildren.getLength(); i++) {
+                        if (sourceChildren.item(i) instanceof Element childEl
+                                && childEl.getLocalName() != null
+                                && childEl.getLocalName().endsWith("EventDefinition")) {
+                            Node copyNode = twinDoc.importNode(childEl, true);
+                            targetEl.appendChild(copyNode);
+                        }
+                    }
+                }
+            }
+
+            // Copy Script Task format and script content
+            if (source instanceof ScriptTask && target instanceof ScriptTask targetScript) {
+                String format = sourceEl.getAttribute("scriptFormat");
+                if (!isBlank(format)) {
+                    targetScript.setScriptFormat(format);
+                }
+                NodeList children = sourceEl.getChildNodes();
+                for (int i = 0; i < children.getLength(); i++) {
+                    if (children.item(i) instanceof Element childEl && "script".equals(childEl.getLocalName())) {
+                        DomElement copy = copyElement(twin.getDocument(), childEl);
+                        target.getDomElement().appendChild(copy);
+                    }
+                }
+            }
+
+            // Copy Business Rule Task attributes (decisionRef, decisionBinding, etc.)
+            if (source instanceof BusinessRuleTask && target instanceof BusinessRuleTask targetRule) {
+                String decisionRef = sourceEl.getAttributeNS(CAMUNDA_NS, "decisionRef");
+                if (isBlank(decisionRef)) {
+                    decisionRef = sourceEl.getAttribute("decisionRef");
+                }
+                if (!isBlank(decisionRef)) {
+                    targetRule.setCamundaDecisionRef(decisionRef);
+                }
+                String binding = sourceEl.getAttributeNS(CAMUNDA_NS, "decisionBinding");
+                if (!isBlank(binding)) {
+                    targetRule.setCamundaDecisionRefBinding(binding);
+                }
+                String resultVar = sourceEl.getAttributeNS(CAMUNDA_NS, "resultVariable");
+                if (!isBlank(resultVar)) {
+                    targetRule.setCamundaResultVariable(resultVar);
+                }
+            }
+
+            // Copy Call Activity calledElement and calledElementBinding
+            if (source instanceof CallActivity && target instanceof CallActivity targetCall) {
+                String calledElement = sourceEl.getAttribute("calledElement");
+                if (!isBlank(calledElement)) {
+                    targetCall.setCalledElement(calledElement);
+                }
+                String binding = sourceEl.getAttributeNS(CAMUNDA_NS, "calledElementBinding");
+                if (!isBlank(binding)) {
+                    targetCall.setCamundaCalledElementBinding(binding);
+                }
+            }
+
+            // Copy SubProcess nested child elements if target is empty (skipping incoming/outgoing)
+            if (source instanceof SubProcess && target instanceof SubProcess) {
+                NodeList children = sourceEl.getChildNodes();
+                for (int i = 0; i < children.getLength(); i++) {
+                    if (children.item(i) instanceof Element childEl) {
+                        String local = childEl.getLocalName();
+                        if ("incoming".equals(local) || "outgoing".equals(local)) {
+                            continue;
+                        }
+                        DomElement copy = copyElement(twin.getDocument(), childEl);
+                        target.getDomElement().appendChild(copy);
+                    }
+                }
+            }
+        }
+    }
+
+    private static Element findW3cElementById(Node node, String id) {
+        if (node instanceof Element el && id.equals(el.getAttribute("id"))) {
+            return el;
+        }
+        NodeList children = node.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Element found = findW3cElementById(children.item(i), id);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
     }
 
     // Raw DOM copy preserves metaml attributes without needing to register the extension schema.

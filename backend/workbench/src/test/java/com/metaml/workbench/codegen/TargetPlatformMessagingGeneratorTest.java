@@ -26,8 +26,13 @@ class TargetPlatformMessagingGeneratorTest {
 
         assertThat(sources.stream().map(TargetPlatformMessagingGenerator.GeneratedSource::className))
                 .containsExactlyInAnyOrder("PairRegistry", "RabbitMqConfig", "TaskQueuePublisher",
-                        "TaskQueueListener", "ResponseQueuePublisher", "ResponseQueueListener", "SignalBroadcaster",
-                        "ProxyProcessController", "TwinProcessController");
+                        "TaskQueueListener", "ResponseQueuePublisher", "ResponseQueueListener",
+                        // Reliability hardening (Pass 1): observability listener for the project-scoped
+                        // DLQs - only generated when there is at least one shared signal (same condition
+                        // that gates TaskQueueListener/ResponseQueueListener having a real @RabbitListener
+                        // body), which this test's Set.of("cuttingSignal") satisfies.
+                        "DeadLetterQueueListener", "SignalBroadcaster", "ProxyProcessController",
+                        "TwinProcessController");
 
         assertThat(find(sources, "PairRegistry").relativeDirectory()).isEqualTo("coordination");
         assertThat(find(sources, "RabbitMqConfig").relativeDirectory()).isEqualTo("messaging");
@@ -89,6 +94,86 @@ class TargetPlatformMessagingGeneratorTest {
                 .contains("@RequestMapping(\"/api/twin\")")
                 .contains("runtimeService.startProcessInstanceByKey(\"rc_twin_process\", key)")
                 .contains("pairRegistry.registerAndClassify");
+    }
+
+    // Reliability hardening (Pass 1): the generator, not just a hand-edited generated project,
+    // must be the source of the new persistence/confirm/DLQ/duplicate-handling code - these
+    // assertions catch a regression where a future change edits generated output by hand instead
+    // of through TargetPlatformMessagingGenerator itself.
+    @Test
+    void publisherMessagesAreExplicitlyPersistentAndConfirmed() {
+        List<TargetPlatformMessagingGenerator.GeneratedSource> sources = generator.generate("proj.abc123",
+                Set.of("cuttingSignal"), Set.of("cuttingSignal"), "rc_proxy_process", "rc_twin_process");
+
+        String taskPublisher = find(sources, "TaskQueuePublisher").source();
+        assertThat(taskPublisher)
+                .as("TASK messages must be explicitly persistent, not relying on the framework default")
+                .contains("MessageDeliveryMode.PERSISTENT")
+                .as("publish must block on a publisher confirm before logging/treating it as sent")
+                .contains("waitForConfirmsOrDie")
+                .as("a NACKed/unconfirmed publish must be visible in the log, not swallowed")
+                .contains("publish NOT confirmed");
+
+        String responsePublisher = find(sources, "ResponseQueuePublisher").source();
+        assertThat(responsePublisher)
+                .contains("MessageDeliveryMode.PERSISTENT")
+                .contains("waitForConfirmsOrDie")
+                .contains("publish NOT confirmed");
+    }
+
+    @Test
+    void taskAndResponseQueuesDeadLetterToAProjectScopedDlx() {
+        List<TargetPlatformMessagingGenerator.GeneratedSource> sources = generator.generate("proj.abc123",
+                Set.of("cuttingSignal"), Set.of("cuttingSignal"), "rc_proxy_process", "rc_twin_process");
+        String config = find(sources, "RabbitMqConfig").source();
+
+        assertThat(config)
+                .as("DLX must be scoped to this project's own namespace, like every other queue/exchange here")
+                .contains("proj.abc123.dlx")
+                .contains("proj.abc123.sync.dlq.tasks")
+                .contains("proj.abc123.sync.dlq.responses")
+                .as("every task/response queue must declare dead-letter routing, not just the DLQ existing")
+                .contains("x-dead-letter-exchange")
+                .contains("x-dead-letter-routing-key");
+
+        assertThat(sources.stream().map(TargetPlatformMessagingGenerator.GeneratedSource::className))
+                .as("a dead-lettered message must be observable in this app's own log, not only via the broker")
+                .contains("DeadLetterQueueListener");
+    }
+
+    @Test
+    void listenersDistinguishAlreadyAdvancedFromAGenuineFailure() {
+        List<TargetPlatformMessagingGenerator.GeneratedSource> sources = generator.generate("proj.abc123",
+                Set.of("cuttingSignal"), Set.of("cuttingSignal"), "rc_proxy_process", "rc_twin_process");
+
+        String taskListener = find(sources, "TaskQueueListener").source();
+        assertThat(taskListener)
+                .as("a signal the execution has already advanced past must be logged as harmless, not an error")
+                .contains("has not subscribed")
+                .as("that is the ONLY case allowed to be swallowed - everything else must rethrow")
+                .contains("throw e;")
+                .as("a malformed payload must no longer be silently dropped - it must be rejected so it can "
+                        + "dead-letter")
+                .doesNotContain("discarding malformed message");
+
+        String responseListener = find(sources, "ResponseQueueListener").source();
+        assertThat(responseListener)
+                .contains("has not subscribed")
+                .contains("throw e;")
+                .doesNotContain("discarding malformed message");
+    }
+
+    @Test
+    void withNoSharedSignalsThereIsNoDeadLetterInfrastructureEither() {
+        List<TargetPlatformMessagingGenerator.GeneratedSource> sources = generator.generate("proj.xyz",
+                Set.of(), Set.of(), "rc_proxy_process", "rc_twin_process");
+
+        assertThat(sources.stream().map(TargetPlatformMessagingGenerator.GeneratedSource::className))
+                .as("no shared signal means nothing to dead-letter, so no DLQ observability listener either")
+                .doesNotContain("DeadLetterQueueListener");
+        assertThat(find(sources, "RabbitMqConfig").source())
+                .as("no DLX/DLQ topology when there is nothing for it to protect")
+                .doesNotContain(".dlx");
     }
 
     @Test

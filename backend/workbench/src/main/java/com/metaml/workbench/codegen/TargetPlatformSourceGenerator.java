@@ -76,7 +76,7 @@ public class TargetPlatformSourceGenerator {
                 Element element = (Element) all.item(i);
                 String localName = element.getLocalName();
                 if (localName == null) continue;
-                boolean activity = "serviceTask".equals(localName);
+                boolean activity = localName != null && localName.endsWith("Task");
                 boolean event = localName.endsWith("Event");
                 String expression = element.getAttributeNS(CAMUNDA_NS, "delegateExpression");
                 String javaClass = element.getAttributeNS(CAMUNDA_NS, "class");
@@ -110,6 +110,7 @@ public class TargetPlatformSourceGenerator {
                 }
             }
             sources.addAll(scanExecutionListeners(document, twin));
+            sources.addAll(scanTaskListeners(document, twin));
 
             // Apply bidirectional lockstep synchronization: insert signal catch events so both
             // proxy and twin wait at the same signals after each activity. SignalBroadcaster's
@@ -447,6 +448,68 @@ public class TargetPlatformSourceGenerator {
             sources.add(new GeneratedSource(directory, className, renderListener(packageName, className, beanName, label)));
         }
         return sources;
+    }
+
+    // camunda:taskListener lives inside a userTask's <extensionElements>, the same shape
+    // executionListener does, but it is a genuinely different Camunda API: it fires on the user
+    // task's own lifecycle events (create/assignment/complete/delete/timeout/update, read from
+    // DelegateTask.getEventName() at runtime) rather than on activity execution, and Camunda
+    // invokes it through org.camunda.bpm.engine.delegate.TaskListener.notify(DelegateTask), not
+    // ExecutionListener.notify(DelegateExecution) - the two are not interchangeable, so a
+    // TaskListener stub must implement the right interface or the engine throws a
+    // ClassCastException the first time the task's listener event actually fires.
+    //
+    // Mirrors scanExecutionListeners in every other respect: same twin bean-suffixing to avoid a
+    // Spring ConflictingBeanDefinitionException when proxy and twin name the same original bean
+    // (an authored or mirrored twin can both do this - see that method's own comment), same
+    // dedup-by-bean-name (one class per distinct bean, however many tasks/events reference it),
+    // same {proxy|twin}/listeners/ output location - a TaskListener and an ExecutionListener are
+    // both "a bean Camunda calls back into", just through different interfaces, so they share a
+    // home rather than inventing a parallel directory for what is architecturally the same idea.
+    //
+    // Only the delegateExpression form is generated. camunda:class would need FQCN-based
+    // generation (see DelegateClassGenerator.generateFromJavaClass for that different shape, which
+    // this fixed-package template cannot reuse directly since a camunda:class listener must land
+    // at the exact package the BPMN names), and a raw UEL "expression" attribute names something
+    // arbitrary this generator has no safe way to turn into a class. Both are left unrewritten
+    // rather than silently mis-generated.
+    private List<GeneratedSource> scanTaskListeners(Document document, boolean twin) {
+        List<GeneratedSource> sources = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        NodeList listeners = document.getElementsByTagNameNS(CAMUNDA_NS, "taskListener");
+        for (int i = 0; i < listeners.getLength(); i++) {
+            Element listener = (Element) listeners.item(i);
+            String originalBeanName = stripExpression(listener.getAttribute("delegateExpression"));
+            if (originalBeanName.isBlank()) continue;
+            String beanName = twin ? originalBeanName + "Twin" : originalBeanName;
+            listener.setAttribute("delegateExpression", "${" + beanName + "}");
+            if (!seen.add(beanName)) continue;
+            String className = pascal(beanName);
+            String directory = (twin ? "twin" : "proxy") + "/listeners";
+            String packageName = "com.tp.TargetPlatform." + directory.replace('/', '.');
+            String label = (twin ? "TWIN" : "PROXY") + " (TASK LISTENER)";
+            sources.add(new GeneratedSource(directory, className,
+                    renderTaskListener(packageName, className, beanName, label)));
+        }
+        return sources;
+    }
+
+    private static String renderTaskListener(String pkg, String className, String beanName, String label) {
+        return """
+                package %s;
+
+                import org.camunda.bpm.engine.delegate.DelegateTask;
+                import org.camunda.bpm.engine.delegate.TaskListener;
+                import org.springframework.stereotype.Component;
+
+                @Component("%s")
+                public class %s implements TaskListener {
+                    @Override
+                    public void notify(DelegateTask delegateTask) {
+                        System.out.println("******************** %s - %s ---- Spring Bean invoked");
+                    }
+                }
+                """.formatted(pkg, beanName, className, label, beanName);
     }
 
     private static String stripExpression(String expression) {

@@ -184,6 +184,108 @@ class TargetPlatformSourceGeneratorTest {
         assertThat(result.sources()).hasSize(1);
     }
 
+    // Task Listener is a distinct Camunda API from Execution Listener: it fires on the user task's
+    // OWN lifecycle (create/assignment/complete/...) via TaskListener.notify(DelegateTask), not on
+    // activity execution via ExecutionListener.notify(DelegateExecution) - the generated stub must
+    // implement the right interface or the engine throws a ClassCastException the first time the
+    // task's listener event fires, not at generation or deploy time.
+    @Test
+    void discoversATaskListenerDelegateExpressionAsAProxyListenerImplementingTheRightInterface() {
+        String xml = bpmn("""
+                <bpmn2:userTask id="ApproveOrder" name="Approve Order">
+                  <bpmn2:extensionElements>
+                    <camunda:taskListener event="complete" delegateExpression="${orderApprovalListener}" />
+                  </bpmn2:extensionElements>
+                </bpmn2:userTask>
+                """);
+
+        TargetPlatformSourceGenerator.Result result = generator.generate(xml, false);
+
+        assertThat(result.sources()).hasSize(1);
+        TargetPlatformSourceGenerator.GeneratedSource source = result.sources().get(0);
+        assertThat(source.relativeDirectory()).isEqualTo("proxy/listeners");
+        assertThat(source.className()).isEqualTo("OrderApprovalListener");
+        assertThat(source.source())
+                .contains("package com.tp.TargetPlatform.proxy.listeners;")
+                .contains("@Component(\"orderApprovalListener\")")
+                .contains("implements TaskListener")
+                .contains("import org.camunda.bpm.engine.delegate.DelegateTask;")
+                .contains("import org.camunda.bpm.engine.delegate.TaskListener;")
+                .contains("public void notify(DelegateTask delegateTask)")
+                .doesNotContain("ExecutionListener");
+        assertThat(result.bpmnXml()).contains("delegateExpression=\"${orderApprovalListener}\"");
+    }
+
+    // Same collision this generator already guards for Execution Listeners: a Twin structurally
+    // mirrored from its proxy (or a hand-authored one) can carry the identical taskListener
+    // reference the proxy has. Without renaming, scanning both sides would register two different
+    // classes under the one Spring bean name and the application would fail to start.
+    @Test
+    void theTwinSidesTaskListenerBeanIsRenamedSoItNeverCollidesWithTheProxysOwnBeanOfTheSameOriginalName() {
+        String xml = bpmn("""
+                <bpmn2:userTask id="ApproveOrderTwin" name="Approve Order Twin">
+                  <bpmn2:extensionElements>
+                    <camunda:taskListener event="complete" delegateExpression="${orderApprovalListener}" />
+                  </bpmn2:extensionElements>
+                </bpmn2:userTask>
+                """);
+
+        TargetPlatformSourceGenerator.Result result = generator.generate(xml, true);
+
+        assertThat(result.sources()).hasSize(1);
+        TargetPlatformSourceGenerator.GeneratedSource source = result.sources().get(0);
+        assertThat(source.relativeDirectory()).isEqualTo("twin/listeners");
+        assertThat(source.className()).isEqualTo("OrderApprovalListenerTwin");
+        assertThat(source.source())
+                .contains("package com.tp.TargetPlatform.twin.listeners;")
+                .contains("@Component(\"orderApprovalListenerTwin\")");
+        assertThat(result.bpmnXml())
+                .doesNotContain("delegateExpression=\"${orderApprovalListener}\"")
+                .contains("delegateExpression=\"${orderApprovalListenerTwin}\"");
+    }
+
+    @Test
+    void theSameTaskListenerBeanReferencedByManyUserTasksOnlyGeneratesOneClass() {
+        String xml = bpmn("""
+                <bpmn2:userTask id="ApproveOrder" name="Approve Order">
+                  <bpmn2:extensionElements>
+                    <camunda:taskListener event="complete" delegateExpression="${orderApprovalListener}" />
+                  </bpmn2:extensionElements>
+                </bpmn2:userTask>
+                <bpmn2:userTask id="ReviewOrder" name="Review Order">
+                  <bpmn2:extensionElements>
+                    <camunda:taskListener event="create" delegateExpression="${orderApprovalListener}" />
+                  </bpmn2:extensionElements>
+                </bpmn2:userTask>
+                """);
+
+        TargetPlatformSourceGenerator.Result result = generator.generate(xml, false);
+
+        assertThat(result.sources()).hasSize(1);
+    }
+
+    // camunda:class and a raw UEL "expression" attribute are both left unrewritten and ungenerated
+    // - neither is a form this generator can safely turn into a class (see scanTaskListeners' own
+    // comment) - rather than silently claiming support it cannot actually provide.
+    @Test
+    void aTaskListenerClassOrExpressionFormProducesNoGeneratedSourceRatherThanSilentlyMisgenerating() {
+        String xml = bpmn("""
+                <bpmn2:userTask id="ApproveOrder" name="Approve Order">
+                  <bpmn2:extensionElements>
+                    <camunda:taskListener event="complete" class="com.example.SomeTaskListener" />
+                    <camunda:taskListener event="create" expression="${someUelExpression}" />
+                  </bpmn2:extensionElements>
+                </bpmn2:userTask>
+                """);
+
+        TargetPlatformSourceGenerator.Result result = generator.generate(xml, false);
+
+        assertThat(result.sources()).isEmpty();
+        assertThat(result.bpmnXml())
+                .contains("class=\"com.example.SomeTaskListener\"")
+                .contains("expression=\"${someUelExpression}\"");
+    }
+
     // The bug this exists to catch: an AUTHORED twin (see saveModelWithAuthoredTwin) is free to
     // reuse the exact same activity id as its proxy - a hand-mirrored twin naturally would, and
     // TwinModelGenerator's own auto-derived "_automate" suffix only avoids this by accident for the

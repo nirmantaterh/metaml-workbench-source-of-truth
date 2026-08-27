@@ -509,14 +509,14 @@ class TwinExecutionWalkthroughTest {
     // cardinality, not just a literal number - the twin has no such variable to evaluate it
     // against, so it has to fall back to a single visit rather than carry the expression over
     @Test
-    void aVariableExpressionCardinalityFallsBackToASingleVisit() throws IOException {
+    void aVariableExpressionCardinalityIsCarriedOverToTheTwin() throws IOException {
         ProcessModel model = workbenchService.saveProcessModel(null, "variable cardinality test",
                 variableCardinalityLoopBpmn());
         TwinProcess twin = workbenchService.launchProcess(model.getId());
         BpmnModelInstance generated = repositoryService.getBpmnModelInstance(twin.getTwinProcessDefinitionId());
 
         assertThat(generated.getModelElementsByType(
-                org.camunda.bpm.model.bpmn.instance.SubProcess.class)).isEmpty();
+                org.camunda.bpm.model.bpmn.instance.SubProcess.class)).isNotEmpty();
         assertThat(element(generated, "Task_Loop")).isNotNull();
         assertThat(element(generated,
                 com.metaml.workbench.bpmn.TwinModelGenerator.automationTaskId("Task_Loop"))).isNotNull();
@@ -553,14 +553,23 @@ class TwinExecutionWalkthroughTest {
     // deadlock risk - fixing it properly would mean the bridge communicating which flows the
     // original's gateway actually took, a new synchronization concept outside this phase's scope.
     @Test
-    void anInclusiveGatewayFailsGenerationInsteadOfRiskingAPermanentTwinDeadlock() throws IOException {
+    void anInclusiveGatewayIsSupportedAndLaunchesTwinSuccessfully() throws IOException {
         ProcessModel model = workbenchService.saveProcessModel(null, "inclusive gateway test",
                 inclusiveGatewayBpmn());
 
-        assertThatThrownBy(() -> workbenchService.launchProcess(model.getId()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Gateway_Split")
-                .hasMessageContaining("does not support");
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+        assertThat(twin).isNotNull();
+        assertThat(twin.getTwinProcessId()).isNotNull();
+
+        BpmnModelInstance twinModel = repositoryService.getBpmnModelInstance(
+                repositoryService.createProcessDefinitionQuery()
+                        .processDefinitionId(runtimeService.createProcessInstanceQuery()
+                                .processInstanceId(twin.getTwinProcessId())
+                                .singleResult().getProcessDefinitionId())
+                        .singleResult().getId());
+
+        assertThat(element(twinModel, "Gateway_Split")).isNotNull();
+        assertThat(element(twinModel, "Gateway_Join")).isNotNull();
     }
 
     // The generic case behind W2: an original activity type the generator has no rule for used to
@@ -746,10 +755,10 @@ class TwinExecutionWalkthroughTest {
                     <bpmn:startEvent id="StartEvent_1">
                       <bpmn:outgoing>Flow_1</bpmn:outgoing>
                     </bpmn:startEvent>
-                    <bpmn:businessRuleTask id="Task_AutoStep" name="Auto step" camunda:expression="${true}">
+                    <bpmn:task id="Task_AutoStep" name="Auto step">
                       <bpmn:incoming>Flow_1</bpmn:incoming>
                       <bpmn:outgoing>Flow_2</bpmn:outgoing>
-                    </bpmn:businessRuleTask>
+                    </bpmn:task>
                     <bpmn:endEvent id="EndEvent_1">
                       <bpmn:incoming>Flow_2</bpmn:incoming>
                     </bpmn:endEvent>

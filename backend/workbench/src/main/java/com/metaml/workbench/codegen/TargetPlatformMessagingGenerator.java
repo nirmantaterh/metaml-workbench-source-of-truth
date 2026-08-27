@@ -167,6 +167,12 @@ public class TargetPlatformMessagingGenerator {
     private List<GeneratedSource> messaging(String messagingNamespace, Set<String> sharedSignalNames) {
         List<SignalQueue> queues = assignSignalQueues(messagingNamespace, sharedSignalNames);
         String exchangeName = messagingNamespace + ".exchange";
+        boolean hasQueuesForDlq = !queues.isEmpty();
+        String dlxExchangeName = messagingNamespace + ".dlx";
+        String dlqTasksQueueName = messagingNamespace + ".sync.dlq.tasks";
+        String dlqResponsesQueueName = messagingNamespace + ".sync.dlq.responses";
+        String dlqTasksRoutingKey = "dlq.tasks";
+        String dlqResponsesRoutingKey = "dlq.responses";
 
         String taskEntries = queues.stream()
                 .map(q -> "Map.entry(\"" + escapeJavaStringLiteral(q.signal()) + "\", \"" + q.taskQueue() + "\")")
@@ -181,12 +187,20 @@ public class TargetPlatformMessagingGenerator {
                 .map(q -> "Map.entry(\"" + escapeJavaStringLiteral(q.signal()) + "\", \"" + q.responseRoutingKey()
                         + "\")")
                 .collect(Collectors.joining(",\n            "));
+        // Every task/response queue is dead-letter-wired to this project's own DLX (see
+        // dlxExchangeName above) rather than left to drop a message that exhausts its consumer
+        // retries (spring.rabbitmq.listener.simple.retry.* in this project's application.properties)
+        // silently. QueueBuilder, not the plain Queue(name) constructor, so the x-dead-letter-*
+        // arguments actually reach the broker at declaration time.
         String queueBeans = queues.stream()
                 .map(q -> """
 
                         @Bean
                         public Queue %1$sTaskQueue() {
-                            return new Queue("%2$s");
+                            return QueueBuilder.durable("%2$s")
+                                    .withArgument("x-dead-letter-exchange", DLX_EXCHANGE)
+                                    .withArgument("x-dead-letter-routing-key", DLQ_TASKS_ROUTING_KEY)
+                                    .build();
                         }
 
                         @Bean
@@ -196,7 +210,10 @@ public class TargetPlatformMessagingGenerator {
 
                         @Bean
                         public Queue %1$sResponseQueue() {
-                            return new Queue("%4$s");
+                            return QueueBuilder.durable("%4$s")
+                                    .withArgument("x-dead-letter-exchange", DLX_EXCHANGE)
+                                    .withArgument("x-dead-letter-routing-key", DLQ_RESPONSES_ROUTING_KEY)
+                                    .build();
                         }
 
                         @Bean
@@ -207,15 +224,61 @@ public class TargetPlatformMessagingGenerator {
                         q.responseRoutingKey()))
                 .collect(Collectors.joining());
 
+        // DLX + the two shared DLQs (one for TASK messages, one for RESPONSE messages) - only
+        // generated when there is at least one shared signal to protect. A project with no shared
+        // signals has no queues at all (see hasQueues below), so a DLQ topology for it would be
+        // unused infrastructure, not a safety net.
+        String dlqSection = hasQueuesForDlq ? """
+
+                @Bean
+                public DirectExchange syncDlx() {
+                    return new DirectExchange(DLX_EXCHANGE);
+                }
+
+                @Bean
+                public Queue syncDlqTasks() {
+                    return QueueBuilder.durable(DLQ_TASKS_QUEUE).build();
+                }
+
+                @Bean
+                public Binding syncDlqTasksBinding() {
+                    return BindingBuilder.bind(syncDlqTasks()).to(syncDlx()).with(DLQ_TASKS_ROUTING_KEY);
+                }
+
+                @Bean
+                public Queue syncDlqResponses() {
+                    return QueueBuilder.durable(DLQ_RESPONSES_QUEUE).build();
+                }
+
+                @Bean
+                public Binding syncDlqResponsesBinding() {
+                    return BindingBuilder.bind(syncDlqResponses()).to(syncDlx()).with(DLQ_RESPONSES_ROUTING_KEY);
+                }
+                """ : "";
+
+        String dlqConstants = hasQueuesForDlq ? """
+
+                    public static final String DLX_EXCHANGE = "%s";
+                    public static final String DLQ_TASKS_QUEUE = "%s";
+                    public static final String DLQ_RESPONSES_QUEUE = "%s";
+                    public static final String DLQ_TASKS_ROUTING_KEY = "%s";
+                    public static final String DLQ_RESPONSES_ROUTING_KEY = "%s";
+                """.formatted(dlxExchangeName, dlqTasksQueueName, dlqResponsesQueueName, dlqTasksRoutingKey,
+                dlqResponsesRoutingKey) : "";
+
         String configSource = """
                 package com.tp.TargetPlatform.messaging;
 
                 import java.util.Map;
 
+                import org.slf4j.Logger;
+                import org.slf4j.LoggerFactory;
                 import org.springframework.amqp.core.Binding;
                 import org.springframework.amqp.core.BindingBuilder;
                 import org.springframework.amqp.core.DirectExchange;
                 import org.springframework.amqp.core.Queue;
+                import org.springframework.amqp.core.QueueBuilder;
+                import org.springframework.amqp.rabbit.core.RabbitTemplate;
                 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
                 import org.springframework.context.annotation.Bean;
                 import org.springframework.context.annotation.Configuration;
@@ -225,12 +288,22 @@ public class TargetPlatformMessagingGenerator {
                 // TargetPlatformMessagingGenerator.assignSignalQueues), scoped to this generated project so
                 // two independently generated platforms can never physically share a queue. Enabled only
                 // with metaml.messaging.enabled=true.
+                //
+                // Reliability hardening (Pass 1): every task/response queue dead-letters to this project's
+                // own DLX (see DLX_EXCHANGE) instead of a message that exhausts consumer retries
+                // (spring.rabbitmq.listener.simple.retry.* in this project's application.properties)
+                // silently vanishing. The RabbitTemplate wiring below (mandatory + a returns callback) is
+                // configured exactly once here, not per-publisher, since TaskQueuePublisher and
+                // ResponseQueuePublisher share the one autoconfigured RabbitTemplate bean - setting it in
+                // more than one place would just have the last constructor to run silently win.
                 @Configuration
                 @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
                 public class RabbitMqConfig {
 
-                    public static final String EXCHANGE = "%s";
+                    private static final Logger logger = LoggerFactory.getLogger(RabbitMqConfig.class);
 
+                    public static final String EXCHANGE = "%s";
+                    %s
                     // Shared signal name -> its dedicated task queue (proxy asks twin to advance past
                     // this signal). The single source of truth for which signals have RabbitMQ queues at
                     // all - a signal absent from this map exists on only one side and is delivered
@@ -252,20 +325,38 @@ public class TargetPlatformMessagingGenerator {
                             %s
                     );
 
+                    // mandatory=true is what makes the broker return (rather than silently drop) a
+                    // message this exchange/routing-key combination cannot route to any queue -
+                    // shouldn't happen with this project's own fixed topology, but a returned message is
+                    // NOT the same failure a publisher confirm NACK catches (a NACK is the broker failing
+                    // to accept the message at all; a return is the broker accepting it and then finding
+                    // nowhere to route it), so both are wired here for the same reason: neither must fail
+                    // silently.
+                    public RabbitMqConfig(RabbitTemplate rabbitTemplate) {
+                        rabbitTemplate.setMandatory(true);
+                        rabbitTemplate.setReturnsCallback(returned -> logger.error(
+                                "SYNC MESSAGE RETURNED (unroutable): exchange={} routingKey={} replyCode={} "
+                                        + "replyText={} payload={}",
+                                returned.getExchange(), returned.getRoutingKey(), returned.getReplyCode(),
+                                returned.getReplyText(), new String(returned.getMessage().getBody(),
+                                        java.nio.charset.StandardCharsets.UTF_8)));
+                    }
+
                     @Bean
                     public DirectExchange syncExchange() {
                         return new DirectExchange(EXCHANGE);
                     }
-                    %s
+                    %s%s
                 }
-                """.formatted(exchangeName, taskEntries, responseEntries, taskRoutingEntries, responseRoutingEntries,
-                queueBeans);
+                """.formatted(exchangeName, dlqConstants, taskEntries, responseEntries, taskRoutingEntries,
+                responseRoutingEntries, queueBeans, dlqSection);
 
         String taskPublisherSource = """
                 package com.tp.TargetPlatform.messaging;
 
                 import org.slf4j.Logger;
                 import org.slf4j.LoggerFactory;
+                import org.springframework.amqp.core.MessageDeliveryMode;
                 import org.springframework.amqp.rabbit.core.RabbitTemplate;
                 import org.springframework.beans.factory.annotation.Value;
                 import org.springframework.stereotype.Component;
@@ -274,10 +365,24 @@ public class TargetPlatformMessagingGenerator {
                 // task queue. TaskQueueListener performs the actual Camunda signal delivery that releases
                 // twin's waiting execution, on consume. Always present as a bean, but isEnabled() is false
                 // unless metaml.messaging.enabled=true.
+                //
+                // Reliability hardening (Pass 1): publish() now blocks on a publisher confirm
+                // (rabbitTemplate.invoke + waitForConfirmsOrDie, which requires
+                // spring.rabbitmq.publisher-confirm-type=simple - see this project's application.properties)
+                // before returning or logging success. SignalBroadcaster.deliverTo() only marks a signal as
+                // everDelivered AFTER publish() returns normally, so a NACKed or unconfirmed publish throws
+                // here, deliverTo() never marks it delivered, and the next broadcaster tick simply retries -
+                // this preserves the existing "safe to re-attempt" behavior rather than adding a second,
+                // separate retry mechanism on top of it.
                 @Component
                 public class TaskQueuePublisher {
 
                     private static final Logger logger = LoggerFactory.getLogger(TaskQueuePublisher.class);
+
+                    // Long enough for a broker under normal load to ack/nack; short enough that a genuinely
+                    // unreachable broker fails this attempt and lets the next broadcaster tick (1s later)
+                    // retry, rather than blocking the single-threaded scheduler indefinitely.
+                    private static final long CONFIRM_TIMEOUT_MS = 5000L;
 
                     private final RabbitTemplate rabbitTemplate;
                     private final boolean enabled;
@@ -305,7 +410,23 @@ public class TargetPlatformMessagingGenerator {
                         }
                         String payload = signalName + "|" + executionId + "|" + processInstanceId
                                 + "|" + (businessKey == null ? "" : businessKey);
-                        rabbitTemplate.convertAndSend(RabbitMqConfig.EXCHANGE, routingKey, payload);
+                        try {
+                            rabbitTemplate.invoke(operations -> {
+                                operations.convertAndSend(RabbitMqConfig.EXCHANGE, routingKey, payload,
+                                        message -> {
+                                            message.getMessageProperties()
+                                                    .setDeliveryMode(MessageDeliveryMode.PERSISTENT);
+                                            return message;
+                                        });
+                                operations.waitForConfirmsOrDie(CONFIRM_TIMEOUT_MS);
+                                return null;
+                            }, null, null);
+                        } catch (RuntimeException e) {
+                            logger.error("TASK: publish NOT confirmed for signal '{}' execution {} "
+                                    + "(processInstanceId={}, businessKey={}): {}", signalName, executionId,
+                                    processInstanceId, businessKey, e.toString());
+                            throw e;
+                        }
                         logger.info("TASK: published signal '{}' to RabbitMQ exchange '{}' key '{}' for "
                                 + "execution {} (processInstanceId={}, businessKey={})", signalName,
                                 RabbitMqConfig.EXCHANGE, routingKey, executionId, processInstanceId, businessKey);
@@ -318,6 +439,7 @@ public class TargetPlatformMessagingGenerator {
 
                 import org.slf4j.Logger;
                 import org.slf4j.LoggerFactory;
+                import org.springframework.amqp.core.MessageDeliveryMode;
                 import org.springframework.amqp.rabbit.core.RabbitTemplate;
                 import org.springframework.beans.factory.annotation.Value;
                 import org.springframework.stereotype.Component;
@@ -325,10 +447,15 @@ public class TargetPlatformMessagingGenerator {
                 // Publishes "twin has advanced past this signal" to that signal's own dedicated response
                 // queue. ResponseQueueListener performs the actual Camunda signal delivery that releases
                 // proxy's waiting execution, on consume.
+                //
+                // Reliability hardening (Pass 1): see TaskQueuePublisher's own comment - identical
+                // publisher-confirm + explicit-persistence treatment, for the same reason.
                 @Component
                 public class ResponseQueuePublisher {
 
                     private static final Logger logger = LoggerFactory.getLogger(ResponseQueuePublisher.class);
+
+                    private static final long CONFIRM_TIMEOUT_MS = 5000L;
 
                     private final RabbitTemplate rabbitTemplate;
                     private final boolean enabled;
@@ -356,7 +483,23 @@ public class TargetPlatformMessagingGenerator {
                         }
                         String payload = signalName + "|" + executionId + "|" + processInstanceId
                                 + "|" + (businessKey == null ? "" : businessKey);
-                        rabbitTemplate.convertAndSend(RabbitMqConfig.EXCHANGE, routingKey, payload);
+                        try {
+                            rabbitTemplate.invoke(operations -> {
+                                operations.convertAndSend(RabbitMqConfig.EXCHANGE, routingKey, payload,
+                                        message -> {
+                                            message.getMessageProperties()
+                                                    .setDeliveryMode(MessageDeliveryMode.PERSISTENT);
+                                            return message;
+                                        });
+                                operations.waitForConfirmsOrDie(CONFIRM_TIMEOUT_MS);
+                                return null;
+                            }, null, null);
+                        } catch (RuntimeException e) {
+                            logger.error("RESPONSE: publish NOT confirmed for signal '{}' execution {} "
+                                    + "(processInstanceId={}, businessKey={}): {}", signalName, executionId,
+                                    processInstanceId, businessKey, e.toString());
+                            throw e;
+                        }
                         logger.info("RESPONSE: published signal '{}' to RabbitMQ exchange '{}' key '{}' for "
                                 + "execution {} (processInstanceId={}, businessKey={})", signalName,
                                 RabbitMqConfig.EXCHANGE, routingKey, executionId, processInstanceId, businessKey);
@@ -367,6 +510,7 @@ public class TargetPlatformMessagingGenerator {
         boolean hasQueues = !queues.isEmpty();
         String listenerImports = hasQueues
                 ? """
+                        import org.camunda.bpm.engine.ProcessEngineException;
                         import org.camunda.bpm.engine.RuntimeService;
                         import org.slf4j.Logger;
                         import org.slf4j.LoggerFactory;
@@ -392,12 +536,21 @@ public class TargetPlatformMessagingGenerator {
                                 this.runtimeService = runtimeService;
                             }
 
+                            // Reliability hardening (Pass 1): a malformed payload used to be logged and
+                            // silently dropped (acked as if processed). It now throws instead, so
+                            // spring.rabbitmq.listener.simple.retry.* retries it (pointlessly, since a
+                            // malformed payload never becomes valid, but consistently with every other
+                            // failure path below) and then dead-letters it to RabbitMqConfig.DLQ_TASKS_QUEUE
+                            // once retries are exhausted - observable there and in this log line, rather
+                            // than disappearing.
                             @RabbitListener(queues = { %s })
                             public void onTaskMessage(String payload) {
                                 String[] parts = payload.split("\\\\|", -1);
                                 if (parts.length != 4) {
-                                    logger.error("[task-queue] discarding malformed message: {}", payload);
-                                    return;
+                                    logger.error("[task-queue] malformed message, routing to DLQ: {}", payload);
+                                    throw new IllegalArgumentException(
+                                            "Malformed task-queue payload (expected 4 '|'-delimited fields): "
+                                                    + payload);
                                 }
                                 String signalName = parts[0];
                                 String executionId = parts[1];
@@ -408,10 +561,35 @@ public class TargetPlatformMessagingGenerator {
                                     logger.info("TASK: delivered signal '{}' to execution {} (processInstanceId={}, "
                                             + "businessKey={}) via RabbitMQ", signalName, executionId,
                                             processInstanceId, businessKey);
-                                } catch (Exception e) {
-                                    logger.info("TASK: signal '{}' delivery to execution {} skipped (already "
-                                            + "advanced?): {}", signalName, executionId, e.toString());
+                                } catch (ProcessEngineException e) {
+                                    // Reliability hardening (Pass 1): distinguishes the expected, harmless
+                                    // cases - this execution already advanced past signalName (still active,
+                                    // but subscribed to something else now: "has not subscribed") or has
+                                    // completed/gone entirely (execution id no longer exists at all: "cannot
+                                    // find execution") - a genuine redelivery of an already-consumed message,
+                                    // or a rework-loop revisit, either way - from every other Camunda failure,
+                                    // which must NOT be swallowed the same way. Camunda has no single
+                                    // dedicated exception subtype covering both; message text is the only
+                                    // signal for either, same as the pre-hardening code relied on implicitly
+                                    // via a blanket catch.
+                                    if (isAlreadyAdvanced(e)) {
+                                        logger.info("TASK: signal '{}' delivery to execution {} skipped - "
+                                                + "already advanced past this signal (processInstanceId={}, "
+                                                + "businessKey={}): {}", signalName, executionId, processInstanceId,
+                                                businessKey, e.toString());
+                                    } else {
+                                        logger.error("TASK: signal '{}' delivery to execution {} FAILED "
+                                                + "(processInstanceId={}, businessKey={}): {}", signalName,
+                                                executionId, processInstanceId, businessKey, e.toString());
+                                        throw e;
+                                    }
                                 }
+                            }
+
+                            private static boolean isAlreadyAdvanced(ProcessEngineException e) {
+                                String message = e.getMessage();
+                                return message != null && (message.contains("has not subscribed")
+                                        || message.contains("Cannot find execution"));
                             }
                         """.formatted(queues.stream().map(q -> "\"" + q.taskQueue() + "\"")
                         .collect(Collectors.joining(", ")))
@@ -428,12 +606,16 @@ public class TargetPlatformMessagingGenerator {
                                 this.runtimeService = runtimeService;
                             }
 
+                            // Reliability hardening (Pass 1): see TaskQueueListener's own comment - identical
+                            // malformed-payload and already-advanced-vs-genuine-failure treatment.
                             @RabbitListener(queues = { %s })
                             public void onResponseMessage(String payload) {
                                 String[] parts = payload.split("\\\\|", -1);
                                 if (parts.length != 4) {
-                                    logger.error("[response-queue] discarding malformed message: {}", payload);
-                                    return;
+                                    logger.error("[response-queue] malformed message, routing to DLQ: {}", payload);
+                                    throw new IllegalArgumentException(
+                                            "Malformed response-queue payload (expected 4 '|'-delimited fields): "
+                                                    + payload);
                                 }
                                 String signalName = parts[0];
                                 String executionId = parts[1];
@@ -444,10 +626,27 @@ public class TargetPlatformMessagingGenerator {
                                     logger.info("RESPONSE: delivered signal '{}' to execution {} "
                                             + "(processInstanceId={}, businessKey={}) via RabbitMQ", signalName,
                                             executionId, processInstanceId, businessKey);
-                                } catch (Exception e) {
-                                    logger.info("RESPONSE: signal '{}' delivery to execution {} skipped (already "
-                                            + "advanced?): {}", signalName, executionId, e.toString());
+                                } catch (ProcessEngineException e) {
+                                    // See TaskQueueListener's own comment on isAlreadyAdvanced - identical
+                                    // reasoning, applied to the proxy's execution instead of the twin's.
+                                    if (isAlreadyAdvanced(e)) {
+                                        logger.info("RESPONSE: signal '{}' delivery to execution {} skipped - "
+                                                + "already advanced past this signal (processInstanceId={}, "
+                                                + "businessKey={}): {}", signalName, executionId, processInstanceId,
+                                                businessKey, e.toString());
+                                    } else {
+                                        logger.error("RESPONSE: signal '{}' delivery to execution {} FAILED "
+                                                + "(processInstanceId={}, businessKey={}): {}", signalName,
+                                                executionId, processInstanceId, businessKey, e.toString());
+                                        throw e;
+                                    }
                                 }
+                            }
+
+                            private static boolean isAlreadyAdvanced(ProcessEngineException e) {
+                                String message = e.getMessage();
+                                return message != null && (message.contains("has not subscribed")
+                                        || message.contains("Cannot find execution"));
                             }
                         """.formatted(queues.stream().map(q -> "\"" + q.responseQueue() + "\"")
                         .collect(Collectors.joining(", ")))
@@ -483,12 +682,53 @@ public class TargetPlatformMessagingGenerator {
                 }
                 """.formatted(listenerImports, responseListenerFields, responseListenerBody);
 
-        return List.of(
+        List<GeneratedSource> messagingSources = new ArrayList<>(List.of(
                 new GeneratedSource("messaging", "RabbitMqConfig", configSource),
                 new GeneratedSource("messaging", "TaskQueuePublisher", taskPublisherSource),
                 new GeneratedSource("messaging", "TaskQueueListener", taskListenerSource),
                 new GeneratedSource("messaging", "ResponseQueuePublisher", responsePublisherSource),
-                new GeneratedSource("messaging", "ResponseQueueListener", responseListenerSource));
+                new GeneratedSource("messaging", "ResponseQueueListener", responseListenerSource)));
+
+        // Reliability hardening (Pass 1): makes a dead-lettered TASK/RESPONSE message observable in
+        // the application log itself, not only via broker inspection (RabbitMQ management API/UI) -
+        // only generated when there is at least one shared signal, matching the DLX/DLQ topology
+        // above, which is itself only declared in that same case.
+        if (hasQueuesForDlq) {
+            String dlqListenerSource = """
+                    package com.tp.TargetPlatform.messaging;
+
+                    import org.slf4j.Logger;
+                    import org.slf4j.LoggerFactory;
+                    import org.springframework.amqp.rabbit.annotation.RabbitListener;
+                    import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+                    import org.springframework.stereotype.Component;
+
+                    // Consumes both project-scoped DLQs purely to surface a dead-lettered TASK/RESPONSE
+                    // message in this application's own log - the message itself is already durably held
+                    // in RabbitMqConfig.DLQ_TASKS_QUEUE / DLQ_RESPONSES_QUEUE and inspectable via the
+                    // broker's management API regardless of whether anything ever consumes it here.
+                    @Component
+                    @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
+                    public class DeadLetterQueueListener {
+
+                        private static final Logger logger = LoggerFactory.getLogger(DeadLetterQueueListener.class);
+
+                        @RabbitListener(queues = { RabbitMqConfig.DLQ_TASKS_QUEUE })
+                        public void onDeadLetteredTask(String payload) {
+                            logger.error("DEAD-LETTERED TASK message (unprocessable after retries): {}", payload);
+                        }
+
+                        @RabbitListener(queues = { RabbitMqConfig.DLQ_RESPONSES_QUEUE })
+                        public void onDeadLetteredResponse(String payload) {
+                            logger.error("DEAD-LETTERED RESPONSE message (unprocessable after retries): {}",
+                                    payload);
+                        }
+                    }
+                    """;
+            messagingSources.add(new GeneratedSource("messaging", "DeadLetterQueueListener", dlqListenerSource));
+        }
+
+        return messagingSources;
     }
 
     private GeneratedSource signalBroadcaster(Set<String> allSignalNames) {
@@ -551,6 +791,12 @@ public class TargetPlatformMessagingGenerator {
                     private final Set<String> everDelivered = ConcurrentHashMap.newKeySet();
                     private final Map<String, Integer> partnerArrivalTicks = new ConcurrentHashMap<>();
                     private static final int MAX_PARTNER_ARRIVAL_TICKS = 5;
+                    // Reliability hardening (Pass 2): handoffKeys already logged as stuck-on-a-failed-
+                    // partner, so the ERROR log below fires once per stuck period rather than once per
+                    // second for as long as the incident is open. Cleared alongside awaitingResponse's own
+                    // removal (whether the eventual outcome is a genuine advance or the handoff simply
+                    // ending some other way) so a LATER stall on the same handoffKey logs again.
+                    private final Set<String> stuckOnIncidentLogged = ConcurrentHashMap.newKeySet();
 
                     public SignalBroadcaster(RuntimeService runtimeService, PairRegistry pairRegistry,
                             TaskQueuePublisher taskQueuePublisher, ResponseQueuePublisher responseQueuePublisher) {
@@ -603,7 +849,46 @@ public class TargetPlatformMessagingGenerator {
                         if (awaitingResponse.contains(handoffKey)) {
                             if (responderHasAdvancedPast(signalName, partnerInstanceId)) {
                                 awaitingResponse.remove(handoffKey);
+                                stuckOnIncidentLogged.remove(handoffKey);
                                 deliverTo(signalName, subscription, businessKey, "RESPONSE");
+                            } else {
+                                // Reliability hardening (Pass 2): unlike partnerNotComing (bounded,
+                                // self-releasing - the responder legitimately may not have arrived yet),
+                                // this wait has no such bound, because there is no safe fallback here - the
+                                // Twin's gated activity may genuinely still be running, and releasing the
+                                // Proxy without proof it finished is exactly the "pretend completion" this
+                                // broadcaster must never do. What CAN be told apart, using real Camunda
+                                // state rather than an invented timeout, is "still legitimately in
+                                // progress" from "provably stuck" - a Camunda incident (job retries
+                                // exhausted, or a failed external task) on the responder's own process
+                                // instance means it will NOT resolve on its own. Logging that once makes an
+                                // otherwise silent, indefinite wait observable instead of indistinguishable
+                                // from a merely slow partner; the proxy still does not advance - only a
+                                // genuine, later responderHasAdvancedPast()==true (the incident gets
+                                // resolved and the responder's execution actually moves on) does that.
+                                boolean partnerHasOpenIncident = runtimeService.createIncidentQuery()
+                                        .processInstanceId(partnerInstanceId).count() > 0;
+                                if (partnerHasOpenIncident) {
+                                    // add() itself is what makes this fire only the FIRST tick an incident
+                                    // is observed for this handoffKey - checking the incident BEFORE calling
+                                    // add() (rather than relying on add()'s own return value to short-
+                                    // circuit the query) is what keeps a legitimately-slow, incident-free
+                                    // tick from ever marking this handoffKey "already logged".
+                                    if (stuckOnIncidentLogged.add(handoffKey)) {
+                                        logger.error("STUCK: proxy execution {} (businessKey={}) is waiting on "
+                                                + "RESPONSE for signal '{}', but its twin partner "
+                                                + "(processInstanceId={}) has an open Camunda incident and will "
+                                                + "not advance on its own - this handoff will not complete until "
+                                                + "that incident is resolved. The proxy has NOT been advanced.",
+                                                subscription.getExecutionId(), businessKey, signalName,
+                                                partnerInstanceId);
+                                    }
+                                } else {
+                                    // No incident currently open (never had one, or a prior one was already
+                                    // resolved) - clear any stale suppression so a LATER incident on this
+                                    // same handoffKey logs again instead of staying silenced forever.
+                                    stuckOnIncidentLogged.remove(handoffKey);
+                                }
                             }
                             return;
                         }

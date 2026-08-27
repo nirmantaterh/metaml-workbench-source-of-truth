@@ -638,4 +638,90 @@ class SpringBootProjectGeneratorTest {
         assertThat(generator().delete("  ")).isFalse();
         assertThat(generator().delete("never-generated")).isFalse();
     }
+
+    @Test
+    void freshGenerationWithAllGatewaysListenersAndTasksProducesValidProjectWithPureBpmnGateways() throws IOException {
+        String bpmnXml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                                   xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                                   id="Definitions_Comp" targetNamespace="http://metaml.com/test">
+                  <bpmn:message id="Msg_1" name="SampleMessage" />
+                  <bpmn:process id="comprehensiveProcess" isExecutable="true">
+                    <bpmn:startEvent id="Start">
+                      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+                    </bpmn:startEvent>
+                    <bpmn:serviceTask id="Service_1" name="Service Step" camunda:delegateExpression="${serviceTaskBean}">
+                      <bpmn:extensionElements>
+                        <camunda:executionListener delegateExpression="${execListenerBean}" event="start" />
+                      </bpmn:extensionElements>
+                      <bpmn:incoming>Flow_1</bpmn:incoming>
+                      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+                    </bpmn:serviceTask>
+                    <bpmn:exclusiveGateway id="Gateway_Exclusive" name="Exclusive GW">
+                      <bpmn:incoming>Flow_2</bpmn:incoming>
+                      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+                    </bpmn:exclusiveGateway>
+                    <bpmn:userTask id="UserTask_1" name="User Approval">
+                      <bpmn:extensionElements>
+                        <camunda:taskListener delegateExpression="${taskListenerBean}" event="create" />
+                      </bpmn:extensionElements>
+                      <bpmn:incoming>Flow_3</bpmn:incoming>
+                      <bpmn:outgoing>Flow_4</bpmn:outgoing>
+                    </bpmn:userTask>
+                    <bpmn:parallelGateway id="Gateway_Parallel" name="Parallel GW">
+                      <bpmn:incoming>Flow_4</bpmn:incoming>
+                      <bpmn:outgoing>Flow_5</bpmn:outgoing>
+                    </bpmn:parallelGateway>
+                    <bpmn:inclusiveGateway id="Gateway_Inclusive" name="Inclusive GW">
+                      <bpmn:incoming>Flow_5</bpmn:incoming>
+                      <bpmn:outgoing>Flow_6</bpmn:outgoing>
+                    </bpmn:inclusiveGateway>
+                    <bpmn:eventBasedGateway id="Gateway_EventBased" name="Event Based GW">
+                      <bpmn:incoming>Flow_6</bpmn:incoming>
+                      <bpmn:outgoing>Flow_7</bpmn:outgoing>
+                    </bpmn:eventBasedGateway>
+                    <bpmn:intermediateCatchEvent id="Catch_Msg" name="Catch Msg">
+                      <bpmn:incoming>Flow_7</bpmn:incoming>
+                      <bpmn:outgoing>Flow_8</bpmn:outgoing>
+                      <bpmn:messageEventDefinition messageRef="Msg_1" />
+                    </bpmn:intermediateCatchEvent>
+                    <bpmn:endEvent id="End">
+                      <bpmn:incoming>Flow_8</bpmn:incoming>
+                    </bpmn:endEvent>
+                    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start" targetRef="Service_1" />
+                    <bpmn:sequenceFlow id="Flow_2" sourceRef="Service_1" targetRef="Gateway_Exclusive" />
+                    <bpmn:sequenceFlow id="Flow_3" sourceRef="Gateway_Exclusive" targetRef="UserTask_1" />
+                    <bpmn:sequenceFlow id="Flow_4" sourceRef="UserTask_1" targetRef="Gateway_Parallel" />
+                    <bpmn:sequenceFlow id="Flow_5" sourceRef="Gateway_Parallel" targetRef="Gateway_Inclusive" />
+                    <bpmn:sequenceFlow id="Flow_6" sourceRef="Gateway_Inclusive" targetRef="Gateway_EventBased" />
+                    <bpmn:sequenceFlow id="Flow_7" sourceRef="Gateway_EventBased" targetRef="Catch_Msg" />
+                    <bpmn:sequenceFlow id="Flow_8" sourceRef="Catch_Msg" targetRef="End" />
+                  </bpmn:process>
+                </bpmn:definitions>
+                """;
+
+        GeneratedProject project = generator().generate(bpmnXml, List.of());
+
+        Path processesDir = project.directory().resolve("src/main/resources/processes");
+        assertThat(processesDir.resolve("comprehensiveProcess.bpmn")).exists();
+        assertThat(processesDir.resolve("comprehensiveProcess_twin.bpmn")).exists();
+
+        String twinXml = readString(processesDir.resolve("comprehensiveProcess_twin.bpmn"));
+        assertThat(twinXml).contains("Gateway_Exclusive");
+        assertThat(twinXml).contains("Gateway_Parallel");
+        assertThat(twinXml).contains("Gateway_Inclusive");
+        assertThat(twinXml).contains("Gateway_EventBased");
+        assertThat(twinXml).contains("Catch_Msg");
+
+        // Confirm NO Java class files were created for any gateway
+        try (var walk = Files.walk(project.directory().resolve("src/main/java"))) {
+            List<String> javaFiles = walk.filter(p -> p.toString().endsWith(".java"))
+                    .map(p -> p.getFileName().toString())
+                    .toList();
+
+            assertThat(javaFiles)
+                    .noneMatch(name -> name.toLowerCase().contains("gateway"));
+        }
+    }
 }

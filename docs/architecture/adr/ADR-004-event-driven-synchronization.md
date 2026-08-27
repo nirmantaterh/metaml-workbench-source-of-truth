@@ -4,10 +4,15 @@
 
 **Scope:** This decision covers only the in-process Original↔Twin bridge described in
 [ARCHITECTURE.md](../ARCHITECTURE.md) (one shared Camunda engine, one JVM). It does not describe
-and is not a claim about the separately-generated, cross-process Target Platform pipeline (Proxy/Twin
-synchronized over RabbitMQ via a generated `SignalBroadcaster`), which did not exist when this ADR
-was written and uses a different mechanism: signal-driven advancement with a 1-second polling
-coordinator (`@Scheduled(fixedDelay = 1000)`). See `TEAM_DEMO_GUIDE.md` §14.4 for that mechanism.
+and is not a claim about the separately-generated Target Platform pipeline (Proxy/Twin synchronized
+over RabbitMQ via a generated `SignalBroadcaster`), which did not exist when this ADR was written
+and uses a different mechanism: signal-driven advancement with a 1-second polling coordinator
+(`@Scheduled(fixedDelay = 1000)`). See `TEAM_DEMO_GUIDE.md` §14.4 for that mechanism. Note: as of
+the current generated Target Platform, Proxy and Twin are two process *definitions* deployed into
+one shared Camunda engine within one generated JVM — RabbitMQ is the transport between them by
+design (so a future split across separate JVMs would use the same mechanism unchanged), but that
+split has not itself been built or verified; call this "brokered," not "cross-process," until it
+is.
 
 ## Context
 
