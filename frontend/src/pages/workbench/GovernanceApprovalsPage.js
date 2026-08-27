@@ -6,20 +6,7 @@ import ProcessSpinner from "../../components/common/ProcessSpinner";
 import NoDataAvailable from "../../components/common/NoDataAvailable";
 import ApprovalActionConfirmationModal from "../../components/modals/ApprovalActionConfirmationModal";
 
-// Phase 4's approval workflow, backend-complete since that phase - this is the first UI on top
-// of it. Same tenant-selection mechanism as GovernancePoliciesPage (plain selector, not an
-// identity - see that page's own comment on why: no login exists in this system yet).
-//
-// Polling: unlike the Policies page (no polling - policy state only ever changes from actions
-// this same page just took), an approval can be resolved by someone else entirely (another
-// tab, another operator) while this page sits open, so there's a real reason to keep asking.
-// Same setInterval/1000ms pattern as ModelPage - gated on whether the last fetch had any PENDING,
-// not on a manual toggle.
-// Same three-colour language the workflow breadcrumb uses (see WorkflowProgress.css): amber for
-// waiting, green for done, red for gone wrong. FAILED was "dark", which made the one status that
-// represents an actual error the least visible thing in the table - quieter than REJECTED, which
-// is a deliberate decision rather than a failure. APPROVED stays blue: it is neither finished nor
-// failed, it is in flight.
+// Phase 4's approval workflow, backend-complete since that phase - this is the first UI on top of it. Same tenant-selection mechanism as GovernancePoliciesPage (plain selector, not an identity - see that page's own comment on why: no login exists in this system yet). Polling: unlike the Policies page (no polling - policy state only ever changes from actions this same page just took), an approval can be resolved by someone else entirely (another tab, another operator) while this page sits open, so there's a real reason to keep asking. Same setInterval/1000ms pattern as ModelPage - gated on whether the last fetch had any PENDING, not on a manual toggle. Same three-colour language the workflow breadcrumb uses (see WorkflowProgress.css): amber for waiting, green for done, red for gone wrong. FAILED was "dark", which made the one status that represents an actual error the least visible thing in the table - quieter than REJECTED, which is a deliberate decision rather than a failure. APPROVED stays blue: it is neither finished nor failed, it is in flight.
 const STATUS_VARIANT = { PENDING: "warning", APPROVED: "info", REJECTED: "danger", COMPLETED: "success", FAILED: "danger" };
 
 const GovernanceApprovalsPage = () => {
@@ -49,12 +36,7 @@ const GovernanceApprovalsPage = () => {
         refreshTenants();
     }, [refreshTenants]);
 
-    // authoritative every time - never inferred from an approve/reject response, which returns
-    // an AgentDecision, not the Approval itself (see WorkbenchService's own comment on why).
-    // showSpinner is only true for the explicit tenant-switch load below - a poll tick or a
-    // post-approve/reject refresh must never flip the spinner on, or the pending card a user is
-    // about to click would flicker out from under their cursor every second (same reason
-    // ModelPage's own refreshWorkflowState never touches a loading flag at all).
+    // authoritative every time - never inferred from an approve/reject response, which returns an AgentDecision, not the Approval itself (see WorkbenchService's own comment on why). showSpinner is only true for the explicit tenant-switch load below - a poll tick or a post-approve/reject refresh must never flip the spinner on, or the pending card a user is about to click would flicker out from under their cursor every second (same reason ModelPage's own refreshWorkflowState never touches a loading flag at all).
     const refreshApprovals = useCallback(async (forTenantId, showSpinner) => {
         if (!forTenantId) {
             setApprovals([]);
@@ -73,8 +55,7 @@ const GovernanceApprovalsPage = () => {
         }
     }, []);
 
-    // switching tenants must not leave the previous tenant's approvals on screen for even one
-    // render - clear synchronously, then refetch for the new tenant
+    // switching tenants must not leave the previous tenant's approvals on screen for even one render - clear synchronously, then refetch for the new tenant
     useEffect(() => {
         setApprovals([]);
         refreshApprovals(tenantId, true);
@@ -89,10 +70,7 @@ const GovernanceApprovalsPage = () => {
 
     const shouldPoll = Boolean(tenantId) && pending.length > 0;
 
-    // Same pattern as ModelPage: gated on a boolean, immediate fetch when polling starts, plain
-    // setInterval at 1000ms, cleared on cleanup. No SSE/WebSocket infrastructure exists in this
-    // backend (confirmed in the Policies page's own audit) - polling is the correct choice here,
-    // not a shortcut around a real-time mechanism that was already available.
+    // Same pattern as ModelPage: gated on a boolean, immediate fetch when polling starts, plain setInterval at 1000ms, cleared on cleanup. No SSE/WebSocket infrastructure exists in this backend (confirmed in the Policies page's own audit) - polling is the correct choice here, not a shortcut around a real-time mechanism that was already available.
     useEffect(() => {
         if (!shouldPoll) return undefined;
         let cancelled = false;
@@ -126,9 +104,7 @@ const GovernanceApprovalsPage = () => {
         } catch (err) {
             setStatus({ type: "err", text: `${action === "approve" ? "Approve" : "Reject"} failed: ` + errorText(err) });
         } finally {
-            // refresh from the backend regardless of success or failure - the list is what's
-            // authoritative, not any assumption about what the call did. No spinner here either -
-            // this refresh follows a click the user is still looking at the result of.
+            // refresh from the backend regardless of success or failure - the list is what's authoritative, not any assumption about what the call did. No spinner here either - this refresh follows a click the user is still looking at the result of.
             await refreshApprovals(tenantId, false);
             setBusy(false);
         }

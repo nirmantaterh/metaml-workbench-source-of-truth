@@ -230,13 +230,7 @@ public class TwinModelGenerator {
         }
     }
 
-    // The builder attaches a full BPMNDI diagram (one BPMNShape/BPMNEdge per node/flow) whether
-    // asked for or not, same as it does for messages/loop ids above - but with a random id per
-    // call, which used to mean dropping the whole diagram rather than keeping it in sync. Deriving
-    // each DI element's id from the already-stable twin element id it depicts (bpmnElement) keeps
-    // this deterministic like the rest of generate(), and - unlike dropping it - leaves the twin
-    // renderable in Cockpit, which matters once a generated proxy and its twin are actually running
-    // side by side over RabbitMQ and someone wants to watch where each one currently is.
+    // Derives stable BPMNDI element identifiers for Cockpit visualization.
     private static void stabilizeDiagramInterchange(BpmnModelInstance twin) {
         for (BpmnShape shape : twin.getModelElementsByType(BpmnShape.class)) {
             BaseElement depicted = shape.getBpmnElement();
@@ -368,34 +362,7 @@ public class TwinModelGenerator {
         return wrapped;
     }
 
-    // ReceiveTask and ServiceTask joined this list because this generator is now reached from two
-    // very different places. It was written for the Workbench-side twin launch, where the models
-    // were hand-picked and made of user tasks. It is now ALSO called for every generated Target
-    // Harness Platform, against whatever the user actually modelled - and a manufacturing process
-    // realistically contains service tasks (the professor's own worked example is a serviceTask with
-    // delegateExpression="${calculateInterestService}"). Without ServiceTask here, Generate failed
-    // outright for those models; without ReceiveTask, a process could not express "wait here for the
-    // twin's answer" at all. Both are exactly what that throw means by "extend the generator to
-    // handle it".
-    //
-    // InclusiveGateway: same split/join semantics as parallel+exclusive combined. The twin copies
-    // conditions and default flows verbatim, so the same branches fire as long as variables are
-    // bridged from the original. Conditions that depend on twin-local variables are a deployment
-    // concern, not a generation concern - same as ExclusiveGateway, which is already supported.
-    //
-    // EventBasedGateway + IntermediateCatchEvent: the gateway itself is a pure wait-for-first-event
-    // dispatcher; the downstream catch events hold the actual event definitions. Both are structural
-    // BPMN that Camunda executes natively - no Java class needed. copyEventDefinitions() carries
-    // the original's event definitions (message, signal, timer, condition) into the twin's bare
-    // catch events after the builder constructs them. Runtime note: the twin's catch events fire on
-    // their own subscriptions; the bridge does not relay intermediate events today, so they need
-    // independent triggering.
-    //
-    // ComplexGateway: deliberately NOT here. Camunda 7.22.0 has no execution behavior for complex
-    // gateways (no engine class exists in camunda-engine-7.22.0.jar) and AbstractFlowNodeBuilder
-    // has no complexGateway() method. The model API defines the XML type but the engine rejects
-    // it at deployment. Generating one into the twin would just move the failure from generation
-    // time to deploy time with a worse error message.
+    // Supported flow node types for Twin process transformation (Tasks, CallActivities, Gateways).
     private static boolean isSupported(FlowNode node) {
         if (node instanceof UserTask || node instanceof ReceiveTask || node instanceof ServiceTask
                 || node instanceof SendTask || node instanceof ManualTask || node instanceof ScriptTask
@@ -415,11 +382,7 @@ public class TwinModelGenerator {
         if (node instanceof UserTask task) {
             return appendSynchronizedActivity(at, task);
         }
-        // Receive and service tasks both become the same sync-then-automate pair the twin uses for
-        // every activity: the twin waits on its own TwinAdvance_<id> message and then runs the twin
-        // automation delegate. That keeps the twin advancing in lockstep with the original under the
-        // bridge's control, and - importantly for a service task - means the twin does NOT re-run
-        // the original's own delegate, which would execute the real business logic a second time.
+        // Transformed into twin receive-automation pairs to maintain lockstep without re-executing delegates.
         if (node instanceof ReceiveTask || node instanceof ServiceTask) {
             return appendSyncThenAutomate(at, id);
         }
@@ -432,9 +395,7 @@ public class TwinModelGenerator {
         if (node instanceof InclusiveGateway) {
             return at.inclusiveGateway(id);
         }
-        // Camunda 7.22.0's builder has eventBasedGateway() but NOT eventBasedGateway(String id),
-        // unlike the other gateway types. The no-arg call creates the element with a random id;
-        // .id() sets the stable one immediately after.
+        // Sets stable ID immediately after creating EventBasedGateway element.
         if (node instanceof EventBasedGateway) {
             return at.eventBasedGateway().id(id);
         }
@@ -610,9 +571,7 @@ public class TwinModelGenerator {
         }
     }
 
-    // Preserves construct-specific details in the twin BPMN (event definitions for catch/throw/end
-    // events, scriptFormat/script for ScriptTask, decisionRef for BusinessRuleTask, calledElement
-    // for CallActivity, and nested flow elements for SubProcess) via DOM element adoption.
+    // Copies construct-specific BPMN details via DOM element adoption.
     private static void copyConstructDetails(BpmnModelInstance original, BpmnModelInstance twin,
             Set<String> copied) {
         Document sourceDoc = (Document) original.getDocument().getDomSource().getNode();

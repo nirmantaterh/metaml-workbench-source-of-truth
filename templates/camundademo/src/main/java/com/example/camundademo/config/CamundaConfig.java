@@ -57,12 +57,9 @@ public class CamundaConfig {
         configuration.setJobExecutorActivate(camundaProcessProperties.isJobExecutorActivate());
         configuration.setDeploymentResources(deploymentResources);
 
-        // Added configurations
-        // configuration.setHistory("full");
-        // configuration.setSkipHistoryOptimisticLockingExceptions(true);
+        // Added configurations configuration.setHistory("full"); configuration.setSkipHistoryOptimisticLockingExceptions(true);
         configuration.setSkipIsolationLevelCheck(camundaProcessProperties.isSkipIsolationLevelCheck()); // Ensure this
-                                                                                                        // property is
-                                                                                                        // set to true
+                                                                                                        // property is set to true
         configuration.setEnforceHistoryTimeToLive(camundaProcessProperties.isEnforceHistoryTimeToLive());
 
         // Load BPMN files from the classpath

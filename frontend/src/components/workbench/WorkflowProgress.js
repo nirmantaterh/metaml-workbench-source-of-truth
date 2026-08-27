@@ -4,8 +4,7 @@ import "./WorkflowProgress.css";
 const PHASES = ["MODEL", "GENERATE", "LAUNCH"];
 const PHASE_LABELS = { MODEL: "Model", GENERATE: "Generate", LAUNCH: "Launch" };
 
-// glyph + short caption per status - no new state mechanism, this is purely how the
-// already-fetched status string (see ModelPage's refreshWorkflowState) gets drawn
+// glyph + short caption per status - no new state mechanism, this is purely how the already-fetched status string (see ModelPage's refreshWorkflowState) gets drawn
 const STATUS_ICON = {
     PENDING: "○", // ○
     IN_PROGRESS: "●", // ●
@@ -15,15 +14,7 @@ const STATUS_ICON = {
 };
 const STATUS_CAPTION = { PENDING: "Pending", IN_PROGRESS: "In progress", FAILED: "Failed" };
 
-// New scope item 1's breadcrumb, redone to consume real backend state instead of guessing from
-// local component variables (see WorkbenchService.getWorkflowState / the backend's
-// WorkflowStateTracker) - this component does no inference of its own, it only renders whatever
-// stage/status pairs it's handed. currentStage and stages both come straight off the API response
-// shape: { currentStage: "GENERATE", stages: { MODEL: {status, timestamp, detail}, ... } }.
-//
-// Phase 2B: same data, just drawn as a compact icon row (✓ / ● / ○ / ✕) instead of colored
-// pill badges, with a short caption next to whichever stage is current - that's the only stage
-// worth a word of text next to it, the rest already say enough with the icon alone.
+// New scope item 1's breadcrumb, redone to consume real backend state instead of guessing from local component variables (see WorkbenchService.getWorkflowState / the backend's WorkflowStateTracker) - this component does no inference of its own, it only renders whatever stage/status pairs it's handed. currentStage and stages both come straight off the API response shape: { currentStage: "GENERATE", stages: { MODEL: {status, timestamp, detail}, ... } }. Phase 2B: same data, just drawn as a compact icon row (✓ / ● / ○ / ✕) instead of colored pill badges, with a short caption next to whichever stage is current - that's the only stage worth a word of text next to it, the rest already say enough with the icon alone.
 const WorkflowProgress = ({ currentStage, stages }) => {
     const statusFor = (phase) => stages?.[phase]?.status || "PENDING";
 

@@ -1,11 +1,6 @@
 package com.example.camundademo.messaging;
 
-/**
- * Single source of truth for the Target Harness RabbitMQ topology.
- *
- * <p>Uses the {@code <domain>.exchange} and {@code <domain>.<kind>[.<consumer>]}
- * naming convention. All exchanges are direct and route by exact key.
- */
+// Single source of truth for the Target Harness RabbitMQ topology. <p>Uses the {@code <domain>.exchange} and {@code <domain>.<kind>[.<consumer>]} naming convention. All exchanges are direct and route by exact key.
 public final class MessagingTopology {
 
     private MessagingTopology() {

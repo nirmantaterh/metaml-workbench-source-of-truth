@@ -19,9 +19,7 @@ public class ProcessModelArchive {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // ProcessModel's own id (client-supplied or a generated UUID) - the workbench's
-    // Model/Generate/Launch pipeline is keyed on this string everywhere, so it stays
-    // the join key back to that world instead of this row's own numeric id.
+    // ProcessModel string identifier key.
     @Column(nullable = false, unique = true)
     private String modelId;
 
@@ -34,8 +32,7 @@ public class ProcessModelArchive {
     @Column(length = 255)
     private String bpmnFilePath;
 
-    // Both null for the ordinary single-BPMN path. Set only when the model was saved with its own
-    // independently authored second process - see ProcessModel.authoredTwinBpmnXml.
+    // Optional independently authored twin BPMN XML.
     @Lob
     private String twinBpmnXml;
 

@@ -1,18 +1,11 @@
 package com.metaml.workbench.codegen;
 
-/**
- * Reports a BPMN {@code delegateExpression} that names no delegate bean.
- *
- * <p>Carries the BPMN element ID so the UI can locate the exact error.
- * Blank expressions can pass model save but fail only when the task executes,
- * so generation fails earlier. An absent attribute is left to Camunda validation.
- */
+// Reports a BPMN {@code delegateExpression} that names no delegate bean. <p>Carries the BPMN element ID so the UI can locate the exact error. Blank expressions can pass model save but fail only when the task executes, so generation fails earlier. An absent attribute is left to Camunda validation.
 public class InvalidDelegateExpressionException extends IllegalArgumentException {
 
     private static final long serialVersionUID = 1L;
 
-    // "" would hide the details panel's "Go to error" button, which only renders when this field
-    // is non-blank.
+    // "" would hide the details panel's "Go to error" button, which only renders when this field is non-blank.
     private static final String BLANK_LABEL = "(blank)";
 
     private final String bpmnElementId;
@@ -30,8 +23,7 @@ public class InvalidDelegateExpressionException extends IllegalArgumentException
         this.rawExpression = rawExpression == null || rawExpression.isBlank() ? BLANK_LABEL : rawExpression;
     }
 
-    // Two expressions sanitize to the same class name; only one can be written, so the element
-    // named here is the one that loses its bean.
+    // Two expressions sanitize to the same class name; only one can be written, so the element named here is the one that loses its bean.
     public static InvalidDelegateExpressionException collision(String bpmnElementId, String taskName,
             String rawExpression, String otherExpression, String className) {
         return new InvalidDelegateExpressionException(bpmnElementId, taskName, rawExpression,

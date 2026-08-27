@@ -1,11 +1,6 @@
 package com.metaml.workbench.generation;
 
-// A launch failure that knows the port it was actually attempting (and, when the generated
-// process exited on its own rather than just timing out, its exit code) - every launch failure
-// used to carry only a plain message. Extends IllegalStateException, not RuntimeException
-// directly, so existing callers/tests that only ever asserted "launch() throws
-// IllegalStateException with such-and-such message" keep working unchanged - this is strictly
-// additive information riding along on the same exception, not a new failure mode.
+// Exception thrown when launching a generated project fails.
 public class GeneratedProjectLaunchException extends IllegalStateException {
 
     private final int port;
@@ -21,8 +16,7 @@ public class GeneratedProjectLaunchException extends IllegalStateException {
         return port;
     }
 
-    // null when the generated process never actually exited on its own (a pure listen timeout
-    // rather than a crash) - there's no real exit code to report in that case, not a missing one
+    // Optional process exit code (null if execution timed out).
     public Integer exitCode() {
         return exitCode;
     }

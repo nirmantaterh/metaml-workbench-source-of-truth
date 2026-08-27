@@ -18,10 +18,7 @@ import com.metaml.workbench.model.Project;
 import com.metaml.workbench.repository.ProcessModelArchiveRepository;
 import com.metaml.workbench.repository.ProjectRepository;
 
-// Backs ProcessModel with the H2-persisted ProcessModelArchive/Project entities instead of the
-// workbench-state.json snapshot. One archive row per saved ProcessModel, grouped under a Project
-// found or created by that model's name - the plain ProcessModel workflow has no separate notion
-// of a project to select one by.
+// Backs ProcessModel with the H2-persisted ProcessModelArchive/Project entities instead of the workbench-state.json snapshot. One archive row per saved ProcessModel, grouped under a Project found or created by that model's name - the plain ProcessModel workflow has no separate notion of a project to select one by.
 @Component
 public class ProcessModelArchiveStore {
 
@@ -38,14 +35,12 @@ public class ProcessModelArchiveStore {
         return save(model, bpmnFilePath, null, null);
     }
 
-    // twinBpmnFilePath is null for the ordinary single-BPMN path. Set only alongside
-    // model.hasAuthoredTwin() - see ProcessModel.authoredTwinBpmnXml.
+    // twinBpmnFilePath is null for the ordinary single-BPMN path. Set only alongside model.hasAuthoredTwin() - see ProcessModel.authoredTwinBpmnXml.
     public ProcessModelArchive save(ProcessModel model, Path bpmnFilePath, Path twinBpmnFilePath) {
         return save(model, bpmnFilePath, twinBpmnFilePath, null);
     }
 
-    // projectId is supplied by the Project UI.  A null value is retained only for legacy direct
-    // service callers and old persisted-workflow tests; new HTTP requests must provide it.
+    // projectId is supplied by the Project UI.  A null value is retained only for legacy direct service callers and old persisted-workflow tests; new HTTP requests must provide it.
     public ProcessModelArchive save(ProcessModel model, Path bpmnFilePath, Path twinBpmnFilePath, Long projectId) {
         Project project = projectId == null
                 ? projectRepository.findByName(model.getName())
@@ -79,10 +74,7 @@ public class ProcessModelArchiveStore {
                 .toList();
     }
 
-    // Unlike findAll() above, keeps the project association - toProcessModel() has to drop it
-    // (ProcessModel has no notion of a project), but the Transmute > Generate / Launch pickers
-    // need exactly that to show which project each row belongs to, so this reads straight off
-    // the archive instead of round-tripping through ProcessModel.
+    // Unlike findAll() above, keeps the project association - toProcessModel() has to drop it (ProcessModel has no notion of a project), but the Transmute > Generate / Launch pickers need exactly that to show which project each row belongs to, so this reads straight off the archive instead of round-tripping through ProcessModel.
     public List<ProcessModelSummaryDto> findAllSummaries() {
         return archiveRepository.findAll().stream()
                 .sorted(Comparator.comparing(ProcessModelArchive::getCreatedAt,
@@ -94,8 +86,7 @@ public class ProcessModelArchiveStore {
                 .toList();
     }
 
-    // derived delete queries run as a select-then-remove-each, which needs its own transaction
-    // rather than the one save() gets for free from JpaRepository's own per-method wrapping
+    // derived delete queries run as a select-then-remove-each, which needs its own transaction rather than the one save() gets for free from JpaRepository's own per-method wrapping
     @Transactional
     public void deleteByModelId(String modelId) {
         archiveRepository.deleteByModelId(modelId);

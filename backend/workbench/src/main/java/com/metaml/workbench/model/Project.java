@@ -27,10 +27,7 @@ public class Project {
     @Column(nullable = false)
     private String name;
 
-    // Assigned after H2 has generated id, e.g. PROJECT-000001.  This is the stable,
-    // human-friendly identifier shown in the Project UI.
-    // Nullable only for rows created by earlier releases before this column existed; every new
-    // project is assigned a value in ProjectServiceImpl immediately after its id is generated.
+    // Stable, human-friendly identifier (e.g. PROJECT-000001) shown in the Project UI.
     @Column(unique = true, length = 50)
     private String displayName;
 

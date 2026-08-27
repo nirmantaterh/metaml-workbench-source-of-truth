@@ -6,15 +6,7 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-/**
- * Coordinates the Twin side of the Manufacturing → Gateway → Manufacturing flow.
- *
- * <pre>
- * Manufacturing → Twin → Gateway → Twin → Manufacturing
- * </pre>
- *
- * <p>Preserves the original correlation ID while waiting for the Gateway QC result.
- */
+// Coordinates the Twin side of the Manufacturing → Gateway → Manufacturing flow. <pre> Manufacturing → Twin → Gateway → Twin → Manufacturing </pre> <p>Preserves the original correlation ID while waiting for the Gateway QC result.
 @Component
 @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
 public class TwinMessageListener {

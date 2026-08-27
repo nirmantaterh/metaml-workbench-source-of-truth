@@ -3,8 +3,7 @@ package com.metaml.workbench.model;
 import java.util.Collection;
 import java.util.List;
 
-// Shared naming contract: evolve writes evolvedAgent_* on the twin, AgentExecutionDelegate reads
-// it on the original. Both ends must build the same name.
+// Naming conventions for agent execution variables on twin and original processes.
 public final class AgentVariables {
 
     // predates the generic mechanism; bare name kept because Gateway_ChecksPassed in the citi model reads it

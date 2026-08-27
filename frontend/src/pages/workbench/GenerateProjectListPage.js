@@ -5,17 +5,12 @@ import { listModelSummaries, generateProject } from "../../services/workbench/Wo
 import ProcessSpinner from "../../components/common/ProcessSpinner";
 import NoDataAvailable from "../../components/common/NoDataAvailable";
 
-// Transmute > Generate: every saved process, across every project, one row each - clone the
-// RedCollarTP Target Platform template (portal + proxy + twin), scan both BPMNs for delegates
-// (activities) and events, and generate the matching Java classes. Picking a process here is the
-// whole point of this page; Model itself never triggers this anymore (see ModelPage's own
-// comment) since Generate has nothing to do until there's a full catalogue to choose from.
+// Transmute > Generate: every saved process, across every project, one row each - clone the RedCollarTP Target Platform template (portal + proxy + twin), scan both BPMNs for delegates (activities) and events, and generate the matching Java classes. Picking a process here is the whole point of this page; Model itself never triggers this anymore (see ModelPage's own comment) since Generate has nothing to do until there's a full catalogue to choose from.
 const GenerateProjectListPage = () => {
     const [processes, setProcesses] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    // modelId -> { type: 'busy'|'ok'|'err', text }. Per-row, not a single page-wide status - one
-    // process finishing (or failing) must never overwrite what the row above it just reported.
+    // modelId -> { type: 'busy'|'ok'|'err', text }. Per-row, not a single page-wide status - one process finishing (or failing) must never overwrite what the row above it just reported.
     const [rowStatus, setRowStatus] = useState({});
 
     const load = useCallback(async () => {
@@ -98,9 +93,7 @@ const GenerateProjectListPage = () => {
                                             </Button>
                                         </td>
                                     </tr>
-                                    {/* Own row below the button, same reasoning as ModelPage's own
-                                        status row - a per-process result never shares a line with
-                                        the button that produced it. */}
+                                    {// Own row below the button, same reasoning as ModelPage's own status row - a per-process result never shares a line with the button that produced it. */}
                                     {rs && (
                                         <tr>
                                             <td colSpan={4} className="pt-0">

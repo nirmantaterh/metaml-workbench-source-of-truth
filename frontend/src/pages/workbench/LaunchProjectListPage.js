@@ -6,17 +6,11 @@ import { openCockpitUrl } from "../../components/workbench/openCockpitUrl";
 import ProcessSpinner from "../../components/common/ProcessSpinner";
 import NoDataAvailable from "../../components/common/NoDataAvailable";
 
-// Transmute > Launch: every process that has already been through Generate, one row each - run
-// 'mvn clean install -DskipTests' then 'mvnw spring-boot:run' (see SpringBootProjectLauncher) to
-// actually deploy the generated Target Platform, then immediately start a paired proxy + twin
-// instance on it and open Cockpit - one click does the whole thing, no separate "now start it"
-// step. A process that hasn't been generated yet has nothing to launch, so it's filtered out here
-// rather than shown disabled - Transmute > Generate is where that step lives.
+// Transmute > Launch: every process that has already been through Generate, one row each - run 'mvn clean install -DskipTests' then 'mvnw spring-boot:run' (see SpringBootProjectLauncher) to actually deploy the generated Target Platform, then immediately start a paired proxy + twin instance on it and open Cockpit - one click does the whole thing, no separate "now start it" step. A process that hasn't been generated yet has nothing to launch, so it's filtered out here rather than shown disabled - Transmute > Generate is where that step lives.
 const LaunchProjectListPage = () => {
     const [rows, setRows] = useState(null); // null while loading, [] once loaded (possibly empty)
     const [error, setError] = useState(null);
-    // modelId -> { phase: 'launching'|'pairing'|'done', launchedBaseUrl, port, processKey,
-    //              pairResult, pairWarning, error }
+    // modelId -> { phase: 'launching'|'pairing'|'done', launchedBaseUrl, port, processKey, pairResult, pairWarning, error }
     const [rowState, setRowState] = useState({});
 
     const load = useCallback(async () => {
@@ -25,8 +19,7 @@ const LaunchProjectListPage = () => {
         try {
             const response = await listModelSummaries();
             const processes = response.data || response || [];
-            // A process only belongs on this page once GENERATE has actually completed - that's
-            // also where the generated project id (what launchProject needs) comes from.
+            // A process only belongs on this page once GENERATE has actually completed - that's also where the generated project id (what launchProject needs) comes from.
             const withGenerateState = await Promise.all(processes.map(async (process) => {
                 try {
                     const stateRes = await getWorkflowState(process.id);
@@ -52,14 +45,7 @@ const LaunchProjectListPage = () => {
         setRowState((prev) => ({ ...prev, [modelId]: { ...prev[modelId], ...patch } }));
     };
 
-    // One click, three steps: deploy the generated Target Platform, then - on the SAME
-    // businessKey - start a proxy instance and a twin instance on its own REST API (not the
-    // Workbench backend; a fully separate app), which is what SignalBroadcaster/PairRegistry use
-    // to recognize the two as partners and actually synchronize their shared signals over
-    // RabbitMQ instead of each running unpaired, then open Cockpit to watch them. Only
-    // RedCollarTP-style generated platforms expose /api/proxy/start and /api/twin/start - a
-    // generic Target Harness Platform doesn't, so a pairing failure is a soft warning (the app is
-    // launched and reachable either way), not a Launch failure.
+    // One click, three steps: deploy the generated Target Platform, then - on the SAME businessKey - start a proxy instance and a twin instance on its own REST API (not the Workbench backend; a fully separate app), which is what SignalBroadcaster/PairRegistry use to recognize the two as partners and actually synchronize their shared signals over RabbitMQ instead of each running unpaired, then open Cockpit to watch them. Only RedCollarTP-style generated platforms expose /api/proxy/start and /api/twin/start - a generic Target Harness Platform doesn't, so a pairing failure is a soft warning (the app is launched and reachable either way), not a Launch failure.
     const handleLaunch = async (row) => {
         patchRow(row.id, {
             phase: "launching", error: null, pairWarning: null, launchedBaseUrl: null, pairResult: null,
@@ -158,8 +144,7 @@ const LaunchProjectListPage = () => {
                                             </Button>
                                         </td>
                                     </tr>
-                                    {/* Own row below the button - result, never sharing a line
-                                        with the button that produced it. */}
+                                    {// Own row below the button - result, never sharing a line with the button that produced it. */}
                                     {(rs.error || rs.launchedBaseUrl) && (
                                         <tr>
                                             <td colSpan={4} className="pt-0">

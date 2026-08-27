@@ -18,9 +18,7 @@ public class AgentAvailabilityResult {
     private String reason;
     private Map<String, Object> outputs;
 
-    // the shape this had back when a raised risk flag was the only thing an agent could say.
-    // Plenty of callers still only care about that one, and the stubbed catalogs in the tests
-    // are written against it.
+    // the shape this had back when a raised risk flag was the only thing an agent could say. Plenty of callers still only care about that one, and the stubbed catalogs in the tests are written against it.
     public AgentAvailabilityResult(String agentType, boolean available, String agentName,
             String reason, boolean riskFlagged) {
         this(agentType, available, agentName, reason,

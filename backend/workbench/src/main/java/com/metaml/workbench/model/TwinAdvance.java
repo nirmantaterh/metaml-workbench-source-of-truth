@@ -4,9 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-// What happened when we tried to move the twin's own token one activity on. Not advancing is the
-// normal case far more often than it's a problem: gateways and end events have no message of their
-// own, and neither has a twin activity the original has already walked past.
+// What happened when we tried to move the twin's own token one activity on. Not advancing is the normal case far more often than it's a problem: gateways and end events have no message of their own, and neither has a twin activity the original has already walked past.
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

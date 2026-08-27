@@ -4,9 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-// Same shape as SaveProcessModelRequest, plus the second, independently authored BPMN (e.g. a
-// Twin process modeled and supplied separately from the primary/Manufacturing one) - see
-// WorkbenchService.saveProcessModelWithAuthoredTwin.
+// Request payload for saving process models with an independently authored twin.
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

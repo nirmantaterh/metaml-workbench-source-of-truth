@@ -33,14 +33,7 @@ import com.metaml.wbapi.payload.response.ApiResponse;
 import com.metaml.wbapi.utils.WorkbenchUrlMapping;
 import com.metaml.wbapi.utils.FeedbackMessage;
 
-// Phase 1 (see the Phase 0 architecture audit): tenant identity + persisted, versioned,
-// tenant-scoped policies. Phase 2 adds evaluate() below - the policy decision engine, decides
-// only, executes nothing. No enforcement wiring, no UI - just the foundation later phases
-// build on. Same three-catch error-mapping style as GovernanceController right next to it:
-// IllegalArgumentException/IllegalStateException are caller mistakes (400/409),
-// NoSuchElementException is a real "not found or not yours" (404 - see TenantPolicyService for
-// why those two cases share one message), PolicyEvaluationException is a rule the engine
-// couldn't interpret (500 - it's a policy-authoring defect, not a bad request shape).
+// Manages tenant identities, versioned governance policies, and policy evaluation rules.
 @RestController
 @RequestMapping(WorkbenchUrlMapping.GOVERNANCE)
 @RequiredArgsConstructor
@@ -176,8 +169,7 @@ public class TenantPolicyController {
         }
     }
 
-    // decides only - does not execute the action, does not pause anything. See
-    // PolicyDecisionEngine.
+    // Evaluates a governance request against active policies.
     @PostMapping(WorkbenchUrlMapping.GOVERNANCE_EVALUATE)
     public ResponseEntity<ApiResponse> evaluate(@RequestBody EvaluateRequest request) {
         try {

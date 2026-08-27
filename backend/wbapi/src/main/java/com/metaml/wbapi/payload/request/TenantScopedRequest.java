@@ -4,9 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-// null tenantId means "this is a platform-level operation" - see TenantPolicyService's own
-// header comment on why that is the one flag distinguishing platform from tenant, not a
-// separate request shape.
+// Base request shape for tenant-scoped governance operations.
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

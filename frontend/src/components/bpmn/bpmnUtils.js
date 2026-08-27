@@ -30,8 +30,7 @@ function createModdle(moddle, type, props, parent) {
     return el;
 }
 
-// takes the container type and the name of its child list, since agent outputs hang off the same
-// extensionElements as the data items and only differ in what they're called
+// takes the container type and the name of its child list, since agent outputs hang off the same extensionElements as the data items and only differ in what they're called
 function ensureContainer(modeler, element, containerType, listProperty) {
     const modeling = modeler.get("modeling");
     const moddle = modeler.get("moddle");
@@ -75,17 +74,10 @@ export function removeDataItem(modeler, element, item) {
     modeler.get("modeling").updateModdleProperties(element, container, { items });
 }
 
-// An agent reports whatever its catalog entry says it reports, and the backend lands each of
-// those on the process as agentOutput_<activityId>_<outputName>. That name is unambiguous but
-// long, and a gateway condition has to be typed by hand. A declaration here says "also publish
-// this output as <variable>", which is how a model gets a short name to branch on without
-// anybody writing Java for it.
+// An agent reports whatever its catalog entry says it reports, and the backend lands each of those on the process as agentOutput_<activityId>_<outputName>. That name is unambiguous but long, and a gateway condition has to be typed by hand. A declaration here says "also publish this output as <variable>", which is how a model gets a short name to branch on without anybody writing Java for it.
 const AGENT_OUTPUT_CAPABLE = ["bpmn:Task", "bpmn:Activity", "bpmn:SubProcess"];
 
-// deliberately not gated on the task already carrying the agentExecutionDelegate listener.
-// canHoldData next door goes on element type alone, and a declaration is as inert as a data item
-// until something runs against it, so making the section come and go with unrelated wiring would
-// only get in the way while a model is half built.
+// deliberately not gated on the task already carrying the agentExecutionDelegate listener. canHoldData next door goes on element type alone, and a declaration is as inert as a data item until something runs against it, so making the section come and go with unrelated wiring would only get in the way while a model is half built.
 export function canDeclareAgentOutputs(element) {
     if (!element) return false;
     return AGENT_OUTPUT_CAPABLE.some((type) => is(element, type));
@@ -125,8 +117,7 @@ export function removeAgentOutput(modeler, element, output) {
     modeler.get("modeling").updateModdleProperties(element, container, { outputs });
 }
 
-// only these four declare `default` in the moddle. do NOT widen to bpmn:Gateway - on a
-// parallel one it serialises as default="[object Object]" and the whole file is invalid.
+// only these four declare `default` in the moddle. do NOT widen to bpmn:Gateway - on a parallel one it serialises as default="[object Object]" and the whole file is invalid.
 const DEFAULT_FLOW_SOURCES = [
     "bpmn:ExclusiveGateway",
     "bpmn:InclusiveGateway",

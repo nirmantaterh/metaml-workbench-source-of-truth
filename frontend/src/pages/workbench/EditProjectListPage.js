@@ -8,11 +8,7 @@ import ProcessSpinner from "../../components/common/ProcessSpinner";
 import NoDataAvailable from "../../components/common/NoDataAvailable";
 import DeleteConfirmationModal from "../../components/modals/DeleteConfirmationModal";
 
-// New scope item 1 (Navigation & UI): "Edit Existing Project" needs something to actually pick
-// from, not a box where you paste in an id you already have to know from somewhere else.
-//
-// Delete lives here rather than in the editor: this is the page that already answers "which of my
-// models is this", which is the question you have to have answered before deleting one.
+// New scope item 1 (Navigation & UI): "Edit Existing Project" needs something to actually pick from, not a box where you paste in an id you already have to know from somewhere else. Delete lives here rather than in the editor: this is the page that already answers "which of my models is this", which is the question you have to have answered before deleting one.
 const EditProjectListPage = () => {
     const [models, setModels] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -20,12 +16,9 @@ const EditProjectListPage = () => {
     // the model the confirmation modal is currently asking about, null when it's closed
     const [pendingDelete, setPendingDelete] = useState(null);
     const [deleting, setDeleting] = useState(false);
-    // kept separate from `error` above: that one means "the list itself failed to load" and
-    // replaces the whole table, whereas a refused delete leaves a perfectly good list on screen
-    // and just needs to say why nothing happened
+    // kept separate from `error` above: that one means "the list itself failed to load" and replaces the whole table, whereas a refused delete leaves a perfectly good list on screen and just needs to say why nothing happened
     const [deleteError, setDeleteError] = useState(null);
-    // 409 specifically means "a generated app of this model is still running or launching", which
-    // is the one delete refusal the user can act on - and acting on it happens on another page
+    // 409 specifically means "a generated app of this model is still running or launching", which is the one delete refusal the user can act on - and acting on it happens on another page
     const [deleteBlockedByRunningApp, setDeleteBlockedByRunningApp] = useState(false);
 
     const refresh = useCallback(async () => {
@@ -55,8 +48,7 @@ const EditProjectListPage = () => {
             setPendingDelete(null);
             await refresh();
         } catch (err) {
-            // the 409 case (a generated app is still running) is a normal, actionable answer
-            // rather than a failure - the backend's own message already says what to do about it
+            // the 409 case (a generated app is still running) is a normal, actionable answer rather than a failure - the backend's own message already says what to do about it
             setDeleteError(err.response?.data?.message || err.message);
             setDeleteBlockedByRunningApp(err.response?.status === 409);
             setPendingDelete(null);

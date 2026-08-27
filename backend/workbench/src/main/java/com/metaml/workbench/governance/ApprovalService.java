@@ -13,24 +13,13 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-// Phase 4: the persisted state machine behind a REQUIRE_APPROVAL decision. Deliberately knows
-// nothing about Twins, Camunda, or the node manager - same separation TenantPolicyService keeps
-// from BPMN. WorkbenchServiceImpl is the one place that both creates an Approval (when
-// PolicyDecisionEngine says REQUIRE_APPROVAL) and actually resumes the twin operation once one
-// is approved; this class only owns whether that resumption is allowed to happen, once, and who
-// is allowed to ask.
-//
-// PENDING -> APPROVED -> COMPLETED|FAILED
-// PENDING -> REJECTED
-// every other transition is rejected, not silently ignored - see markApproved/markRejected.
+// Manages state transitions for governance approval decisions.
 @Component
 public class ApprovalService {
 
     private final Map<String, Approval> approvals = new ConcurrentHashMap<>();
     private final ApprovalStore store;
-    // guards every status transition, same demo-scale single-JVM locking TenantPolicyService
-    // uses for its own writes - not distributed locking, just enough that two simultaneous
-    // approve() calls on the same id can't both win
+    // Synchronizes status transitions across concurrent requests.
     private final Object writeLock = new Object();
 
     public ApprovalService(ApprovalStore store) {
@@ -55,8 +44,7 @@ public class ApprovalService {
         return approval;
     }
 
-    // same "not found" message whether the id doesn't exist or belongs to another tenant - see
-    // TenantPolicyService.requirePolicyAccessible for why that distinction must not leak
+    // Fetches an approval for a specific tenant.
     public Approval get(String approvalId, String tenantId) {
         Approval approval = approvals.get(approvalId);
         if (approval == null || !Objects.equals(approval.tenantId(), tenantId)) {
@@ -75,9 +63,7 @@ public class ApprovalService {
         return result;
     }
 
-    // Phase 5 (crash reconciliation): every tenant's APPROVED approvals, not just one. Only the
-    // startup reconciliation pass needs this - it runs before any caller has a tenant context to
-    // scope by, and an APPROVED approval left over from before a crash could belong to any tenant.
+    // Returns all APPROVED approvals across all tenants for startup reconciliation.
     public List<Approval> listAllApproved() {
         List<Approval> result = new ArrayList<>();
         for (Approval approval : approvals.values()) {
@@ -88,10 +74,7 @@ public class ApprovalService {
         return result;
     }
 
-    // the actual double-execution guard (Phase 4 Step 6/7): only the caller that wins this
-    // PENDING->APPROVED transition is allowed to go on and run the twin operation. A second
-    // concurrent or later call on the same id finds it already APPROVED (or REJECTED, COMPLETED,
-    // FAILED) and is rejected here, before WorkbenchServiceImpl ever touches the twin.
+    // Transition status from PENDING to APPROVED.
     public Approval markApproved(String approvalId, String tenantId) {
         synchronized (writeLock) {
             Approval approval = get(approvalId, tenantId);
@@ -120,9 +103,7 @@ public class ApprovalService {
         }
     }
 
-    // called only by WorkbenchServiceImpl right after it actually ran the resumed operation, on
-    // an id it just itself transitioned to APPROVED - no tenant check needed a second time here,
-    // that already happened in markApproved for this same id
+    // Transition status to COMPLETED after execution.
     public Approval markCompleted(String approvalId, String resolution) {
         return finishExecution(approvalId, ApprovalStatus.COMPLETED, resolution);
     }

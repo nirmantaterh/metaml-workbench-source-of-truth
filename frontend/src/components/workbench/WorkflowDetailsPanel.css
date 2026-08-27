@@ -1,5 +1,4 @@
-/* a compact popover anchored under "View details", not a modal - the canvas underneath stays
-   fully visible and interactive. Positioned by its parent (.bpmn-toolbar-status), see BpmnEditor.css */
+// a compact popover anchored under "View details", not a modal - the canvas underneath stays fully visible and interactive. Positioned by its parent (.bpmn-toolbar-status), see BpmnEditor.css */
 .workflow-details-panel {
     position: absolute;
     top: calc(100% + 4px);
@@ -117,8 +116,7 @@
     margin-top: 0.4rem;
 }
 
-/* muted, text-only - matches the existing "View details" affordance rather than introducing a
-   new button style into an otherwise restrained panel */
+// muted, text-only - matches the existing "View details" affordance rather than introducing a new button style into an otherwise restrained panel */
 .workflow-details-goto-error {
     margin-top: 0.5rem;
     border: 1px solid #e3b6ae;

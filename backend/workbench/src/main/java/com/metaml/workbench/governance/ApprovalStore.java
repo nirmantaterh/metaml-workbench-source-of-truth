@@ -17,11 +17,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
-// Same atomic-write pattern as TenantPolicyStore right next to it: tmp-file-then-move, rewrite
-// the whole file every time, never throw to the caller, an `enabled` flag for tests. A separate
-// file from tenant-policies.json for the same reason that one is separate from
-// workbench-state.json - approvals are their own concern with their own write frequency
-// (resolving one shouldn't rewrite every tenant/policy on disk, and vice versa).
+// Persists approval state to JSON using atomic write-and-replace.
 @Component
 public class ApprovalStore {
 

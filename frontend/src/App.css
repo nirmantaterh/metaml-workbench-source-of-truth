@@ -412,11 +412,7 @@ footer span {
   box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.075) inset, 0px 0px 8px rgba(31, 95, 113, 0.5);
 }
 
-/*
-*************************** 
-Override Bootstrap Classes 
-***************************
-*/
+// ************************** Override Bootstrap Classes **************************
 /* Links */
 a {
   color: rgba(230,190,138,0.8);
@@ -883,11 +879,7 @@ a:focus {
 .sidebar-responsive {
   display: inline !important;
   position: absolute;
-  /*
-    we want the z-index of the sidebar higher so that
-    the charts are not showing over the sidebar 
-    on small screens
-  */
+  // we want the z-index of the sidebar higher so that the charts are not showing over the sidebar on small screens
   z-index: 12 !important;
 }
 /* End Sidebar  */

@@ -1,9 +1,7 @@
 import React from "react";
 import { Modal, Button } from "react-bootstrap";
 
-// Same shape as DeleteConfirmationModal/RemoveConfirmationModal - just parameterized on
-// approve-vs-reject instead of being a second near-identical hardcoded modal, since this page
-// needs both and they only differ in title/verb/button color.
+// Same shape as DeleteConfirmationModal/RemoveConfirmationModal - just parameterized on approve-vs-reject instead of being a second near-identical hardcoded modal, since this page needs both and they only differ in title/verb/button color.
 const ApprovalActionConfirmationModal = ({ show, onHide, onConfirm, action, approval }) => {
     const isApprove = action === "approve";
     return (

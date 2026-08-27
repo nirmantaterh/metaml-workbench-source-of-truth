@@ -16,20 +16,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-// Phase 1 of the enterprise governance work (see the Phase 0 architecture audit): tenant
-// identity plus a persisted, versioned, tenant-scoped policy store. Deliberately NOT a
-// decision engine - nothing here evaluates a PolicyRule against a real request. That is a
-// later phase, once there is a real call site ready to consume ALLOW/DENY/REQUIRE_APPROVAL
-// (the Phase 0 audit traced exactly where that call site should live, inside
-// WorkbenchServiceImpl.runEvolution, after an agent's proposal is known - Phase 1 does not
-// touch that method at all).
-//
-// Trust boundary, stated plainly because the Phase 0 audit was explicit about not glossing
-// over it: every tenantId here is caller-supplied. There is no authentication anywhere in
-// this backend yet (see WebSecurityConfig's own comment - permitAll(), loopback-only). What
-// this class enforces is that one tenant's data can never be reached through another
-// tenant's id - real isolation of DATA. It is not proof of WHO is making the call; that
-// needs real authentication, which is out of scope for this phase.
+// Provides tenant-scoped policy persistence and version management.
 @Component
 public class TenantPolicyService {
 
@@ -37,10 +24,7 @@ public class TenantPolicyService {
     private final Map<String, Policy> policies = new ConcurrentHashMap<>();
     private final Map<String, List<PolicyVersion>> versionsByPolicyId = new ConcurrentHashMap<>();
     private final TenantPolicyStore store;
-    // guards create/add-rule/activate so two racing calls on the same policy can't both win -
-    // see activateVersion's own comment. This is demo-scale single-JVM locking, not
-    // distributed locking; the Phase 0 audit was explicit that inventing the latter here
-    // would be over-engineering for what this system actually is today.
+    // Synchronizes policy modifications across concurrent requests.
     private final Object writeLock = new Object();
 
     public TenantPolicyService(TenantPolicyStore store) {
@@ -87,9 +71,7 @@ public class TenantPolicyService {
 
     // ---- Policies ----
 
-    // a policy for a tenant that doesn't exist would be an orphan nothing could ever list -
-    // getTenant() throws first, same "fail loudly, not silently" choice made everywhere else
-    // in this codebase
+    // Creates a tenant-scoped policy after validating tenant existence.
     public Policy createTenantPolicy(String tenantId, String name) {
         getTenant(tenantId);
         return createPolicy(tenantId, name);
@@ -110,8 +92,7 @@ public class TenantPolicyService {
         return policy;
     }
 
-    // tenant-scoped - only this tenant's own policies, never another tenant's and never
-    // platform policies mixed in silently
+    // Lists tenant-scoped policies for a given tenant ID.
     public List<Policy> listTenantPolicies(String tenantId) {
         getTenant(tenantId);
         return policies.values().stream()
@@ -168,9 +149,7 @@ public class TenantPolicyService {
             PolicyVersion version = requireVersion(versionId);
             requirePolicyAccessible(version.policyId(), tenantId);
             if (version.status() != PolicyVersionStatus.DRAFT) {
-                // someone else may have already activated this exact version (or retired it) -
-                // this is the small optimistic check the Phase 0 audit called for: reject
-                // rather than silently re-activate or double-retire
+                // Reject activation if version is not DRAFT.
                 throw new IllegalStateException("Cannot activate version " + version.versionNumber()
                         + " of policy " + version.policyId() + " - it is " + version.status() + ", not DRAFT");
             }
@@ -181,8 +160,7 @@ public class TenantPolicyService {
                     updated.add(new PolicyVersion(v.id(), v.policyId(), v.versionNumber(),
                             PolicyVersionStatus.ACTIVE, v.rules(), v.createdAt(), Instant.now()));
                 } else if (v.status() == PolicyVersionStatus.ACTIVE) {
-                    // only one ACTIVE version per policy at a time - retire whoever held that
-                    // spot before this activation
+                    // Retire previous active version.
                     updated.add(new PolicyVersion(v.id(), v.policyId(), v.versionNumber(),
                             PolicyVersionStatus.RETIRED, v.rules(), v.createdAt(), v.activatedAt()));
                 } else {
@@ -200,9 +178,7 @@ public class TenantPolicyService {
         return new ArrayList<>(versionsByPolicyId.getOrDefault(policyId, List.of()));
     }
 
-    // deliberately no tenant check here - this is the read path a future decision engine will
-    // use, and platform policies (tenantId null) need to be readable too. Reading only
-    // requires already knowing the policyId; MUTATING one is what the checks above guard.
+    // Resolves active policy version for a policy ID.
     public Optional<PolicyVersion> getActiveVersion(String policyId) {
         return versionsByPolicyId.getOrDefault(policyId, List.of()).stream()
                 .filter(v -> v.status() == PolicyVersionStatus.ACTIVE)
@@ -214,9 +190,7 @@ public class TenantPolicyService {
     private void requirePolicyAccessible(String policyId, String tenantId) {
         Policy policy = policies.get(policyId);
         boolean ownedByCaller = policy != null && Objects.equals(policy.tenantId(), tenantId);
-        // same "not found" message whether the policy doesn't exist or belongs to someone
-        // else - a wrong tenantId must never be able to tell those two cases apart, or the
-        // distinction itself leaks information across the tenant boundary
+        // Validates policy exists and belongs to tenant.
         if (policy == null || !ownedByCaller) {
             throw new NoSuchElementException("Policy not found: " + policyId);
         }

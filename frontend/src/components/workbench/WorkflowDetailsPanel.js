@@ -23,12 +23,7 @@ const formatDuration = (ms) => {
     return `${minutes}m ${remainder}s`;
 };
 
-// Everything here is read straight off the same WorkflowState ModelPage already polls for and
-// hands to WorkflowProgress - this panel doesn't fetch anything of its own and doesn't infer
-// anything the backend didn't say. The one thing it computes locally is "when did the current
-// run of this stage start" and the duration that implies - that's arithmetic over real recorded
-// timestamps (find the IN_PROGRESS event immediately before the stage's current terminal event
-// in its own history), not an invented value.
+// Everything here is read straight off the same WorkflowState ModelPage already polls for and hands to WorkflowProgress - this panel doesn't fetch anything of its own and doesn't infer anything the backend didn't say. The one thing it computes locally is "when did the current run of this stage start" and the duration that implies - that's arithmetic over real recorded timestamps (find the IN_PROGRESS event immediately before the stage's current terminal event in its own history), not an invented value.
 const startOf = (history, stage) => {
     const forStage = (history || []).filter((event) => event.stage === stage);
     for (let i = forStage.length - 2; i >= 0; i--) {
@@ -37,10 +32,7 @@ const startOf = (history, stage) => {
     return null;
 };
 
-// Phase 3C: onGoToError is a synchronous (bpmnElementId) => boolean the caller supplies - true if
-// the modeler found and selected the element. This component has no idea what a bpmn-js modeler
-// is; it renders whatever structured error the backend sent (see StageError) and reports whether
-// the click landed, so it can show the one required message if not.
+// Phase 3C: onGoToError is a synchronous (bpmnElementId) => boolean the caller supplies - true if the modeler found and selected the element. This component has no idea what a bpmn-js modeler is; it renders whatever structured error the backend sent (see StageError) and reports whether the click landed, so it can show the one required message if not.
 const WorkflowDetailsPanel = ({ workflowState, onClose, onGoToError }) => {
     const [notFoundElementId, setNotFoundElementId] = useState(null);
 
@@ -163,8 +155,7 @@ const WorkflowDetailsPanel = ({ workflowState, onClose, onGoToError }) => {
                 ) : (
                     <div className="workflow-details-history">
                         {history.map((event, index) => (
-                            // stage+status can repeat (a retry) so index is part of the key, not a
-                            // workaround for missing data - there's no event id from the backend
+                            // stage+status can repeat (a retry) so index is part of the key, not a workaround for missing data - there's no event id from the backend
                             <div key={`${event.stage}-${event.status}-${index}`} className="workflow-details-history-row">
                                 <span className="workflow-details-history-time">{formatTime(event.timestamp)}</span>
                                 <span className="workflow-details-history-stage">{PHASE_LABELS[event.stage]}</span>

@@ -89,8 +89,7 @@ public class AgentExecutionDelegate implements TaskListener {
         for (String outputName : AgentVariables.outputNamesIn(outputIndex)) {
             Object value = runtimeService.getVariable(twin.getTwinProcessId(),
                     AgentVariables.evolvedAgentOutput(outputName, twinActivityId, loopCounter));
-            // prefix is mandatory: node manager has no auth, so a free-named output could clobber
-            // process variables like transferAmount or identityVerified
+            // prefix is mandatory: node manager has no auth, so a free-named output could clobber process variables like transferAmount or identityVerified
             String outputVariable = AgentVariables.agentOutput(activityId, outputName);
             // whatever the agent said, false included - these names are nobody's default flow
             delegateTask.setVariable(outputVariable, value);
@@ -108,8 +107,7 @@ public class AgentExecutionDelegate implements TaskListener {
             }
         }
 
-        // bare name kept for Gateway_ChecksPassed in the citi model; write-on-true/remove-otherwise
-        // because the gateway takes its default flow when the variable is absent.
+        // bare name kept for Gateway_ChecksPassed in the citi model; write-on-true/remove-otherwise because the gateway takes its default flow when the variable is absent.
         if (Boolean.TRUE.equals(riskFlag)) {
             delegateTask.setVariable(RISK_FLAG_VARIABLE, true);
             workbenchService.recordAgentExecution(twinId, RISK_FLAG_VARIABLE, true);

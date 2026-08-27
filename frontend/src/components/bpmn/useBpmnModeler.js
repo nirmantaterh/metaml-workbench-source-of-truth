@@ -99,8 +99,7 @@ export default function useBpmnModeler({ withPropertiesPanel = true } = {}) {
         };
     }, [bump, withPropertiesPanel]);
 
-    // guard BEFORE importXML - see assertRenderableBpmn: once bpmn-js has been handed a
-    // DI-less model the properties panel is wedged for the rest of the page's life
+    // guard BEFORE importXML - see assertRenderableBpmn: once bpmn-js has been handed a DI-less model the properties panel is wedged for the rest of the page's life
     const importXml = async (xml) => {
         assertRenderableBpmn(xml);
         await modelerRef.current.importXML(xml);

@@ -21,13 +21,7 @@ import { listProjects } from "../../services/workbench/ProjectService";
 import { openCockpitUrl } from "../../components/workbench/openCockpitUrl";
 import { WorkbenchRoutes } from "../../routes";
 
-// Two entry points into Model -> Generate -> Launch, both converging on the same backend calls
-// (generateProject / launchProject - see WorkbenchService): the catalogue pickers
-// (GenerateProjectListPage / LaunchProjectListPage), for choosing among every saved process
-// across every project, and - directly here - the contextual path for whichever one process is
-// already open in the editor, so Save -> Generate -> Launch never requires leaving the canvas.
-// Neither path has its own copy of the generation/launch logic; both just call the same service
-// functions the other one does.
+// Two entry points into Model -> Generate -> Launch, both converging on the same backend calls (generateProject / launchProject - see WorkbenchService): the catalogue pickers (GenerateProjectListPage / LaunchProjectListPage), for choosing among every saved process across every project, and - directly here - the contextual path for whichever one process is already open in the editor, so Save -> Generate -> Launch never requires leaving the canvas. Neither path has its own copy of the generation/launch logic; both just call the same service functions the other one does.
 const ModelPage = () => {
     const { id: routeModelId } = useParams();
     const location = useLocation();
@@ -39,10 +33,7 @@ const ModelPage = () => {
     const twinFileInputRef = useRef(null);
 
     const [modelName, setModelName] = useState("New Process");
-    // Raw XML of an independently authored Twin BPMN, provided alongside the Main diagram in the
-    // canvas above - not rendered in the canvas itself (the modeler only ever shows one process),
-    // just carried alongside it and sent together on Save (see saveModelWithAuthoredTwin). null
-    // means "no Twin attached" -> Save falls back to the original single-BPMN path.
+    // Raw XML of an independently authored Twin BPMN, provided alongside the Main diagram in the canvas above - not rendered in the canvas itself (the modeler only ever shows one process), just carried alongside it and sent together on Save (see saveModelWithAuthoredTwin). null means "no Twin attached" -> Save falls back to the original single-BPMN path.
     const [twinBpmnXml, setTwinBpmnXml] = useState(null);
     const [twinFileName, setTwinFileName] = useState(null);
     // caller-supplied ownership, not auth; "" = unowned
@@ -82,15 +73,11 @@ const ModelPage = () => {
     const [status, setStatus] = useState(null); // { type: 'ok'|'err'|'info', text }
     const [busy, setBusy] = useState(false);
     const [detailsOpen, setDetailsOpen] = useState(false);
-    // The saved id of whichever model this editor currently represents - null until the first
-    // successful Save. Generate needs this (it targets one saved model); Launch instead reads its
-    // own target off workflowState (see generatedProjectId below), same as the catalogue does.
+    // The saved id of whichever model this editor currently represents - null until the first successful Save. Generate needs this (it targets one saved model); Launch instead reads its own target off workflowState (see generatedProjectId below), same as the catalogue does.
     const [currentModelId, setCurrentModelId] = useState(routeModelId || null);
     const [generating, setGenerating] = useState(false);
     const [launching, setLaunching] = useState(false);
-    // Populated only by a successful Launch here - port/processKey/pairing detail, same shape
-    // LaunchProjectListPage keeps per row. Cleared on every new Generate, since a fresh generation
-    // invalidates whatever was previously launched.
+    // Populated only by a successful Launch here - port/processKey/pairing detail, same shape LaunchProjectListPage keeps per row. Cleared on every new Generate, since a fresh generation invalidates whatever was previously launched.
     const [launchInfo, setLaunchInfo] = useState(null);
 
     const refreshWorkflowState = async (modelId) => {
@@ -118,8 +105,7 @@ const ModelPage = () => {
                 await importXml(model.bpmnXml);
                 setModelName(model.name || "Untitled");
                 setTenantId(model.tenantId || "");
-                // Restore a previously-attached Twin so re-saving (e.g. after editing Main) keeps
-                // persisting both, rather than silently dropping back to single-BPMN.
+                // Restore a previously-attached Twin so re-saving (e.g. after editing Main) keeps persisting both, rather than silently dropping back to single-BPMN.
                 if (model.authoredTwinBpmnXml) {
                     setTwinBpmnXml(model.authoredTwinBpmnXml);
                     setTwinFileName("(restored from saved model)");
@@ -223,10 +209,7 @@ const ModelPage = () => {
         }
     };
 
-    // Same call GenerateProjectListPage.handleGenerate makes, scoped to whichever model this
-    // editor already has open instead of a row the user picked from a catalogue. Creates the
-    // Target Platform artifact only - never launches it, never starts Proxy/Twin, never touches
-    // Cockpit. Requires a Save first: Generate targets a saved model id, not in-editor XML.
+    // Same call GenerateProjectListPage.handleGenerate makes, scoped to whichever model this editor already has open instead of a row the user picked from a catalogue. Creates the Target Platform artifact only - never launches it, never starts Proxy/Twin, never touches Cockpit. Requires a Save first: Generate targets a saved model id, not in-editor XML.
     const handleGenerate = async () => {
         if (!currentModelId) {
             setStatus({ type: "err", text: "Save the model before generating - Generate targets a saved model." });
@@ -251,12 +234,7 @@ const ModelPage = () => {
         }
     };
 
-    // Same three steps as LaunchProjectListPage.handleLaunch, same service calls, same soft-warning
-    // handling if this generated platform doesn't expose /api/proxy|twin/start - just scoped to the
-    // one model already open here. generatedProjectId comes from workflowState (the GENERATE
-    // stage's own recorded detail), the same source of truth the catalogue reads, not a separate
-    // value this page invents - so Launch works here even for a model generated in an earlier
-    // session, not only right after clicking Generate above.
+    // Same three steps as LaunchProjectListPage.handleLaunch, same service calls, same soft-warning handling if this generated platform doesn't expose /api/proxy|twin/start - just scoped to the one model already open here. generatedProjectId comes from workflowState (the GENERATE stage's own recorded detail), the same source of truth the catalogue reads, not a separate value this page invents - so Launch works here even for a model generated in an earlier session, not only right after clicking Generate above.
     const generatedProjectId = workflowState?.stages?.GENERATE?.detail;
     const handleLaunch = async () => {
         if (!generatedProjectId) {
@@ -333,9 +311,7 @@ const ModelPage = () => {
     return (
         <div className="bpmn-editor">
             <div className="bpmn-toolbar">
-                {/* Own row, above the buttons - a status message never shares a line with the
-                    controls that produced it, so a long message never pushes a button off screen
-                    or the other way around. */}
+                {// Own row, above the buttons - a status message never shares a line with the controls that produced it, so a long message never pushes a button off screen or the other way around. */}
                 {status && (
                     <div className="bpmn-toolbar-row bpmn-toolbar-message">
                         <span className={`bpmn-status ${statusClass}`}>{status.text}</span>

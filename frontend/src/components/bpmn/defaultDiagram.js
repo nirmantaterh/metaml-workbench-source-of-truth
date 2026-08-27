@@ -1,6 +1,4 @@
-// blank canvas for a new model. the user task is load-bearing, not decoration - a
-// start-event-only diagram runs straight to its end event and every Evolve/Bridge
-// after that fails with "twin process instance could not be updated (already ended)".
+// blank canvas for a new model. the user task is load-bearing, not decoration - a start-event-only diagram runs straight to its end event and every Evolve/Bridge after that fails with "twin process instance could not be updated (already ended)".
 const defaultDiagram = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
                   xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"

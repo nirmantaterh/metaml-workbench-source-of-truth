@@ -6,19 +6,7 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-/**
- * Stands in for the two components NOT part of this generated platform: Gateway and Machines.
- *
- * <p>Both are separate deployables in the target architecture - Gateway in particular is where
- * ML/agent execution will eventually live. Neither exists yet. This class answers on the queues
- * they will own, with a canned reply, so the message flow can be proven end to end today.
- *
- * <p><strong>Disposable.</strong> When the real services arrive, delete this class - exchanges,
- * queues, routing keys and the message contract stay exactly as they are.
- *
- * <p>Deliberately no ML, no scoring, no decision logic: this proves the communication
- * architecture, not QC itself.
- */
+// Stands in for the two components NOT part of this generated platform: Gateway and Machines. <p>Both are separate deployables in the target architecture - Gateway in particular is where ML/agent execution will eventually live. Neither exists yet. This class answers on the queues they will own, with a canned reply, so the message flow can be proven end to end today. <p><strong>Disposable.</strong> When the real services arrive, delete this class - exchanges, queues, routing keys and the message contract stay exactly as they are. <p>Deliberately no ML, no scoring, no decision logic: this proves the communication architecture, not QC itself.
 @Component
 @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
 public class ExternalComponentStubListener {

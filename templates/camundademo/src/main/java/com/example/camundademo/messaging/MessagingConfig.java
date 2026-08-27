@@ -10,12 +10,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/**
- * Declares the three direct exchanges, six queues, and their bindings.
- *
- * <p>Enabled only with {@code metaml.messaging.enabled=true}; disabled by default so
- * generated platforms can run without RabbitMQ. Camunda remains the process engine.
- */
+// Declares the three direct exchanges, six queues, and their bindings. <p>Enabled only with {@code metaml.messaging.enabled=true}; disabled by default so generated platforms can run without RabbitMQ. Camunda remains the process engine.
 @Configuration
 @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
 public class MessagingConfig {

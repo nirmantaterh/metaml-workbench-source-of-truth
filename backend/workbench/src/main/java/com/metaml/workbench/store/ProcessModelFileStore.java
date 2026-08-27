@@ -13,15 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
-// Writes each saved model's raw BPMN as its own .bpmn file on the server filesystem, one file per
-// model id. This is separate from WorkbenchStateStore, which already embeds the same XML as a
-// string field inside its own shared workbench-state.json - that file is a restart-recovery cache
-// for the workbench's own bookkeeping, not something meant to be opened or copied as a standalone
-// file. The Spring Boot generation step needs an actual .bpmn file it can copy into a generated
-// project's resources, and that's what this class exists to provide.
-//
-// Unlike WorkbenchStateStore, a write failure here is NOT swallowed - the generation step depends
-// on this file actually existing, so a caller needs to know if it didn't get written.
+// Writes each saved model's raw BPMN as its own .bpmn file on the server filesystem, one file per model id. This is separate from WorkbenchStateStore, which already embeds the same XML as a string field inside its own shared workbench-state.json - that file is a restart-recovery cache for the workbench's own bookkeeping, not something meant to be opened or copied as a standalone file. The Spring Boot generation step needs an actual .bpmn file it can copy into a generated project's resources, and that's what this class exists to provide. Unlike WorkbenchStateStore, a write failure here is NOT swallowed - the generation step depends on this file actually existing, so a caller needs to know if it didn't get written.
 @Component
 public class ProcessModelFileStore {
 
@@ -38,10 +30,7 @@ public class ProcessModelFileStore {
         return save(pathFor(modelId), modelId, bpmnXml);
     }
 
-    // Same file-per-model convention as save(), for a model's independently authored second BPMN
-    // (see ProcessModel.authoredTwinBpmnXml). Kept as a distinct method/file rather than folding
-    // into save() - callers that only ever deal in single-BPMN models (the common case) should
-    // never need to pass a null twin XML through this class's main entry point.
+    // Same file-per-model convention as save(), for a model's independently authored second BPMN (see ProcessModel.authoredTwinBpmnXml). Kept as a distinct method/file rather than folding into save() - callers that only ever deal in single-BPMN models (the common case) should never need to pass a null twin XML through this class's main entry point.
     public Path saveTwin(String modelId, String twinBpmnXml) {
         return save(pathForTwin(modelId), modelId, twinBpmnXml);
     }
@@ -67,13 +56,7 @@ public class ProcessModelFileStore {
         }
     }
 
-    // WorkbenchServiceImpl already rejects a client-supplied id that isn't [A-Za-z0-9_-]+, but this
-    // class is a plain @Component anything can call, and its whole job is turning a string into a
-    // filesystem path - it shouldn't be the caller's business to have got that right first. A
-    // modelId of "../../evil" or "C:/Windows/evil" resolves cleanly to somewhere outside the
-    // configured models directory, and nothing in save() below would have noticed. Normalising and
-    // re-checking containment is the cheap way to make that structurally impossible rather than
-    // conventionally unlikely.
+    // WorkbenchServiceImpl already rejects a client-supplied id that isn't [A-Za-z0-9_-]+, but this class is a plain @Component anything can call, and its whole job is turning a string into a filesystem path - it shouldn't be the caller's business to have got that right first. A modelId of "../../evil" or "C:/Windows/evil" resolves cleanly to somewhere outside the configured models directory, and nothing in save() below would have noticed. Normalising and re-checking containment is the cheap way to make that structurally impossible rather than conventionally unlikely.
     public Path pathFor(String modelId) {
         if (modelId == null || modelId.isBlank()) {
             throw new IllegalArgumentException("modelId must not be blank");
@@ -109,14 +92,7 @@ public class ProcessModelFileStore {
         return resolved;
     }
 
-    // Deleting a model's BPMN artifact(s). Unlike save() above, a failure here is logged rather than
-    // thrown, and that asymmetry is deliberate: save()'s caller genuinely cannot continue without
-    // the file (the generation step reads it), whereas delete()'s caller is removing the model
-    // outright - a .bpmn file left behind is inert, referenced by nothing, and not worth failing a
-    // deletion that has otherwise fully succeeded. pathFor() supplies the same containment check
-    // every other method here relies on, so a hostile id cannot reach outside the models directory.
-    // The twin file's own deleteIfExists is a no-op for a model that never had one, so this stays
-    // safe to call unconditionally regardless of which kind of model modelId names.
+    // Deleting a model's BPMN artifact(s). Unlike save() above, a failure here is logged rather than thrown, and that asymmetry is deliberate: save()'s caller genuinely cannot continue without the file (the generation step reads it), whereas delete()'s caller is removing the model outright - a .bpmn file left behind is inert, referenced by nothing, and not worth failing a deletion that has otherwise fully succeeded. pathFor() supplies the same containment check every other method here relies on, so a hostile id cannot reach outside the models directory. The twin file's own deleteIfExists is a no-op for a model that never had one, so this stays safe to call unconditionally regardless of which kind of model modelId names.
     public boolean delete(String modelId) {
         boolean deleted = deleteIfExists(pathFor(modelId), modelId);
         deleteIfExists(pathForTwin(modelId), modelId);

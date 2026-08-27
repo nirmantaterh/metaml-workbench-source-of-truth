@@ -21,14 +21,12 @@
     flex-wrap: wrap;
 }
 
-/* row 2 (system status) reads as secondary to row 1 (user actions) - smaller, quieter, and not
-   given its own background/border so it doesn't compete with the canvas below it */
+// row 2 (system status) reads as secondary to row 1 (user actions) - smaller, quieter, and not given its own background/border so it doesn't compete with the canvas below it */
 .bpmn-toolbar-status {
     min-height: 1.25rem;
 }
 
-/* wraps the button so the details panel (position: absolute, see WorkflowDetailsPanel.css) has
-   something to anchor to without disturbing the toolbar's own layout */
+// wraps the button so the details panel (position: absolute, see WorkflowDetailsPanel.css) has something to anchor to without disturbing the toolbar's own layout */
 .workflow-view-details-anchor {
     position: relative;
     display: flex;
@@ -117,8 +115,7 @@
     color: #b8452f;
 }
 
-/* outline buttons barely change at the default 0.65 opacity, still full-color border/text.
-   grey them out for real so it's obvious the button isn't clickable yet. */
+// outline buttons barely change at the default 0.65 opacity, still full-color border/text. grey them out for real so it's obvious the button isn't clickable yet. */
 .bpmn-toolbar .btn:disabled {
     opacity: 1;
     color: #9aa5ad;
@@ -148,8 +145,7 @@
     background: #fff;
 }
 
-/* camunda properties panel goes at the top of bpmn-sidebar, above our own sections, so we
-   end up with one side column instead of two */
+// camunda properties panel goes at the top of bpmn-sidebar, above our own sections, so we end up with one side column instead of two */
 .bpmn-properties-panel {
     border-bottom: 1px solid #e3e6ea;
 }

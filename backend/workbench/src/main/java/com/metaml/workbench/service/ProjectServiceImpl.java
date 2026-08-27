@@ -84,8 +84,7 @@ public class ProjectServiceImpl implements ProjectService {
                 .map(archive -> archive.getModelId())
                 .collect(Collectors.toList());
 
-        // Check every process before mutating anything: an active generated application makes the
-        // whole project deletion fail, never a partly-deleted project.
+        // Check all process models for active generated applications before deletion.
         for (String modelId : modelIds) {
             if (!workbenchService.canDeleteProcessModel(modelId)) {
                 throw new IllegalStateException("Cannot delete project " + project.getDisplayName()

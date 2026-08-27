@@ -13,15 +13,7 @@ import org.camunda.bpm.model.bpmn.instance.IntermediateCatchEvent;
 import org.camunda.bpm.model.bpmn.instance.SequenceFlow;
 import org.camunda.bpm.model.bpmn.instance.SignalEventDefinition;
 
-// Derives the operational Twin - the process that communicates with Main over RabbitMQ at
-// runtime (see SpringBootProjectGenerator.generateWithAuthoredTwin) - from Main's own BPMN, with
-// no second file required. Distinct from TwinModelGenerator's governance/Evolve shadow-copy twin,
-// which clones Main's whole graph for change approval rather than runtime communication.
-//
-// A gate is an intermediateCatchEvent+signalEventDefinition whose outgoing flow leads directly
-// into a camunda:type="external" activity - the same shape mapSignalToGatedTwinTopic reads off an
-// authored Twin, applied here to Main instead. A Main with no gates has nothing to derive from;
-// deriveTwinXml returns null and callers fall back to the existing single-process path.
+// Derives the operational Twin - the process that communicates with Main over RabbitMQ at runtime (see SpringBootProjectGenerator.generateWithAuthoredTwin) - from Main's own BPMN, with no second file required. Distinct from TwinModelGenerator's governance/Evolve shadow-copy twin, which clones Main's whole graph for change approval rather than runtime communication. A gate is an intermediateCatchEvent+signalEventDefinition whose outgoing flow leads directly into a camunda:type="external" activity - the same shape mapSignalToGatedTwinTopic reads off an authored Twin, applied here to Main instead. A Main with no gates has nothing to derive from; deriveTwinXml returns null and callers fall back to the existing single-process path.
 public final class OperationalTwinGenerator {
 
     private static final String CAMUNDA_NS = "http://camunda.org/schema/1.0/bpmn";
@@ -71,8 +63,7 @@ public final class OperationalTwinGenerator {
         return slug.isBlank() ? "activity" : slug;
     }
 
-    // Every intermediateCatchEvent+signalEventDefinition whose outgoing flow leads directly into
-    // a camunda:type="external" activity, in document order.
+    // Every intermediateCatchEvent+signalEventDefinition whose outgoing flow leads directly into a camunda:type="external" activity, in document order.
     private static List<Gate> findGates(BpmnModelInstance mainModel) {
         List<Gate> gates = new ArrayList<>();
         for (IntermediateCatchEvent catchEvent : mainModel.getModelElementsByType(IntermediateCatchEvent.class)) {

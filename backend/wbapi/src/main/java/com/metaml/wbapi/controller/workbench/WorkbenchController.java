@@ -44,9 +44,7 @@ import com.metaml.wbapi.utils.FeedbackMessage;
 public class WorkbenchController {
     private final WorkbenchService workbenchService;
 
-    // public WorkbenchController(WorkbenchService workbenchService) {
-    // this.workbenchService = workbenchService;
-    // }
+    // public WorkbenchController(WorkbenchService workbenchService) { this.workbenchService = workbenchService; }
 
     @GetMapping(WorkbenchUrlMapping.TRANSMUTE_SAMPLE_ONLY)
     public ResponseEntity<ApiResponse> getSampleMethod() {
@@ -76,11 +74,7 @@ public class WorkbenchController {
         }
     }
 
-    // Product-path entry point for a model with its own independently authored second BPMN (e.g.
-    // Manufacturing + Twin supplied as two separate files) - without this, saveProcessModelWithAuthoredTwin
-    // was reachable only by calling WorkbenchService directly, never through the real API. Generation
-    // itself needs no separate endpoint: TRANSMUTE_GENERATE_PROJECT below already branches on
-    // ProcessModel.hasAuthoredTwin() once the model is saved this way.
+    // Product-path entry point for a model with its own independently authored second BPMN (e.g. Manufacturing + Twin supplied as two separate files) - without this, saveProcessModelWithAuthoredTwin was reachable only by calling WorkbenchService directly, never through the real API. Generation itself needs no separate endpoint: TRANSMUTE_GENERATE_PROJECT below already branches on ProcessModel.hasAuthoredTwin() once the model is saved this way.
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_MODELE_AUTHORED_TWIN)
     public ResponseEntity<ApiResponse> saveModelWithAuthoredTwin(
             @RequestBody com.metaml.wbapi.payload.request.SaveAuthoredTwinProcessModelRequest request) {
@@ -98,8 +92,7 @@ public class WorkbenchController {
         }
     }
 
-    // New scope item 1 (Navigation & UI): backs "Edit Existing Project" - a picker needs something
-    // to list, not just a lookup by an id the user already has to know
+    // New scope item 1 (Navigation & UI): backs "Edit Existing Project" - a picker needs something to list, not just a lookup by an id the user already has to know
     @GetMapping(WorkbenchUrlMapping.TRANSMUTE_MODELE)
     public ResponseEntity<ApiResponse> listModels() {
         try {
@@ -121,9 +114,7 @@ public class WorkbenchController {
         }
     }
 
-    // Single source of truth for the Model -> Generate -> Launch breadcrumb - never 404s for a
-    // model with no history recorded (a model id that's never been through the pipeline just
-    // reads back as everything PENDING, which is the honest answer, not an error).
+    // Resolves model workflow execution state.
     @GetMapping(WorkbenchUrlMapping.TRANSMUTE_WORKFLOW)
     public ResponseEntity<ApiResponse> getWorkflowState(@PathVariable String id) {
         try {
@@ -150,13 +141,7 @@ public class WorkbenchController {
         }
     }
 
-    // Authoring/catalog deletion - removes the model, its .bpmn artifact and its generated
-    // projects. Twins, Camunda runtime state, approvals and workflow history are all deliberately
-    // retained (see WorkbenchService.deleteProcessModel for why).
-    //
-    // 409 rather than 400 when a generated application is still running: the request is
-    // well-formed and would be valid once the app is stopped, which is exactly what CONFLICT
-    // means - the same mapping the approval endpoints below already use for IllegalStateException.
+    // Deletes a process model from the catalog.
     @DeleteMapping(WorkbenchUrlMapping.TRANSMUTE_MODELE + "/{id}")
     public ResponseEntity<ApiResponse> deleteModel(@PathVariable String id) {
         try {
@@ -173,10 +158,7 @@ public class WorkbenchController {
         }
     }
 
-    // New scope item 3 (BPMN Processing): the first step of Model -> Generate -> Launch. Returns
-    // one generated Java Delegate class per unique delegateExpression on the saved model's service
-    // tasks - read-only, nothing is written to disk or deployed yet. That's the Spring Boot
-    // generation step, still waiting on the template project's exact controller shape.
+    // New scope item 3 (BPMN Processing): the first step of Model -> Generate -> Launch. Returns one generated Java Delegate class per unique delegateExpression on the saved model's service tasks - read-only, nothing is written to disk or deployed yet. That's the Spring Boot generation step, still waiting on the template project's exact controller shape.
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_GENERATE)
     public ResponseEntity<ApiResponse> generateDelegates(@RequestBody GenerateDelegatesRequest request) {
         try {
@@ -191,10 +173,7 @@ public class WorkbenchController {
         }
     }
 
-    // New scope item 4 (Spring Boot Generation): the second step of Model -> Generate -> Launch.
-    // Assembles a full standalone Target Harness Platform (Joanna's camundademo template, with the
-    // real BPMN and generated delegates dropped in) and writes it to disk. Doesn't launch it -
-    // that's still a separate step, not built yet.
+    // Generates a standalone Target Harness Platform project.
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_GENERATE_PROJECT)
     public ResponseEntity<ApiResponse> generateSpringBootProject(@RequestBody GenerateProjectRequest request) {
         try {
@@ -211,10 +190,7 @@ public class WorkbenchController {
         }
     }
 
-    // Last step of Model -> Generate -> Launch: starts a previously generated project as its own
-    // background process on an auto-assigned port. Not to be confused with launchProcess below,
-    // which starts a twin PROCESS INSTANCE on the already-running engine - this starts a whole
-    // separate Spring Boot app.
+    // Launches a generated Target Platform project as a background process.
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_LAUNCH_PROJECT)
     public ResponseEntity<ApiResponse> launchGeneratedProject(@RequestBody LaunchProjectRequest request) {
         try {
@@ -231,15 +207,7 @@ public class WorkbenchController {
         }
     }
 
-    // The counterpart to launch-project. A generated app is a child JVM that outlives the request
-    // that started it, so without this the only ways to get its port back were relaunching the same
-    // project or killing the workbench.
-    //
-    // 404 rather than a 200 carrying false, to match how every other "you named something that
-    // isn't there" case in this controller answers - the service returns a plain boolean because
-    // stopping an already-stopped project is a harmless no-op internally, and this is the layer
-    // that decides the caller asked about something that doesn't exist. The body still carries the
-    // wasRunning flag either way so a client doesn't have to infer it from the status code alone.
+    // Stops a running generated Target Platform background process.
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_STOP_PROJECT)
     public ResponseEntity<ApiResponse> stopGeneratedProject(@RequestBody StopProjectRequest request) {
         try {
@@ -256,8 +224,7 @@ public class WorkbenchController {
         }
     }
 
-    // The Evolve workflow's own future "connect to an existing deployed application" step reads
-    // from this - what's actually running right now, not what was ever generated.
+    // Lists all currently running generated Target Platform projects.
     @GetMapping(WorkbenchUrlMapping.TRANSMUTE_RUNNING_PROJECTS)
     public ResponseEntity<ApiResponse> listRunningProjects() {
         try {
@@ -328,9 +295,7 @@ public class WorkbenchController {
         }
     }
 
-    // Phase 4 (approval workflow). Same tenant-scoped "not found" convention as the rest of
-    // governance - a wrong tenantId gets 404, not 403, so it can't tell an approval that doesn't
-    // exist apart from one that belongs to someone else.
+    // Lists pending evolution approvals for a tenant.
     @GetMapping(WorkbenchUrlMapping.TRANSMUTE_EVOLVE_APPROVALS)
     public ResponseEntity<ApiResponse> listApprovals(@org.springframework.web.bind.annotation.RequestParam String tenantId) {
         try {
@@ -372,10 +337,7 @@ public class WorkbenchController {
         }
     }
 
-    // Manual bridge. AutoBridgeTrigger handles this on its own now, but it's still the only way
-    // to bridge an activity you connected after the original already walked past it - there's no
-    // second start event coming. Repeat calls on the same visit are a no-op, including a click
-    // on something the auto-bridge already picked up.
+    // Bridges an activity event to trigger Twin advancement.
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_BRIDGE + "/{twinId}/{activityId}")
     public ResponseEntity<ApiResponse> bridgeActivityEvent(@PathVariable String twinId,
             @PathVariable String activityId) {
@@ -393,8 +355,7 @@ public class WorkbenchController {
         }
     }
 
-    // moves the ORIGINAL along so the next activity can be evolved/bridged. everything open,
-    // not one task - parallel gateway leaves several
+    // Completes open tasks for the original process instance.
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_COMPLETE_TASK + "/{twinId}")
     public ResponseEntity<ApiResponse> completeCurrentTasks(@PathVariable String twinId) {
         try {

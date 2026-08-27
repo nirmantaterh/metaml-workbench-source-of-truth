@@ -22,10 +22,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-// keeps the workbench's own models/twins in a json file, since Camunda's own persistence
-// doesn't know these maps exist. rewrites the whole file every time - fine at demo scale.
-// never throws to the caller: a missing or corrupt file just starts empty instead of
-// failing boot.
+// keeps the workbench's own models/twins in a json file, since Camunda's own persistence doesn't know these maps exist. rewrites the whole file every time - fine at demo scale. never throws to the caller: a missing or corrupt file just starts empty instead of failing boot.
 @Component
 public class WorkbenchStateStore {
 
@@ -84,13 +81,7 @@ public class WorkbenchStateStore {
         if (!enabled) {
             return;
         }
-        // Phase 9/10 red team finding: the DTO snapshot used to be built OUTSIDE this lock, so two
-        // concurrent persistState() calls could interleave such that the logically OLDER snapshot
-        // won the write lock LAST, silently overwriting a file that a moment earlier correctly held
-        // newer data - a pure lost update, reproduced empirically (two threads racing save() with a
-        // deliberately older and newer snapshot; the newer one's already-written change vanished).
-        // Snapshotting and writing now happen inside the same lock, so one caller's full save()
-        // always finishes - snapshot included - before the next one can start theirs.
+        // Phase 9/10 red team finding: the DTO snapshot used to be built OUTSIDE this lock, so two concurrent persistState() calls could interleave such that the logically OLDER snapshot won the write lock LAST, silently overwriting a file that a moment earlier correctly held newer data - a pure lost update, reproduced empirically (two threads racing save() with a deliberately older and newer snapshot; the newer one's already-written change vanished). Snapshotting and writing now happen inside the same lock, so one caller's full save() always finishes - snapshot included - before the next one can start theirs.
         synchronized (writeLock) {
             StateDto dto = new StateDto();
             dto.models = new ArrayList<>();
@@ -126,9 +117,7 @@ public class WorkbenchStateStore {
         return list == null ? List.of() : list;
     }
 
-    // plain dtos instead of binding straight to the model classes - Jackson would replace
-    // TwinProcess's CopyOnWriteArrayList/newKeySet fields with plain ones and silently
-    // drop the thread safety the bridge's forwarded-set guard depends on
+    // plain dtos instead of binding straight to the model classes - Jackson would replace TwinProcess's CopyOnWriteArrayList/newKeySet fields with plain ones and silently drop the thread safety the bridge's forwarded-set guard depends on
     static final class StateDto {
         public List<ProcessModelDto> models;
         public List<TwinProcessDto> twins;
@@ -140,8 +129,7 @@ public class WorkbenchStateStore {
         public String bpmnXml;
         public Long createdAtEpochMillis;
         public String processDefinitionId;
-        // absent entirely in any file written before Phase 1 - Jackson leaves this null when
-        // reading one of those, which toModel() below already treats as "unowned/legacy"
+        // absent entirely in any file written before Phase 1 - Jackson leaves this null when reading one of those, which toModel() below already treats as "unowned/legacy"
         public String tenantId;
 
         static ProcessModelDto of(ProcessModel model) {
@@ -164,11 +152,7 @@ public class WorkbenchStateStore {
         }
     }
 
-    // TwinProcess no longer carries a forwardedBridgeActivities field to leave out here: the bridge
-    // dedupe guard now derives straight from the twin's own evolvedAgent_* runtime/history variables
-    // (see WorkbenchServiceImpl.alreadyEvolved), which already survive a restart on their own, so
-    // there was never anything to persist separately. Governance counters still don't survive a
-    // restart, but that isn't protecting a quota that still exists either.
+    // TwinProcess no longer carries a forwardedBridgeActivities field to leave out here: the bridge dedupe guard now derives straight from the twin's own evolvedAgent_* runtime/history variables (see WorkbenchServiceImpl.alreadyEvolved), which already survive a restart on their own, so there was never anything to persist separately. Governance counters still don't survive a restart, but that isn't protecting a quota that still exists either.
     static final class TwinProcessDto {
         public String id;
         public String modelId;
@@ -177,8 +161,7 @@ public class WorkbenchStateStore {
         public String originalProcessId;
         public String twinProcessId;
         public String projectId;
-        // Phase 1 (tenant identity) - absent in any snapshot written before this phase,
-        // which toTwin() below already treats as "unowned/legacy", same as ProcessModelDto
+        // Phase 1 (tenant identity) - absent in any snapshot written before this phase, which toTwin() below already treats as "unowned/legacy", same as ProcessModelDto
         public String tenantId;
         public String status;
         public Long launchedAtEpochMillis;
@@ -215,8 +198,7 @@ public class WorkbenchStateStore {
             twin.setId(id);
             twin.setModelId(modelId);
             twin.setProcessDefinitionId(processDefinitionId);
-            // Older snapshots predate the dedicated twin definition field. Keep those restorable by
-            // falling back to the original definition, which is what older twins were running.
+            // Older snapshots predate the dedicated twin definition field. Keep those restorable by falling back to the original definition, which is what older twins were running.
             twin.setTwinProcessDefinitionId(
                     twinProcessDefinitionId == null || twinProcessDefinitionId.isBlank()
                             ? processDefinitionId

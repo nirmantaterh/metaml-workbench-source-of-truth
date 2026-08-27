@@ -59,9 +59,7 @@ public class SpringBootProjectGenerator {
 
     private static final String TARGET_PLATFORM_BASE_PACKAGE = "com.metaml.targetplatform";
 
-    // The RedCollarTP-derived template's own fixed package (see isTargetPlatformTemplate) - reused
-    // here so writeSchedulingConfig/writeProcessStatusController, both otherwise generic across
-    // every generation mode, can be called for this mode too instead of being duplicated.
+    // Reuse the fixed template package for shared controller generation.
     private static final String TARGET_PLATFORM_BASE_PACKAGE_LITERAL = "com.tp.TargetPlatform";
 
     private static final String DELEGATE_PACKAGE_PATH = "src/main/java/com/example/camundademo/delegate";
@@ -112,11 +110,7 @@ public class SpringBootProjectGenerator {
         return generate(bpmnXml, delegates, null);
     }
 
-    // displayName is the model's own human-chosen name (ProcessModel.name), purely cosmetic - it
-    // only ever influences the on-disk folder name (see resolveProjectDirectory); projectId stays
-    // the real identity everywhere else (map keys, RabbitMQ namespacing, persisted workflow
-    // history). null/blank falls back to processKey, which is still far more readable than a bare
-    // UUID, so every existing caller that doesn't know about a display name keeps working as-is.
+    // Generates a Target Platform project for the given BPMN XML model.
     public GeneratedProject generate(String bpmnXml, List<GeneratedDelegate> delegates, String displayName) {
         if (!Files.isDirectory(templateDirectory)) {
             throw new IllegalStateException("No template project at " + templateDirectory.toAbsolutePath()
@@ -125,16 +119,12 @@ public class SpringBootProjectGenerator {
         BpmnModelInstance model = Bpmn.readModelFromStream(
                 new ByteArrayInputStream(bpmnXml.getBytes(StandardCharsets.UTF_8)));
         if (isTargetPlatformTemplate()) {
-            // Not twinModelGenerator - that rewrite targets the older camundademo governance/
-            // evolve twin workflow (receiveTask/serviceTask pairs waiting on
-            // ${twinAutomationDelegate}, a bean this template doesn't have). RedCollarTP's own
-            // real Twin BPMN is a structural mirror of its proxy, so that's what gets derived here.
+            // TargetPlatform/RedCollar template uses structural twin mirroring.
             return generateTargetPlatform(bpmnXml, targetPlatformTwinMirrorGenerator.mirror(bpmnXml), displayName);
         }
         String processKey = extractProcessKey(model);
 
-        // A signal-gated Main gets a derived operational Twin via the same pipeline an attached
-        // Twin uses; a plain Main falls through unchanged to the governance/Evolve path below.
+        // A signal-gated Main gets a derived operational Twin via the same pipeline an attached Twin uses; a plain Main falls through unchanged to the governance/Evolve path below.
         String derivedTwinXml = OperationalTwinGenerator.deriveTwinXml(model, processKey);
         if (derivedTwinXml != null) {
             return generateWithAuthoredTwin(bpmnXml, derivedTwinXml, displayName);
@@ -260,9 +250,7 @@ public class SpringBootProjectGenerator {
         return new GeneratedProject(projectId, projectDir, manufProcessKey);
     }
 
-    // The RedCollar-derived template deliberately keeps its package fixed at com.tp.TargetPlatform.
-    // It owns its proxy/twin controllers and configuration already; generation only supplies the
-    // two BPMNs and the source beans those BPMNs name.
+    // The RedCollar-derived template deliberately keeps its package fixed at com.tp.TargetPlatform. It owns its proxy/twin controllers and configuration already; generation only supplies the two BPMNs and the source beans those BPMNs name.
     private boolean isTargetPlatformTemplate() {
         return Files.isDirectory(templateDirectory.resolve("src/main/java/com/tp/TargetPlatform"));
     }
@@ -287,15 +275,7 @@ public class SpringBootProjectGenerator {
         writeTargetPlatformSources(projectDir, proxy.sources());
         writeTargetPlatformSources(projectDir, twin.sources());
 
-        // A serviceTask with camunda:type="external" (RedCollar's own real BPMNs are built
-        // entirely from these - see ExternalTaskWorkerGenerator's own comment) is a wait state
-        // TargetPlatformSourceGenerator above never touches: it only recognises
-        // delegateExpression/class. Without a worker subscribed to its topic the token parks
-        // there forever and nothing - including every signal downstream of it - ever runs.
-        // ExternalTaskWorkerGenerator derives the GeneratedExternalTaskWorker import by stripping
-        // the LAST segment off packageName (see its own renderTwinWorkerSource comment) - so the
-        // worker package must be "<interface package>.<side>", not "<side>.worker", to actually
-        // land one level under where writeWorkerInterface below puts the interface itself.
+        // A serviceTask with camunda:type="external" (RedCollar's own real BPMNs are built entirely from these - see ExternalTaskWorkerGenerator's own comment) is a wait state TargetPlatformSourceGenerator above never touches: it only recognises delegateExpression/class. Without a worker subscribed to its topic the token parks there forever and nothing - including every signal downstream of it - ever runs. ExternalTaskWorkerGenerator derives the GeneratedExternalTaskWorker import by stripping the LAST segment off packageName (see its own renderTwinWorkerSource comment) - so the worker package must be "<interface package>.<side>", not "<side>.worker", to actually land one level under where writeWorkerInterface below puts the interface itself.
         List<GeneratedWorker> proxyWorkers = externalTaskWorkerGenerator.generate(proxyBpmnXml,
                 TARGET_PLATFORM_BASE_PACKAGE_LITERAL + ".worker.proxy", false);
         List<GeneratedWorker> twinWorkers = externalTaskWorkerGenerator.generate(twinBpmnXml,
@@ -309,11 +289,7 @@ public class SpringBootProjectGenerator {
         }
         writeExternalTaskPoller(projectDir, TARGET_PLATFORM_BASE_PACKAGE_LITERAL);
 
-        // proxy<->twin synchronization: signals come from two sources -
-        //   1. Original BPMN signal declarations (the old external-task pipeline's signal gates)
-        //   2. Lockstep sync signals injected by TargetPlatformSourceGenerator for delegate-
-        //      expression BPMNs (sync_<activityId> on both proxy and twin sides)
-        // Both sets are combined so SignalBroadcaster polls every signal that either side waits on.
+        // proxy<->twin synchronization: signals come from two sources - 1. Original BPMN signal declarations (the old external-task pipeline's signal gates) 2. Lockstep sync signals injected by TargetPlatformSourceGenerator for delegate- expression BPMNs (sync_<activityId> on both proxy and twin sides) Both sets are combined so SignalBroadcaster polls every signal that either side waits on.
         Set<String> proxySignals = extractSignalNames(proxyModel);
         proxySignals.addAll(proxy.syncSignalNames());
         Set<String> twinSignals = extractSignalNames(twinModel);
@@ -389,11 +365,7 @@ public class SpringBootProjectGenerator {
         }
     }
 
-    // Unlike writeTargetPlatformSources above, these always overwrite: the synchronization layer
-    // and the proxy/twin controllers are structural to this generation mode, not a per-activity
-    // stub a future template might intentionally hand-supply - and the controllers specifically
-    // bake in this generation's own process keys, so a stale copy from a previous generate() would
-    // silently start the WRONG process definition.
+    // Unlike writeTargetPlatformSources above, these always overwrite: the synchronization layer and the proxy/twin controllers are structural to this generation mode, not a per-activity stub a future template might intentionally hand-supply - and the controllers specifically bake in this generation's own process keys, so a stale copy from a previous generate() would silently start the WRONG process definition.
     private void writeTargetPlatformMessagingSources(Path projectDir,
             List<TargetPlatformMessagingGenerator.GeneratedSource> sources) {
         for (TargetPlatformMessagingGenerator.GeneratedSource source : sources) {
@@ -489,19 +461,9 @@ public class SpringBootProjectGenerator {
         }
     }
 
-    // NotificationBridge ships with the template alongside the messaging package - where the
-    // professor said RabbitMQ belongs: "we'll add the rabbit in Q to the template repository. And
-    // then that becomes your updated generated set."
-    // copyTemplate() + rewritePackage() handle the rest; nothing is generated here.
+    // NotificationBridge ships with the template alongside the messaging package - where the professor said RabbitMQ belongs: "we'll add the rabbit in Q to the template repository. And then that becomes your updated generated set." copyTemplate() + rewritePackage() handle the rest; nothing is generated here.
 
-    // Human-readable on disk (slug of the process display name, falling back to processKey when
-    // there is no display name), with a numeric suffix only when that name is already taken -
-    // re-Generating the same process, or two different processes sharing a display name, are both
-    // "cosmetic" collisions here, never an identity problem: projectId (always a freshly minted
-    // UUID) stays the real identity everywhere else (generatedProjects map key, RabbitMQ
-    // messagingNamespace, persisted workflow history), recorded inside PROJECT_METADATA_FILE - see
-    // writeProjectMetadata/findProjectDirectoryById, which is how delete()/scanExisting() find the
-    // right directory again without the folder name having to equal projectId any more.
+    // Human-readable on disk (slug of the process display name, falling back to processKey when there is no display name), with a numeric suffix only when that name is already taken - re-Generating the same process, or two different processes sharing a display name, are both "cosmetic" collisions here, never an identity problem: projectId (always a freshly minted UUID) stays the real identity everywhere else (generatedProjects map key, RabbitMQ messagingNamespace, persisted workflow history), recorded inside PROJECT_METADATA_FILE - see writeProjectMetadata/findProjectDirectoryById, which is how delete()/scanExisting() find the right directory again without the folder name having to equal projectId any more.
     private Path resolveProjectDirectory(String projectId, String label) {
         Path root = outputDirectory.toAbsolutePath().normalize();
         String base = slugify(label);
@@ -517,11 +479,7 @@ public class SpringBootProjectGenerator {
         return candidate;
     }
 
-    // label is a human display name - user input, unlike the old bare-UUID folder name - so it is
-    // never trusted as a raw path segment. Strips anything outside the safe charset, then strips
-    // leading dots/hyphens too so a label that would otherwise slugify to ".." (or "-", "-2", ...)
-    // can never be mistaken for a filesystem special segment; safeChildOf below is the second,
-    // independent check on the same risk.
+    // label is a human display name - user input, unlike the old bare-UUID folder name - so it is never trusted as a raw path segment. Strips anything outside the safe charset, then strips leading dots/hyphens too so a label that would otherwise slugify to ".." (or "-", "-2", ...) can never be mistaken for a filesystem special segment; safeChildOf below is the second, independent check on the same risk.
     private static String slugify(String raw) {
         if (raw == null) {
             return "";
@@ -538,9 +496,7 @@ public class SpringBootProjectGenerator {
         return (displayName != null && !displayName.isBlank()) ? displayName : processKeyFallback;
     }
 
-    // Same guard resolveProjectDirectory always had for the bare-projectId folder name, applied
-    // here to a slug instead: cheap, and "trusted for now" is exactly the kind of assumption that
-    // stops being true the next time a caller changes.
+    // Same guard resolveProjectDirectory always had for the bare-projectId folder name, applied here to a slug instead: cheap, and "trusted for now" is exactly the kind of assumption that stops being true the next time a caller changes.
     private static Path safeChildOf(Path root, String segment) {
         Path resolved = root.resolve(segment).normalize();
         if (!resolved.startsWith(root) || resolved.equals(root)) {
@@ -550,15 +506,10 @@ public class SpringBootProjectGenerator {
         return resolved;
     }
 
-    // Reconstructs the in-memory registry from disk rather than a separate store that could drift.
-    // Directories without exactly one non-twin .bpmn file are skipped, not guessed at. projectId
-    // comes from the directory's own declared identity (PROJECT_METADATA_FILE) now that the folder
-    // name is a human label, not the id itself - falls back to the folder name only for a
-    // directory generated before that field existed, whose folder name still literally IS its id.
+    // Reconstructs the in-memory registry from disk rather than a separate store that could drift. Directories without exactly one non-twin .bpmn file are skipped, not guessed at. projectId comes from the directory's own declared identity (PROJECT_METADATA_FILE) now that the folder name is a human label, not the id itself - falls back to the folder name only for a directory generated before that field existed, whose folder name still literally IS its id.
     public List<GeneratedProject> scanExisting() {
         if (!Files.isDirectory(outputDirectory)) {
-            // nothing has ever been generated against this output directory - a fresh install, or
-            // one still on defaults, not an error
+            // nothing has ever been generated against this output directory - a fresh install, or one still on defaults, not an error
             return List.of();
         }
         List<GeneratedProject> found = new ArrayList<>();
@@ -582,11 +533,7 @@ public class SpringBootProjectGenerator {
         return found;
     }
 
-    // Directory lookup by declared identity now that the folder name is a human label rather than
-    // the projectId itself (see resolveProjectDirectory) - mirrors scanExisting()'s own fallback to
-    // the folder name for a directory generated before PROJECT_METADATA_FILE carried a projectId.
-    // Only ever returns a direct child of outputDirectory (Files.list never descends), so callers
-    // inherit the same path-traversal guarantee the old bare root.resolve(projectId) had.
+    // Directory lookup by declared identity now that the folder name is a human label rather than the projectId itself (see resolveProjectDirectory) - mirrors scanExisting()'s own fallback to the folder name for a directory generated before PROJECT_METADATA_FILE carried a projectId. Only ever returns a direct child of outputDirectory (Files.list never descends), so callers inherit the same path-traversal guarantee the old bare root.resolve(projectId) had.
     private Path findProjectDirectoryById(String projectId) {
         Path root = outputDirectory.toAbsolutePath().normalize();
         if (!Files.isDirectory(root)) {
@@ -607,9 +554,7 @@ public class SpringBootProjectGenerator {
         return null;
     }
 
-    // Takes projectId, not Path - resolves it through findProjectDirectoryById (declared identity,
-    // not the folder name) and validates the direct-child relationship before deletion to prevent
-    // path traversal (id comes from a persisted event; "../../data" would otherwise escape the tree).
+    // Takes projectId, not Path - resolves it through findProjectDirectoryById (declared identity, not the folder name) and validates the direct-child relationship before deletion to prevent path traversal (id comes from a persisted event; "../../data" would otherwise escape the tree).
     public boolean delete(String projectId) {
         if (projectId == null || projectId.isBlank()) {
             return false;
@@ -625,8 +570,7 @@ public class SpringBootProjectGenerator {
             return false;
         }
         if (!Files.isDirectory(projectDir)) {
-            // already gone (deleted by hand, or a previous cleanup got there first) - not an error,
-            // the caller's intended end state is exactly what's already true
+            // already gone (deleted by hand, or a previous cleanup got there first) - not an error, the caller's intended end state is exactly what's already true
             return false;
         }
         try (Stream<Path> walk = Files.walk(projectDir)) {
@@ -635,9 +579,7 @@ public class SpringBootProjectGenerator {
                 Files.deleteIfExists(path);
             }
         } catch (IOException e) {
-            // A generated project holds no state anything depends on, so a partial delete doesn't
-            // fail the triggering operation - scanExisting() above already skips directories with
-            // no resolvable process key, which is exactly the shape a half-deleted one has.
+            // A generated project holds no state anything depends on, so a partial delete doesn't fail the triggering operation - scanExisting() above already skips directories with no resolvable process key, which is exactly the shape a half-deleted one has.
             logger.warn("Could not fully delete generated project {} at {}: {}", projectId, projectDir, e.toString());
             return false;
         }
@@ -645,10 +587,7 @@ public class SpringBootProjectGenerator {
         return true;
     }
 
-    // Writes this project's own declared identity, generic across every generation mode. See
-    // PROJECT_METADATA_FILE's own comment for why this exists instead of inferring identity from
-    // the .bpmn files a mode happens to write. Root of the project, not under src/, so it is never
-    // touched by rewritePackage() and never ships as part of the generated application itself.
+    // Writes this project's own declared identity, generic across every generation mode. See PROJECT_METADATA_FILE's own comment for why this exists instead of inferring identity from the .bpmn files a mode happens to write. Root of the project, not under src/, so it is never touched by rewritePackage() and never ships as part of the generated application itself.
     private void writeProjectMetadata(Path projectDir, String projectId, String processKey) {
         java.util.Properties properties = new java.util.Properties();
         properties.setProperty("processKey", processKey);
@@ -661,18 +600,7 @@ public class SpringBootProjectGenerator {
         }
     }
 
-    // Prefers the project's own declared identity (PROJECT_METADATA_FILE) over guessing from the
-    // .bpmn files under processes/, so this works the same for one BPMN, two authored BPMNs, or any
-    // future generation mode without a mode-specific filename rule here. A declared key is only
-    // trusted when its own processes/<key>.bpmn file is actually still there - a directory whose
-    // real artifact was deleted or corrupted out from under it must still read as unrecoverable, not
-    // be taken on the metadata's word alone. This also means a second (or third) .bpmn file sitting
-    // alongside the declared one - exactly what generateWithAuthoredTwin produces - is no longer an
-    // "ambiguous" shape the way it was for the old file-counting heuristic: the metadata already
-    // resolves which file is the project's own identity, so an additional file is just not a
-    // question this method needs to answer. Falls back to the older "exactly one non-twin .bpmn
-    // file" heuristic only for a project directory generated before this metadata file existed -
-    // preserving discoverability for already-generated projects rather than orphaning them.
+    // Prefers the project's own declared identity (PROJECT_METADATA_FILE) over guessing from the .bpmn files under processes/, so this works the same for one BPMN, two authored BPMNs, or any future generation mode without a mode-specific filename rule here. A declared key is only trusted when its own processes/<key>.bpmn file is actually still there - a directory whose real artifact was deleted or corrupted out from under it must still read as unrecoverable, not be taken on the metadata's word alone. This also means a second (or third) .bpmn file sitting alongside the declared one - exactly what generateWithAuthoredTwin produces - is no longer an "ambiguous" shape the way it was for the old file-counting heuristic: the metadata already resolves which file is the project's own identity, so an additional file is just not a question this method needs to answer. Falls back to the older "exactly one non-twin .bpmn file" heuristic only for a project directory generated before this metadata file existed - preserving discoverability for already-generated projects rather than orphaning them.
     private static String findProcessKey(Path projectDir) {
         String declared = readDeclaredProcessKey(projectDir);
         if (declared != null) {
@@ -690,9 +618,7 @@ public class SpringBootProjectGenerator {
             List<Path> bpmnFiles = entries.filter(p -> p.getFileName().toString().endsWith(".bpmn"))
                     .filter(p -> !p.getFileName().toString().endsWith("_twin.bpmn"))
                     .toList();
-            // zero means this directory was never finished (or was cleared out); more than one is a
-            // shape the pre-metadata generate() itself never produced - either way, no safe single
-            // answer without the metadata file this project predates
+            // zero means this directory was never finished (or was cleared out); more than one is a shape the pre-metadata generate() itself never produced - either way, no safe single answer without the metadata file this project predates
             if (bpmnFiles.size() != 1) {
                 return null;
             }
@@ -712,9 +638,7 @@ public class SpringBootProjectGenerator {
         return (processKey == null || processKey.isBlank()) ? null : processKey;
     }
 
-    // Absent for a directory generated before PROJECT_METADATA_FILE carried a projectId - callers
-    // (scanExisting/findProjectDirectoryById) fall back to the folder name in that case, which for
-    // one of those older directories still literally IS its id (see resolveProjectDirectory).
+    // Absent for a directory generated before PROJECT_METADATA_FILE carried a projectId - callers (scanExisting/findProjectDirectoryById) fall back to the folder name in that case, which for one of those older directories still literally IS its id (see resolveProjectDirectory).
     private static String readDeclaredProjectId(Path projectDir) {
         java.util.Properties properties = loadProjectMetadata(projectDir);
         if (properties == null) {
@@ -746,11 +670,7 @@ public class SpringBootProjectGenerator {
                 .orElseThrow(() -> new IllegalArgumentException("BPMN has no process element to read a key from"));
     }
 
-    // Skips the template project's own build output/VCS metadata - copying target/ verbatim (e.g.
-    // a stale template/target/classes/processes/*.bpmn from whenever the template itself was last
-    // built) would let a leftover class-output resource get auto-deployed alongside every
-    // generated project's real process(es), which is exactly the kind of accidental cross-talk
-    // this generator otherwise goes out of its way to avoid.
+    // Skips the template project's own build output/VCS metadata - copying target/ verbatim (e.g. a stale template/target/classes/processes/*.bpmn from whenever the template itself was last built) would let a leftover class-output resource get auto-deployed alongside every generated project's real process(es), which is exactly the kind of accidental cross-talk this generator otherwise goes out of its way to avoid.
     private static final Set<String> TEMPLATE_COPY_EXCLUDED_DIR_NAMES = Set.of("target", ".git");
 
     private void copyTemplate(Path projectDir) {
@@ -766,8 +686,7 @@ public class SpringBootProjectGenerator {
                 } else {
                     Files.createDirectories(target.getParent());
                     Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
-                    // Files.copy doesn't carry the executable bit on its own - every generated
-                    // project needs its own mvnw runnable, not just the template's.
+                    // Files.copy doesn't carry the executable bit on its own - every generated project needs its own mvnw runnable, not just the template's.
                     if ("mvnw".equals(target.getFileName().toString())) {
                         target.toFile().setExecutable(true);
                     }
@@ -788,8 +707,7 @@ public class SpringBootProjectGenerator {
         return false;
     }
 
-    // Remove the template's loanApproval worked example; writeController() replaces the controller.
-    // LoanApplicationContext and BPMNProcessRESTMappings exist only to support the removed pair.
+    // Remove the template's loanApproval worked example; writeController() replaces the controller. LoanApplicationContext and BPMNProcessRESTMappings exist only to support the removed pair.
     private void removeTemplatePlaceholders(Path projectDir) {
         deleteIfExists(projectDir.resolve(PROCESSES_PATH).resolve("loanApproval.bpmn"));
         deleteIfExists(projectDir.resolve(DELEGATE_PACKAGE_PATH).resolve("CalculateInterestService.java"));
@@ -823,9 +741,7 @@ public class SpringBootProjectGenerator {
         }
     }
 
-    // camunda:class delegates carry their own package in sourceCode (see
-    // DelegateClassGenerator.generateFromJavaClass), so the write path is derived from that instead
-    // of a caller-supplied basePackage.
+    // camunda:class delegates carry their own package in sourceCode (see DelegateClassGenerator.generateFromJavaClass), so the write path is derived from that instead of a caller-supplied basePackage.
     private void writeJavaClassDelegates(Path projectDir, List<GeneratedDelegate> delegates) {
         for (GeneratedDelegate delegate : delegates) {
             String packageLine = delegate.sourceCode().lines()
@@ -859,18 +775,12 @@ public class SpringBootProjectGenerator {
         return names;
     }
 
-    // Escapes a string for safe embedding as a Java string literal in generated source. BPMN
-    // signal names are author-controlled data, not something this generator can constrain - a
-    // name containing a quote or backslash must not corrupt (or inject code into) the file being
-    // generated.
+    // Escapes a string for safe embedding as a Java string literal in generated source. BPMN signal names are author-controlled data, not something this generator can constrain - a name containing a quote or backslash must not corrupt (or inject code into) the file being generated.
     private static String escapeJavaStringLiteral(String raw) {
         return raw.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
-    // Turns an arbitrary BPMN-authored identifier (a camunda:topic, typically PascalCase, e.g.
-    // "SamplingTwin") into kebab-case ("sampling-twin") - the convention this platform's RabbitMQ
-    // queue names use. Generic word-boundary splitting, not a lookup table: it works the same for
-    // any topic name, RedCollar's or anyone else's.
+    // Turns an arbitrary BPMN-authored identifier (a camunda:topic, typically PascalCase, e.g. "SamplingTwin") into kebab-case ("sampling-twin") - the convention this platform's RabbitMQ queue names use. Generic word-boundary splitting, not a lookup table: it works the same for any topic name, RedCollar's or anyone else's.
     private static String pascalCaseToKebabCase(String raw) {
         if (raw == null || raw.isBlank()) {
             return "";
@@ -881,9 +791,7 @@ public class SpringBootProjectGenerator {
         return withHyphens.toLowerCase();
     }
 
-    // Restricts an already-kebab-cased string to safe, valid RabbitMQ identifier characters:
-    // lowercase letters, digits, hyphens. BPMN topic names are author-controlled - a stray
-    // character must not produce an invalid queue name.
+    // Restricts an already-kebab-cased string to safe, valid RabbitMQ identifier characters: lowercase letters, digits, hyphens. BPMN topic names are author-controlled - a stray character must not produce an invalid queue name.
     private static String sanitizeForKebabSegment(String raw) {
         String slug = raw == null ? "" : raw.toLowerCase()
                 .replaceAll("[^a-z0-9-]+", "-")
@@ -892,27 +800,11 @@ public class SpringBootProjectGenerator {
         if (slug.isEmpty()) {
             slug = "activity";
         }
-        // one segment of a longer name (see assignActivityQueueIdentities) - capped well under
-        // RabbitMQ's own 255-byte name limit even for a pathologically long topic name
+        // one segment of a longer name (see assignActivityQueueIdentities) - capped well under RabbitMQ's own 255-byte name limit even for a pathologically long topic name
         return slug.length() > 60 ? slug.substring(0, 60) : slug;
     }
 
-    // Maps each BPMN signal name to the Twin external-task topic its catch event gates entry
-    // into - which Twin activity a given signal's release is actually permission to run. Neither
-    // supplied process model has a signal throw event (see SignalBroadcaster's own comment), so a
-    // signal catch event's own outgoing sequence flow to an external-task service task is the only
-    // place this relationship is expressed in the BPMN itself. Used only to choose which
-    // activity's task/response queue pair a signal's REQUEST/RESPONSE handoff routes through (see
-    // writeSignalBroadcaster's deliverTo) - the signal remains the mechanism that decides WHEN a
-    // handoff happens, unchanged.
-    //
-    // Scans every SequenceFlow in the model for one whose sourceRef is this catch event, rather
-    // than calling catchEvent.getOutgoing() - that convenience method only returns flows listed in
-    // an explicit <bpmn2:outgoing> child element, which Camunda Modeler always writes but a BPMN
-    // authored (or generated) without that redundant, optional hint - relying only on
-    // sequenceFlow's own sourceRef/targetRef attributes, exactly as the BPMN 2.0 spec allows -
-    // would silently produce zero matches. Reading sourceRef/targetRef directly is what actually
-    // works for any conformant BPMN, not just the shape one particular tool happens to export.
+    // Maps each BPMN signal name to the Twin external-task topic its catch event gates entry into - which Twin activity a given signal's release is actually permission to run. Neither supplied process model has a signal throw event (see SignalBroadcaster's own comment), so a signal catch event's own outgoing sequence flow to an external-task service task is the only place this relationship is expressed in the BPMN itself. Used only to choose which activity's task/response queue pair a signal's REQUEST/RESPONSE handoff routes through (see writeSignalBroadcaster's deliverTo) - the signal remains the mechanism that decides WHEN a handoff happens, unchanged. Scans every SequenceFlow in the model for one whose sourceRef is this catch event, rather than calling catchEvent.getOutgoing() - that convenience method only returns flows listed in an explicit <bpmn2:outgoing> child element, which Camunda Modeler always writes but a BPMN authored (or generated) without that redundant, optional hint - relying only on sequenceFlow's own sourceRef/targetRef attributes, exactly as the BPMN 2.0 spec allows - would silently produce zero matches. Reading sourceRef/targetRef directly is what actually works for any conformant BPMN, not just the shape one particular tool happens to export.
     private static Map<String, String> mapSignalToGatedTwinTopic(BpmnModelInstance twinModel) {
         Map<String, String> result = new LinkedHashMap<>();
         for (IntermediateCatchEvent catchEvent : twinModel.getModelElementsByType(IntermediateCatchEvent.class)) {
@@ -943,19 +835,12 @@ public class SpringBootProjectGenerator {
         return result;
     }
 
-    // One task queue + one response queue per Main<->Twin communication activity (a Twin
-    // external-task topic) - "N communication activities x 2 queues = 2N total", per Joanna's
-    // explicit requirement. Scoped by messagingNamespace (this generation's own process-key slug
-    // plus its own generated projectId - both already-existing identity concepts, reused rather
-    // than invented) so two independently generated projects can never physically share a queue
-    // even with identically-named BPMN activities.
+    // One task queue + one response queue per Main<->Twin communication activity (a Twin external-task topic) - "N communication activities x 2 queues = 2N total", per Joanna's explicit requirement. Scoped by messagingNamespace (this generation's own process-key slug plus its own generated projectId - both already-existing identity concepts, reused rather than invented) so two independently generated projects can never physically share a queue even with identically-named BPMN activities.
     private record ActivityQueueIdentity(String topic, String taskQueueName, String taskRoutingKey,
             String responseQueueName, String responseRoutingKey, String javaIdentifier) {
     }
 
-    // Two topics that kebab-case to the same slug (e.g. "Order Ready" and "OrderReady") are
-    // disambiguated with a numeric suffix, assigned in the caller's own iteration order - stable
-    // because callers always pass the topic list in BPMN document order.
+    // Two topics that kebab-case to the same slug (e.g. "Order Ready" and "OrderReady") are disambiguated with a numeric suffix, assigned in the caller's own iteration order - stable because callers always pass the topic list in BPMN document order.
     private static List<ActivityQueueIdentity> assignActivityQueueIdentities(String messagingNamespace,
             List<String> twinTopics) {
         List<ActivityQueueIdentity> identities = new ArrayList<>();
@@ -976,23 +861,7 @@ public class SpringBootProjectGenerator {
         return identities;
     }
 
-    // Generates this platform's RabbitMQ messaging layer as separate, readable Java source files
-    // (not embedded string literals a developer has to dig for): one task queue plus one response
-    // queue per Main<->Twin communication activity - a Twin external-task topic. Five pieces,
-    // generated together, one class per responsibility:
-    //   - RabbitMqConfig: connection/topology metadata, exchange, and one queue+binding pair per
-    //     Twin activity, gated on metaml.messaging.enabled=true.
-    //   - TaskQueuePublisher / TaskQueueListener: Main asks Twin to run an activity (publish),
-    //     and the real consumer that performs the actual Camunda signal delivery releasing Twin's
-    //     waiting execution (listen).
-    //   - ResponseQueuePublisher / ResponseQueueListener: Twin reports an activity's completion
-    //     back to Main (publish), and the real consumer that releases Main's waiting execution
-    //     (listen).
-    // SignalBroadcaster (unchanged) still decides WHEN a handoff happens - REQUEST routes through
-    // the gated activity's task queue, RESPONSE through its response queue (see
-    // mapSignalToGatedTwinTopic and deliverTo). Every Twin activity gets a queue pair regardless
-    // of whether a shared signal happens to gate it, so the topology itself is always complete and
-    // inspectable at the broker even where a signal never resolves for a particular activity.
+    // Generates this platform's RabbitMQ messaging layer as separate, readable Java source files (not embedded string literals a developer has to dig for): one task queue plus one response queue per Main<->Twin communication activity - a Twin external-task topic. Five pieces, generated together, one class per responsibility: - RabbitMqConfig: connection/topology metadata, exchange, and one queue+binding pair per Twin activity, gated on metaml.messaging.enabled=true. - TaskQueuePublisher / TaskQueueListener: Main asks Twin to run an activity (publish), and the real consumer that performs the actual Camunda signal delivery releasing Twin's waiting execution (listen). - ResponseQueuePublisher / ResponseQueueListener: Twin reports an activity's completion back to Main (publish), and the real consumer that releases Main's waiting execution (listen). SignalBroadcaster (unchanged) still decides WHEN a handoff happens - REQUEST routes through the gated activity's task queue, RESPONSE through its response queue (see mapSignalToGatedTwinTopic and deliverTo). Every Twin activity gets a queue pair regardless of whether a shared signal happens to gate it, so the topology itself is always complete and inspectable at the broker even where a signal never resolves for a particular activity.
     private void writeRabbitMqMessaging(Path projectDir, String basePackage, String messagingNamespace,
             List<String> twinTopics, Map<String, String> signalToGatedTwinTopic) {
         String subPackage = basePackage + ".messaging";
@@ -1056,36 +925,24 @@ public class SpringBootProjectGenerator {
                 import org.springframework.context.annotation.Bean;
                 import org.springframework.context.annotation.Configuration;
 
-                // RabbitMQ topology for this generated platform's Main<->Twin communication: one task
-                // queue and one response queue per Twin external-task activity (see
-                // SpringBootProjectGenerator.assignActivityQueueIdentities), scoped to this generated
-                // project so two independently generated platforms can never physically share a queue.
-                // Queue/exchange names are derived entirely from the Twin BPMN's own external-task
-                // topics and this project's generated id - nothing here is hard-coded to any particular
-                // process. Enabled only with metaml.messaging.enabled=true, matching every other
-                // messaging component in this platform.
+                // RabbitMQ topology for this generated platform's Main<->Twin communication: one task queue and one response queue per Twin external-task activity (see SpringBootProjectGenerator.assignActivityQueueIdentities), scoped to this generated project so two independently generated platforms can never physically share a queue. Queue/exchange names are derived entirely from the Twin BPMN's own external-task topics and this project's generated id - nothing here is hard-coded to any particular process. Enabled only with metaml.messaging.enabled=true, matching every other messaging component in this platform.
                 @Configuration
                 @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
                 public class RabbitMqConfig {
 
                     public static final String EXCHANGE = "%s";
 
-                    // Twin external-task topic -> its dedicated task queue name (Main asks Twin to run
-                    // this activity) - the single source of truth for which activities have RabbitMQ
-                    // queues at all.
+                    // Twin external-task topic -> its dedicated task queue name (Main asks Twin to run this activity) - the single source of truth for which activities have RabbitMQ queues at all.
                     public static final Map<String, String> TASK_QUEUE_BY_TOPIC = Map.ofEntries(
                             %s
                     );
 
-                    // Twin external-task topic -> its dedicated response queue name (Twin reports the
-                    // activity's completion back to Main).
+                    // Twin external-task topic -> its dedicated response queue name (Twin reports the activity's completion back to Main).
                     public static final Map<String, String> RESPONSE_QUEUE_BY_TOPIC = Map.ofEntries(
                             %s
                     );
 
-                    // Topic -> the routing key its task queue is bound with. Equal to the queue's own
-                    // unique slug, so publisher and consumer always agree without parsing queue names
-                    // back apart.
+                    // Topic -> the routing key its task queue is bound with. Equal to the queue's own unique slug, so publisher and consumer always agree without parsing queue names back apart.
                     public static final Map<String, String> TASK_ROUTING_KEY_BY_TOPIC = Map.ofEntries(
                             %s
                     );
@@ -1095,10 +952,7 @@ public class SpringBootProjectGenerator {
                             %s
                     );
 
-                    // BPMN signal name -> the Twin activity topic its release actually gates entry
-                    // into (see SpringBootProjectGenerator.mapSignalToGatedTwinTopic) - how
-                    // SignalBroadcaster's own REQUEST/RESPONSE handoff (unchanged) knows which
-                    // activity's queue pair to route a given signal's delivery through.
+                    // BPMN signal name -> the Twin activity topic its release actually gates entry into (see SpringBootProjectGenerator.mapSignalToGatedTwinTopic) - how SignalBroadcaster's own REQUEST/RESPONSE handoff (unchanged) knows which activity's queue pair to route a given signal's delivery through.
                     public static final Map<String, String> TOPIC_BY_SIGNAL = Map.ofEntries(
                             %s
                     );
@@ -1121,13 +975,7 @@ public class SpringBootProjectGenerator {
                 import org.springframework.beans.factory.annotation.Value;
                 import org.springframework.stereotype.Component;
 
-                // Publishes a "run this Twin activity now" task message to that activity's own
-                // dedicated task queue (see RabbitMqConfig.TASK_QUEUE_BY_TOPIC) - TaskQueueListener
-                // performs the actual Camunda signal delivery that releases Twin's waiting execution,
-                // on consume. Always present as a bean, but isEnabled() returns false unless
-                // metaml.messaging.enabled=true (no broker required by default). Payload is
-                // pipe-delimited (signalName|executionId|processInstanceId|businessKey), not JSON,
-                // independent of the pre-existing messaging package's Jackson configuration.
+                // Publishes a "run this Twin activity now" task message to that activity's own dedicated task queue (see RabbitMqConfig.TASK_QUEUE_BY_TOPIC) - TaskQueueListener performs the actual Camunda signal delivery that releases Twin's waiting execution, on consume. Always present as a bean, but isEnabled() returns false unless metaml.messaging.enabled=true (no broker required by default). Payload is pipe-delimited (signalName|executionId|processInstanceId|businessKey), not JSON, independent of the pre-existing messaging package's Jackson configuration.
                 @Component
                 public class TaskQueuePublisher {
 
@@ -1146,9 +994,7 @@ public class SpringBootProjectGenerator {
                         return enabled;
                     }
 
-                    // True for a Twin activity that has its own dedicated task queue - every activity
-                    // discovered from the Twin BPMN's own external-task topics has one (see
-                    // RabbitMqConfig.TASK_QUEUE_BY_TOPIC).
+                    // True for a Twin activity that has its own dedicated task queue - every activity discovered from the Twin BPMN's own external-task topics has one (see RabbitMqConfig.TASK_QUEUE_BY_TOPIC).
                     public boolean isEligible(String twinTopic) {
                         return RabbitMqConfig.TASK_QUEUE_BY_TOPIC.containsKey(twinTopic);
                     }
@@ -1181,12 +1027,7 @@ public class SpringBootProjectGenerator {
                 import org.springframework.beans.factory.annotation.Value;
                 import org.springframework.stereotype.Component;
 
-                // Publishes a "this Twin activity finished" response message to that activity's own
-                // dedicated response queue (see RabbitMqConfig.RESPONSE_QUEUE_BY_TOPIC) -
-                // ResponseQueueListener performs the actual Camunda signal delivery that releases
-                // Main's waiting execution, on consume. Always present as a bean, but isEnabled()
-                // returns false unless metaml.messaging.enabled=true. Payload format mirrors
-                // TaskQueuePublisher's own.
+                // Publishes a "this Twin activity finished" response message to that activity's own dedicated response queue (see RabbitMqConfig.RESPONSE_QUEUE_BY_TOPIC) - ResponseQueueListener performs the actual Camunda signal delivery that releases Main's waiting execution, on consume. Always present as a bean, but isEnabled() returns false unless metaml.messaging.enabled=true. Payload format mirrors TaskQueuePublisher's own.
                 @Component
                 public class ResponseQueuePublisher {
 
@@ -1242,9 +1083,7 @@ public class SpringBootProjectGenerator {
                         import org.springframework.stereotype.Component;
                         """;
 
-        // No Twin external-task topic exists when queues is empty, so there is no Main<->Twin
-        // communication activity to declare a RabbitMQ consumer for - the class is still generated
-        // (present unconditionally, like every other piece here), it just has nothing to listen on.
+        // No Twin external-task topic exists when queues is empty, so there is no Main<->Twin communication activity to declare a RabbitMQ consumer for - the class is still generated (present unconditionally, like every other piece here), it just has nothing to listen on.
         String noActivitiesComment = "    // No Twin external-task activity was found in this project's BPMNs, so\n"
                 + "    // there is no Main<->Twin communication activity to declare a RabbitMQ consumer for.\n";
 
@@ -1276,8 +1115,7 @@ public class SpringBootProjectGenerator {
                                             + "businessKey={}) via RabbitMQ", signalName, executionId,
                                             processInstanceId, businessKey);
                                 } catch (Exception e) {
-                                    // Expected during normal operation - the execution may already have moved
-                                    // on (e.g. another delivery reached it first).
+                                    // Expected during normal operation - the execution may already have moved on (e.g. another delivery reached it first).
                                     logger.info("TASK: signal '{}' delivery to execution {} skipped (already "
                                             + "advanced?): {}", signalName, executionId, e.toString());
                                 }
@@ -1314,8 +1152,7 @@ public class SpringBootProjectGenerator {
                                             + "(processInstanceId={}, businessKey={}) via RabbitMQ", signalName,
                                             executionId, processInstanceId, businessKey);
                                 } catch (Exception e) {
-                                    // Expected during normal operation - the execution may already have moved
-                                    // on (e.g. another delivery reached it first).
+                                    // Expected during normal operation - the execution may already have moved on (e.g. another delivery reached it first).
                                     logger.info("RESPONSE: signal '{}' delivery to execution {} skipped (already "
                                             + "advanced?): {}", signalName, executionId, e.toString());
                                 }
@@ -1328,13 +1165,7 @@ public class SpringBootProjectGenerator {
                 package %s;
 
                 %s
-                // The real consumer for task messages, one queue per Main<->Twin communication activity
-                // (see RabbitMqConfig). This is what makes RabbitMQ the actual Main->Twin transport
-                // rather than an audit log next to a direct call: the Camunda signal delivery that
-                // releases Twin's waiting execution happens here, triggered by consuming the message,
-                // not by SignalBroadcaster's own scheduled tick. Enabled only with
-                // metaml.messaging.enabled=true; when disabled, SignalBroadcaster delivers signals
-                // directly instead.
+                // The real consumer for task messages, one queue per Main<->Twin communication activity (see RabbitMqConfig). This is what makes RabbitMQ the actual Main->Twin transport rather than an audit log next to a direct call: the Camunda signal delivery that releases Twin's waiting execution happens here, triggered by consuming the message, not by SignalBroadcaster's own scheduled tick. Enabled only with metaml.messaging.enabled=true; when disabled, SignalBroadcaster delivers signals directly instead.
                 @Component
                 @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
                 public class TaskQueueListener {
@@ -1347,12 +1178,7 @@ public class SpringBootProjectGenerator {
                 package %s;
 
                 %s
-                // The real consumer for response messages, one queue per Main<->Twin communication
-                // activity (see RabbitMqConfig). This is what makes RabbitMQ the actual Twin->Main
-                // transport: the Camunda signal delivery that releases Main's waiting execution happens
-                // here, triggered by consuming the message. Enabled only with
-                // metaml.messaging.enabled=true; when disabled, SignalBroadcaster delivers signals
-                // directly instead.
+                // The real consumer for response messages, one queue per Main<->Twin communication activity (see RabbitMqConfig). This is what makes RabbitMQ the actual Twin->Main transport: the Camunda signal delivery that releases Main's waiting execution happens here, triggered by consuming the message. Enabled only with metaml.messaging.enabled=true; when disabled, SignalBroadcaster delivers signals directly instead.
                 @Component
                 @ConditionalOnProperty(name = "metaml.messaging.enabled", havingValue = "true")
                 public class ResponseQueueListener {
@@ -1369,10 +1195,7 @@ public class SpringBootProjectGenerator {
         writeFile(packageDir.resolve("ResponseQueueListener.java"), responseListenerSource);
     }
 
-    // Generates a Spring component that periodically broadcasts all BPMN-defined signals so that
-    // intermediate signal catch events in both processes can advance. Both Manufacturing and Twin
-    // use catch events with shared signal names; neither throws, so signals must be broadcast
-    // externally. Signal names are extracted from the actual BPMNs, not hard-coded.
+    // Generates a Spring component that periodically broadcasts all BPMN-defined signals so that intermediate signal catch events in both processes can advance. Both Manufacturing and Twin use catch events with shared signal names; neither throws, so signals must be broadcast externally. Signal names are extracted from the actual BPMNs, not hard-coded.
     private void writeSignalBroadcaster(Path projectDir, String basePackage, Set<String> signalNames) {
         String subPackage = basePackage + ".signal";
         String coordinationPackage = basePackage + ".coordination";
@@ -1404,37 +1227,7 @@ public class SpringBootProjectGenerator {
                 import %s.PairRegistry;
                 %s
 
-                // Delivers BPMN-defined signals to the specific executions currently waiting on each one,
-                // so intermediate signal catch events in both processes can advance. Both Manufacturing and
-                // Twin use catch events with shared signal names; neither throws, so signals must be
-                // delivered externally. Signal names are derived from the actual BPMN signal definitions,
-                // not hard-coded.
-                //
-                // For a paired Main+Twin (same business key - see PairRegistry and the generated /start
-                // endpoints), each shared signal becomes a genuine two-step, targeted handoff instead of
-                // an undifferentiated broadcast:
-                //   1. REQUEST (Main -> Twin): once the initiator ("Main") and responder ("Twin") side of a
-                //      pair are simultaneously waiting on the same signal, only the responder's execution
-                //      is released. What runs next in its own BPMN - the Twin's delegate/external-task
-                //      worker - is the simulated agent invocation.
-                //   2. RESPONSE (Twin -> Main): the initiator's execution is deliberately left waiting
-                //      until the responder is observed to have moved on - subscribed to a different
-                //      signal, or completed entirely - proving its gated task actually ran, not merely
-                //      that the signal arrived. Only then is the initiator's execution released.
-                // This uses only generic runtime state (event subscriptions, business keys, process
-                // instance activity), never a process-specific name - the same class handles any BPMN
-                // pair, not just this one. Neither supplied process model has a signal throw event, so
-                // this stays the only way either direction can be delivered at all.
-                //
-                // An execution with no business key, or whose partner is not currently waiting on the
-                // same signal (unpaired, or a rework loop revisiting a signal its partner already passed
-                // for good), is delivered to immediately - exactly the prior, pre-pairing behavior. This
-                // is additive: nothing changes for a caller that never uses business keys.
-                //
-                // Scheduling itself (@EnableScheduling + the thread pool) is enabled by the always-generated
-                // SchedulingConfig, not here - this class must not be the thing that turns @Scheduled on:
-                // a BPMN pair with external tasks but no signals still needs its ExternalTaskPoller to run,
-                // and that must not depend on whether this class happens to exist.
+                // Delivers BPMN-defined signals to the specific executions currently waiting on each one, so intermediate signal catch events in both processes can advance. Both Manufacturing and Twin use catch events with shared signal names; neither throws, so signals must be delivered externally. Signal names are derived from the actual BPMN signal definitions, not hard-coded. For a paired Main+Twin (same business key - see PairRegistry and the generated /start endpoints), each shared signal becomes a genuine two-step, targeted handoff instead of an undifferentiated broadcast: 1. REQUEST (Main -> Twin): once the initiator ("Main") and responder ("Twin") side of a pair are simultaneously waiting on the same signal, only the responder's execution is released. What runs next in its own BPMN - the Twin's delegate/external-task worker - is the simulated agent invocation. 2. RESPONSE (Twin -> Main): the initiator's execution is deliberately left waiting until the responder is observed to have moved on - subscribed to a different signal, or completed entirely - proving its gated task actually ran, not merely that the signal arrived. Only then is the initiator's execution released. This uses only generic runtime state (event subscriptions, business keys, process instance activity), never a process-specific name - the same class handles any BPMN pair, not just this one. Neither supplied process model has a signal throw event, so this stays the only way either direction can be delivered at all. An execution with no business key, or whose partner is not currently waiting on the same signal (unpaired, or a rework loop revisiting a signal its partner already passed for good), is delivered to immediately - exactly the prior, pre-pairing behavior. This is additive: nothing changes for a caller that never uses business keys. Scheduling itself (@EnableScheduling + the thread pool) is enabled by the always-generated SchedulingConfig, not here - this class must not be the thing that turns @Scheduled on: a BPMN pair with external tasks but no signals still needs its ExternalTaskPoller to run, and that must not depend on whether this class happens to exist.
                 @Component
                 public class SignalBroadcaster {
 
@@ -1445,27 +1238,11 @@ public class SpringBootProjectGenerator {
                     private final PairRegistry pairRegistry;
                     private final TaskQueuePublisher taskQueuePublisher;
                     private final ResponseQueuePublisher responseQueuePublisher;
-                    // (businessKey + "|" + signalName) currently past step 1, awaiting proof of step 2
-                    // before the initiator is released. Only this scheduled method ever touches these
-                    // fields (Spring never overlaps two runs of the same @Scheduled method), but they
-                    // stay concurrent collections defensively rather than relying on that alone.
+                    // (businessKey + "|" + signalName) currently past step 1, awaiting proof of step 2 before the initiator is released. Only this scheduled method ever touches these fields (Spring never overlaps two runs of the same @Scheduled method), but they stay concurrent collections defensively rather than relying on that alone.
                     private final Set<String> awaitingResponse = ConcurrentHashMap.newKeySet();
-                    // (processInstanceId + "|" + signalName) that this broadcaster has ever actually
-                    // delivered signalName to, by any path. Distinguishes "partner has not reached this
-                    // signal YET" (may still arrive) from "partner already received this signal and
-                    // moved on" (a rework-loop revisit, or the partner's earlier unpaired delivery before
-                    // the other side ever registered - either way it is not coming back to this exact
-                    // signal). Never cleared - this is a short-lived generated harness, not a long-running
-                    // service, so unbounded growth for the process's lifetime is fine.
+                    // (processInstanceId + "|" + signalName) that this broadcaster has ever actually delivered signalName to, by any path. Distinguishes "partner has not reached this signal YET" (may still arrive) from "partner already received this signal and moved on" (a rework-loop revisit, or the partner's earlier unpaired delivery before the other side ever registered - either way it is not coming back to this exact signal). Never cleared - this is a short-lived generated harness, not a long-running service, so unbounded growth for the process's lifetime is fine.
                     private final Set<String> everDelivered = ConcurrentHashMap.newKeySet();
-                    // (waiting execution's processInstanceId + "|" + signalName) -> how many ticks it has
-                    // been seen waiting here with its partner neither co-waiting nor already past this
-                    // signal (see MAX_PARTNER_ARRIVAL_TICKS). Bounds the "the partner may just not have
-                    // arrived yet" wait: a pair's shared signals resolve this way within one or two ticks
-                    // in practice, but a signal that exists in only ONE side's BPMN (e.g. RedCollar's own
-                    // Manuf-only orderVerifySignal) has a real, registered partner that will structurally
-                    // never co-wait on it - everDelivered can never record that in advance, so without a
-                    // bound this execution would wait forever. Cleared once resolved either way.
+                    // (waiting execution's processInstanceId + "|" + signalName) -> how many ticks it has been seen waiting here with its partner neither co-waiting nor already past this signal (see MAX_PARTNER_ARRIVAL_TICKS). Bounds the "the partner may just not have arrived yet" wait: a pair's shared signals resolve this way within one or two ticks in practice, but a signal that exists in only ONE side's BPMN (e.g. RedCollar's own Manuf-only orderVerifySignal) has a real, registered partner that will structurally never co-wait on it - everDelivered can never record that in advance, so without a bound this execution would wait forever. Cleared once resolved either way.
                     private final Map<String, Integer> partnerArrivalTicks = new ConcurrentHashMap<>();
                     private static final int MAX_PARTNER_ARRIVAL_TICKS = 5;
 
@@ -1509,10 +1286,7 @@ public class SpringBootProjectGenerator {
                         String waitKey = subscription.getProcessInstanceId() + "|" + signalName;
 
                         if ("responder".equals(role)) {
-                            // Normally never self-releases - the initiator's own turn through this
-                            // method (below) performs the actual handoff. If the initiator is not
-                            // co-waiting yet, fall back to immediate delivery once partnerNotComing
-                            // below says so; otherwise wait for a later tick instead of racing ahead.
+                            // Normally never self-releases - the initiator's own turn through this method (below) performs the actual handoff. If the initiator is not co-waiting yet, fall back to immediate delivery once partnerNotComing below says so; otherwise wait for a later tick instead of racing ahead.
                             if (partnerWaitingNow) {
                                 partnerArrivalTicks.remove(waitKey);
                             } else if (partnerNotComing(waitKey, partnerInstanceId, signalName)) {
@@ -1543,24 +1317,13 @@ public class SpringBootProjectGenerator {
                             return;
                         }
 
-                        // Partner (the responder) is not currently waiting on this exact signal and no
-                        // handoff is in flight for it. Same distinction as the responder branch above:
-                        // fall back to immediate delivery once partnerNotComing says so - a rework-loop
-                        // revisit, or a signal that exists in only this side's BPMN at all (the responder
-                        // is a real, registered partner that will simply never co-wait on it). Otherwise
-                        // the responder may simply not have reached this signal yet - wait rather than
-                        // race ahead of it.
+                        // Partner (the responder) is not currently waiting on this exact signal and no handoff is in flight for it. Same distinction as the responder branch above: fall back to immediate delivery once partnerNotComing says so - a rework-loop revisit, or a signal that exists in only this side's BPMN at all (the responder is a real, registered partner that will simply never co-wait on it). Otherwise the responder may simply not have reached this signal yet - wait rather than race ahead of it.
                         if (partnerNotComing(waitKey, partnerInstanceId, signalName)) {
                             deliverTo(signalName, subscription, businessKey, "DELIVERED");
                         }
                     }
 
-                    // True once waiting for the partner has gone on long enough to conclude it is not
-                    // coming to THIS exact signal - either because it already has (everDelivered), or
-                    // because MAX_PARTNER_ARRIVAL_TICKS consecutive ticks have passed without it showing
-                    // up (see partnerArrivalTicks's own field comment for why a bound is needed at all).
-                    // waitKey identifies the WAITING execution+signal, not the partner, so concurrent
-                    // pairs and different signals never share a counter.
+                    // True once waiting for the partner has gone on long enough to conclude it is not coming to THIS exact signal - either because it already has (everDelivered), or because MAX_PARTNER_ARRIVAL_TICKS consecutive ticks have passed without it showing up (see partnerArrivalTicks's own field comment for why a bound is needed at all). waitKey identifies the WAITING execution+signal, not the partner, so concurrent pairs and different signals never share a counter.
                     private boolean partnerNotComing(String waitKey, String partnerInstanceId, String signalName) {
                         if (everDelivered.contains(partnerInstanceId + "|" + signalName)) {
                             partnerArrivalTicks.remove(waitKey);
@@ -1574,16 +1337,7 @@ public class SpringBootProjectGenerator {
                         return false;
                     }
 
-                    // True once the responder has provably moved past the gated task behind signalName -
-                    // subscribed to a different signal, or completed entirely - rather than merely having
-                    // received the signal itself, which happens before its gated task ever runs.
-                    //
-                    // Relies on the responder's own JavaDelegate.execute() running synchronously, inside
-                    // the same Camunda command/transaction as the signal delivery that triggers it - only
-                    // that makes "no longer subscribed to signalName" (checked below via a separate query,
-                    // on a later broadcaster tick) proof that the gated task actually finished, rather than
-                    // merely that it started. A delegate that hands work to another thread and returns
-                    // early would make this method return true before the real work is done.
+                    // True once the responder has provably moved past the gated task behind signalName - subscribed to a different signal, or completed entirely - rather than merely having received the signal itself, which happens before its gated task ever runs. Relies on the responder's own JavaDelegate.execute() running synchronously, inside the same Camunda command/transaction as the signal delivery that triggers it - only that makes "no longer subscribed to signalName" (checked below via a separate query, on a later broadcaster tick) proof that the gated task actually finished, rather than merely that it started. A delegate that hands work to another thread and returns early would make this method return true before the real work is done.
                     private boolean responderHasAdvancedPast(String signalName, String responderInstanceId) {
                         ProcessInstance stillActive = runtimeService.createProcessInstanceQuery()
                                 .processInstanceId(responderInstanceId)
@@ -1603,14 +1357,7 @@ public class SpringBootProjectGenerator {
                         return !responderSignals.isEmpty();
                     }
 
-                    // Routes a REQUEST through the gated Twin activity's own task queue and a RESPONSE
-                    // through that same activity's response queue (see RabbitMqConfig.TOPIC_BY_SIGNAL),
-                    // when messaging is enabled and this signal is provably gated to one - i.e. it is a
-                    // genuine Main<->Twin communication activity, not a signal declared on only one
-                    // side. DELIVERED (the unpaired/fallback phase) always delivers directly: it does
-                    // not represent a real cross-process handoff, so it must never touch RabbitMQ even
-                    // when messaging is enabled. A missed delivery because the execution already moved
-                    // on is normal - not an error.
+                    // Routes a REQUEST through the gated Twin activity's own task queue and a RESPONSE through that same activity's response queue (see RabbitMqConfig.TOPIC_BY_SIGNAL), when messaging is enabled and this signal is provably gated to one - i.e. it is a genuine Main<->Twin communication activity, not a signal declared on only one side. DELIVERED (the unpaired/fallback phase) always delivers directly: it does not represent a real cross-process handoff, so it must never touch RabbitMQ even when messaging is enabled. A missed delivery because the execution already moved on is normal - not an error.
                     private void deliverTo(String signalName, EventSubscription subscription, String businessKey,
                             String phase) {
                         String gatedTopic = RabbitMqConfig.TOPIC_BY_SIGNAL.get(signalName);
@@ -1647,15 +1394,7 @@ public class SpringBootProjectGenerator {
         writeFile(packageDir.resolve("SignalBroadcaster.java"), source);
     }
 
-    // Generic Main/Twin pairing metadata, keyed only by the caller-supplied business key every
-    // generated /start endpoint already accepts - no BPMN- or process-specific knowledge. The first
-    // process instance to register a given business key is classified "initiator" (the caller-facing
-    // sense of "Main" in this generated platform); the next instance to register the SAME key is
-    // classified "responder" ("Twin"). A business key is pairing/correlation data only - it is not
-    // itself the communication mechanism. See SignalBroadcaster for how these roles turn each shared
-    // signal into a real, targeted Main -> Twin -> Main handoff rather than an undifferentiated
-    // broadcast. Generated unconditionally (every controller depends on it), even for a single-process
-    // project where pairing never actually happens.
+    // Generic Main/Twin pairing metadata, keyed only by the caller-supplied business key every generated /start endpoint already accepts - no BPMN- or process-specific knowledge. The first process instance to register a given business key is classified "initiator" (the caller-facing sense of "Main" in this generated platform); the next instance to register the SAME key is classified "responder" ("Twin"). A business key is pairing/correlation data only - it is not itself the communication mechanism. See SignalBroadcaster for how these roles turn each shared signal into a real, targeted Main -> Twin -> Main handoff rather than an undifferentiated broadcast. Generated unconditionally (every controller depends on it), even for a single-process project where pairing never actually happens.
     private void writePairRegistry(Path projectDir, String basePackage) {
         String subPackage = basePackage + ".coordination";
         String source = """
@@ -1673,10 +1412,7 @@ public class SpringBootProjectGenerator {
                     private final ConcurrentMap<String, String> initiators = new ConcurrentHashMap<>();
                     private final ConcurrentMap<String, String> responders = new ConcurrentHashMap<>();
 
-                    // Returns "initiator" for the first instance registered under businessKey,
-                    // "responder" for the second, and null for a blank key or a third-or-later instance
-                    // sharing an already-claimed key (outside what this registry pairs; callers should
-                    // treat that as unpaired and fall back to their own default behavior).
+                    // Returns "initiator" for the first instance registered under businessKey, "responder" for the second, and null for a blank key or a third-or-later instance sharing an already-claimed key (outside what this registry pairs; callers should treat that as unpaired and fall back to their own default behavior).
                     public String registerAndClassify(String businessKey, String processInstanceId) {
                         if (businessKey == null || businessKey.isBlank()) {
                             return null;
@@ -1692,8 +1428,7 @@ public class SpringBootProjectGenerator {
                         return null;
                     }
 
-                    // The other half of the pair for this business key, or null if unpaired (only one
-                    // instance has registered so far, or this instance/key isn't tracked at all).
+                    // The other half of the pair for this business key, or null if unpaired (only one instance has registered so far, or this instance/key isn't tracked at all).
                     public String partnerOf(String businessKey, String processInstanceId) {
                         if (businessKey == null || businessKey.isBlank()) {
                             return null;
@@ -1728,9 +1463,7 @@ public class SpringBootProjectGenerator {
         writeFile(packageDir.resolve("PairRegistry.java"), source);
     }
 
-    // Generates the GeneratedExternalTaskWorker interface that all generated workers implement.
-    // This replaces the external-task client's ExternalTaskHandler — workers use the embedded
-    // engine's ExternalTaskService directly, avoiding the REST/Jersey incompatibility with SB 4.x.
+    // Generates the GeneratedExternalTaskWorker interface that all generated workers implement. This replaces the external-task client's ExternalTaskHandler — workers use the embedded engine's ExternalTaskService directly, avoiding the REST/Jersey incompatibility with SB 4.x.
     private void writeWorkerInterface(Path projectDir, String basePackage) {
         String workerPackage = basePackage + ".worker";
         String source = """
@@ -1739,9 +1472,7 @@ public class SpringBootProjectGenerator {
                 import org.camunda.bpm.engine.ExternalTaskService;
                 import org.camunda.bpm.engine.externaltask.LockedExternalTask;
 
-                // Contract for generated external-task workers. Each worker handles one topic via the
-                // embedded engine's ExternalTaskService API (not the HTTP-based external-task client,
-                // which requires Jersey and is incompatible with Spring Boot 4.x).
+                // Contract for generated external-task workers. Each worker handles one topic via the embedded engine's ExternalTaskService API (not the HTTP-based external-task client, which requires Jersey and is incompatible with Spring Boot 4.x).
                 public interface GeneratedExternalTaskWorker {
 
                     String topic();
@@ -1753,21 +1484,7 @@ public class SpringBootProjectGenerator {
         writeFile(packageDir.resolve("GeneratedExternalTaskWorker.java"), source);
     }
 
-    // Generates the pluggable decision boundary every Twin worker calls instead of hardcoding a
-    // simulation inline (see ExternalTaskWorkerGenerator.renderTwinWorkerSource). Lands in the SAME
-    // package as the twin workers themselves (twinWorkerPackage - not basePackage, which is one
-    // level up) so the generated worker source needs no import for it.
-    //
-    // Deliberately NOT paired with a @ConditionalOnMissingBean default @Component: that combination
-    // looks reasonable but silently fails to register at all - @ConditionalOnMissingBean is only
-    // reliably honored inside @Configuration/@AutoConfiguration classes, not on arbitrary
-    // component-scanned beans, so with zero other implementations on the classpath the "fallback"
-    // bean never gets created and every Twin worker's constructor injection fails at startup (found
-    // this the hard way: GenericPlatformMechanismsEndToEndTest/RabbitMqStress30ActivityTest failing
-    // with "No qualifying bean of type TwinDecisionAgent available"). The worker instead takes an
-    // ObjectProvider<TwinDecisionAgent> and calls getIfAvailable() - see renderTwinWorkerSource -
-    // which returns null cleanly with zero implementations registered and the single implementation
-    // the moment a real @Component providing one exists. No generated code to touch either way.
+    // Generates the pluggable decision boundary every Twin worker calls instead of hardcoding a simulation inline (see ExternalTaskWorkerGenerator.renderTwinWorkerSource). Lands in the SAME package as the twin workers themselves (twinWorkerPackage - not basePackage, which is one level up) so the generated worker source needs no import for it. Deliberately NOT paired with a @ConditionalOnMissingBean default @Component: that combination looks reasonable but silently fails to register at all - @ConditionalOnMissingBean is only reliably honored inside @Configuration/@AutoConfiguration classes, not on arbitrary component-scanned beans, so with zero other implementations on the classpath the "fallback" bean never gets created and every Twin worker's constructor injection fails at startup (found this the hard way: GenericPlatformMechanismsEndToEndTest/RabbitMqStress30ActivityTest failing with "No qualifying bean of type TwinDecisionAgent available"). The worker instead takes an ObjectProvider<TwinDecisionAgent> and calls getIfAvailable() - see renderTwinWorkerSource - which returns null cleanly with zero implementations registered and the single implementation the moment a real @Component providing one exists. No generated code to touch either way.
     private void writeTwinDecisionAgentInterface(Path projectDir, String twinWorkerPackage) {
         String interfaceSource = """
                 package %1$s;
@@ -1776,24 +1493,10 @@ public class SpringBootProjectGenerator {
 
                 import org.camunda.bpm.engine.externaltask.LockedExternalTask;
 
-                // Pluggable decision boundary for every Twin worker. With no implementation
-                // registered, the generated worker falls back to synthetic, non-deterministic output
-                // so the twin process can still run standalone (see the worker's own execute() - it
-                // injects this via ObjectProvider, not directly, precisely so zero implementations is
-                // a supported, non-fatal case). To have the twin mirror real business intelligence -
-                // e.g. a risk-scoring model that predicts what the real (proxy) process would decide -
-                // register your own @Component implementing this interface; every generated Twin
-                // worker starts calling it instead, with no generated code to change.
+                // Pluggable decision boundary for every Twin worker. With no implementation registered, the generated worker falls back to synthetic, non-deterministic output so the twin process can still run standalone (see the worker's own execute() - it injects this via ObjectProvider, not directly, precisely so zero implementations is a supported, non-fatal case). To have the twin mirror real business intelligence - e.g. a risk-scoring model that predicts what the real (proxy) process would decide - register your own @Component implementing this interface; every generated Twin worker starts calling it instead, with no generated code to change.
                 public interface TwinDecisionAgent {
 
-                    // topic: the external-task topic being completed (e.g. "VerifyOrderTwin") - lets one
-                    // implementation branch on which BPMN activity it's deciding for.
-                    // task: the locked external task itself, for id/businessKey/variable access.
-                    // Returns the process variables to complete the task with. If this topic feeds an
-                    // exclusive gateway's condition, include that variable in the result if you can - the
-                    // calling worker fills in any the agent leaves out with a non-deterministic fallback
-                    // so the process never throws PropertyNotFoundException, but a real implementation
-                    // should be the one deciding it.
+                    // topic: the external-task topic being completed (e.g. "VerifyOrderTwin") - lets one implementation branch on which BPMN activity it's deciding for. task: the locked external task itself, for id/businessKey/variable access. Returns the process variables to complete the task with. If this topic feeds an exclusive gateway's condition, include that variable in the result if you can - the calling worker fills in any the agent leaves out with a non-deterministic fallback so the process never throws PropertyNotFoundException, but a real implementation should be the one deciding it.
                     Map<String, Object> decide(String topic, LockedExternalTask task);
                 }
                 """.formatted(twinWorkerPackage);
@@ -1802,9 +1505,7 @@ public class SpringBootProjectGenerator {
         writeFile(packageDir.resolve("TwinDecisionAgent.java"), interfaceSource);
     }
 
-    // Generates a scheduled poller that drives all GeneratedExternalTaskWorker beans. On each tick
-    // it calls fetchAndLock for every registered topic, dispatches locked tasks to the matching
-    // worker, and catches per-task exceptions so one failure doesn't stall the others.
+    // Generates a scheduled poller that drives all GeneratedExternalTaskWorker beans. On each tick it calls fetchAndLock for every registered topic, dispatches locked tasks to the matching worker, and catches per-task exceptions so one failure doesn't stall the others.
     private void writeExternalTaskPoller(Path projectDir, String basePackage) {
         String workerPackage = basePackage + ".worker";
         String source = """
@@ -1819,19 +1520,14 @@ public class SpringBootProjectGenerator {
                 import org.springframework.scheduling.annotation.Scheduled;
                 import org.springframework.stereotype.Component;
 
-                // Polls all registered external-task topics and dispatches locked tasks to the matching
-                // GeneratedExternalTaskWorker. Uses the embedded engine's ExternalTaskService directly
-                // (fetchAndLock + complete) instead of the HTTP-based external-task client starter,
-                // which depends on Jersey — incompatible with Spring Boot 4.x.
+                // Polls all registered external-task topics and dispatches locked tasks to the matching GeneratedExternalTaskWorker. Uses the embedded engine's ExternalTaskService directly (fetchAndLock + complete) instead of the HTTP-based external-task client starter, which depends on Jersey — incompatible with Spring Boot 4.x.
                 @Component
                 public class ExternalTaskPoller {
 
                     private static final Logger logger = LoggerFactory.getLogger(ExternalTaskPoller.class);
                     private static final String WORKER_ID = "generated-worker";
                     private static final long LOCK_DURATION_MS = 10_000L;
-                    // Backoff between retries of one task, and the delay before the poller's own next tick
-                    // picks it back up - no job executor is running, so this poller's own polling cadence
-                    // IS the retry mechanism (see handleWorkerFailure below).
+                    // Backoff between retries of one task, and the delay before the poller's own next tick picks it back up - no job executor is running, so this poller's own polling cadence IS the retry mechanism (see handleWorkerFailure below).
                     private static final long RETRY_BACKOFF_MS = 2_000L;
 
                     private final ExternalTaskService externalTaskService;
@@ -1870,15 +1566,7 @@ public class SpringBootProjectGenerator {
                         }
                     }
 
-                    // A task's current remaining retries is null until its first failure (Camunda's own
-                    // convention), at which point maxRetries is the starting budget. Each subsequent
-                    // failure decrements it by one. At zero, Camunda marks the task an incident and this
-                    // poller's own fetchAndLock naturally stops returning it - the same "no job executor"
-                    // reasoning that lets a positive retry count self-heal (its lockExpirationTime is
-                    // pushed out by RETRY_BACKOFF_MS, and this poller's next tick past that point re-fetches
-                    // it on its own, with no separate retry-timer infrastructure needed) also makes zero
-                    // retries a real, generic dead-letter state rather than a silent stall: it is visible
-                    // via ExternalTaskService/ExternalTaskQuery, not merely logged.
+                    // A task's current remaining retries is null until its first failure (Camunda's own convention), at which point maxRetries is the starting budget. Each subsequent failure decrements it by one. At zero, Camunda marks the task an incident and this poller's own fetchAndLock naturally stops returning it - the same "no job executor" reasoning that lets a positive retry count self-heal (its lockExpirationTime is pushed out by RETRY_BACKOFF_MS, and this poller's next tick past that point re-fetches it on its own, with no separate retry-timer infrastructure needed) also makes zero retries a real, generic dead-letter state rather than a silent stall: it is visible via ExternalTaskService/ExternalTaskQuery, not merely logged.
                     private void handleWorkerFailure(GeneratedExternalTaskWorker worker, LockedExternalTask task,
                             Exception e) {
                         Integer currentRetries = task.getRetries();
@@ -1899,17 +1587,7 @@ public class SpringBootProjectGenerator {
         writeFile(packageDir.resolve("ExternalTaskPoller.java"), source);
     }
 
-    // Enables Spring scheduling generically for the whole generated platform, and gives it a small
-    // configurable thread pool instead of Spring Boot's default single-thread scheduler. With one
-    // thread, ExternalTaskPoller (polling N topics) and SignalBroadcaster (when present) serialize
-    // on the same background thread, so a slow or blocked worker for one topic can delay every
-    // other topic's polling and all signal broadcasting. Pool size is small and configurable
-    // (metaml.scheduling.pool-size, default 4) - this is not a distributed task framework, just
-    // enough headroom that unrelated scheduled work does not queue behind one slow worker.
-    //
-    // Deliberately generated unconditionally (see generateWithAuthoredTwin) rather than folded into
-    // SignalBroadcaster: a BPMN pair with external tasks but no signals must still get a working
-    // ExternalTaskPoller, and @EnableScheduling must not depend on whether signals happen to exist.
+    // Enables Spring scheduling generically for the whole generated platform, and gives it a small configurable thread pool instead of Spring Boot's default single-thread scheduler. With one thread, ExternalTaskPoller (polling N topics) and SignalBroadcaster (when present) serialize on the same background thread, so a slow or blocked worker for one topic can delay every other topic's polling and all signal broadcasting. Pool size is small and configurable (metaml.scheduling.pool-size, default 4) - this is not a distributed task framework, just enough headroom that unrelated scheduled work does not queue behind one slow worker. Deliberately generated unconditionally (see generateWithAuthoredTwin) rather than folded into SignalBroadcaster: a BPMN pair with external tasks but no signals must still get a working ExternalTaskPoller, and @EnableScheduling must not depend on whether signals happen to exist.
     private void writeSchedulingConfig(Path projectDir, String basePackage) {
         String workerPackage = basePackage + ".worker";
         String source = """
@@ -1924,9 +1602,7 @@ public class SpringBootProjectGenerator {
                 import org.springframework.scheduling.annotation.EnableScheduling;
                 import org.springframework.scheduling.concurrent.ConcurrentTaskScheduler;
 
-                // Turns on @Scheduled generically for the whole generated platform (ExternalTaskPoller,
-                // SignalBroadcaster when present, and any future scheduled component), with a small
-                // configurable thread pool rather than Spring Boot's single-thread scheduler default.
+                // Turns on @Scheduled generically for the whole generated platform (ExternalTaskPoller, SignalBroadcaster when present, and any future scheduled component), with a small configurable thread pool rather than Spring Boot's single-thread scheduler default.
                 @Configuration
                 @EnableScheduling
                 public class SchedulingConfig {
@@ -1942,13 +1618,7 @@ public class SpringBootProjectGenerator {
         writeFile(packageDir.resolve("SchedulingConfig.java"), source);
     }
 
-    // Generic, read-only introspection endpoint for ANY process instance in the generated platform's
-    // engine - not tied to Manufacturing, Twin, or any particular BPMN shape. Exists so tests (and
-    // any real caller) can assert against the engine's own actual runtime state - active activity
-    // ids and process variables straight from RuntimeService - instead of only ever having log text
-    // to check. Generated once per project (not once per authored BPMN), since it takes a
-    // processInstanceId at call time and works the same regardless of which deployed process that
-    // instance belongs to.
+    // Generic, read-only introspection endpoint for ANY process instance in the generated platform's engine - not tied to Manufacturing, Twin, or any particular BPMN shape. Exists so tests (and any real caller) can assert against the engine's own actual runtime state - active activity ids and process variables straight from RuntimeService - instead of only ever having log text to check. Generated once per project (not once per authored BPMN), since it takes a processInstanceId at call time and works the same regardless of which deployed process that instance belongs to.
     private void writeProcessStatusController(Path projectDir, String basePackage) {
         String source = """
                 package %1$s.status;
@@ -1969,19 +1639,7 @@ public class SpringBootProjectGenerator {
                 import org.springframework.web.bind.annotation.RequestMapping;
                 import org.springframework.web.bind.annotation.RestController;
 
-                // Generic, read-only process-instance introspection - works for any deployed process,
-                // not just one this project's own generated controllers know about. Backs causal test
-                // assertions against real engine state (active activities, process variables, business
-                // key) rather than log text.
-                //
-                // Reliability hardening (Pass 2): also exposes genuine Camunda incident state (not
-                // simulated) - both to read it (incidents(), the same real state
-                // SignalBroadcaster.awaitingResponse's stuck-partner detection now checks) and, since this
-                // generated project has no camunda-bpm-spring-boot-starter-rest dependency of its own (no
-                // /engine-rest to reach for this), to deliberately induce and later resolve a REAL incident
-                // for failure-injection testing (failExternalTaskPermanently / retryExternalTask). Neither
-                // touches Proxy/Twin synchronization logic itself - both operate on whatever process
-                // instance/external task the caller names.
+                // Generic, read-only process-instance introspection - works for any deployed process, not just one this project's own generated controllers know about. Backs causal test assertions against real engine state (active activities, process variables, business key) rather than log text. Reliability hardening (Pass 2): also exposes genuine Camunda incident state (not simulated) - both to read it (incidents(), the same real state SignalBroadcaster.awaitingResponse's stuck-partner detection now checks) and, since this generated project has no camunda-bpm-spring-boot-starter-rest dependency of its own (no /engine-rest to reach for this), to deliberately induce and later resolve a REAL incident for failure-injection testing (failExternalTaskPermanently / retryExternalTask). Neither touches Proxy/Twin synchronization logic itself - both operate on whatever process instance/external task the caller names.
                 @RestController
                 @RequestMapping("/api/v1/process")
                 public class GeneratedProcessStatusController {
@@ -2017,12 +1675,7 @@ public class SpringBootProjectGenerator {
                         return ResponseEntity.ok(body);
                     }
 
-                    // How many times this process instance has ever entered the given BPMN activity,
-                    // whether still active or long since completed - authoritative proof of a rework
-                    // loop (or any other repeat visit), independent of process definition or activity
-                    // shape. Uses HistoryService (camunda.bpm.history-level=full by default), not the
-                    // in-memory active-activity view, precisely because a repeat visit's earlier
-                    // instances are no longer "active" by the time anyone asks.
+                    // How many times this process instance has ever entered the given BPMN activity, whether still active or long since completed - authoritative proof of a rework loop (or any other repeat visit), independent of process definition or activity shape. Uses HistoryService (camunda.bpm.history-level=full by default), not the in-memory active-activity view, precisely because a repeat visit's earlier instances are no longer "active" by the time anyone asks.
                     @GetMapping("/{processInstanceId}/activity-history/{activityId}/count")
                     public ResponseEntity<Map<String, Object>> activityVisitCount(
                             @PathVariable String processInstanceId, @PathVariable String activityId) {
@@ -2037,9 +1690,7 @@ public class SpringBootProjectGenerator {
                         return ResponseEntity.ok(body);
                     }
 
-                    // Real Camunda incident state for a process instance - the same query
-                    // SignalBroadcaster's own stuck-partner detection (Pass 2) runs, exposed read-only so
-                    // a caller (a test, an operator) can see it too instead of only inferring it from logs.
+                    // Real Camunda incident state for a process instance - the same query SignalBroadcaster's own stuck-partner detection (Pass 2) runs, exposed read-only so a caller (a test, an operator) can see it too instead of only inferring it from logs.
                     @GetMapping("/{processInstanceId}/incidents/count")
                     public ResponseEntity<Map<String, Object>> incidentCount(
                             @PathVariable String processInstanceId) {
@@ -2052,20 +1703,11 @@ public class SpringBootProjectGenerator {
                         return ResponseEntity.ok(body);
                     }
 
-                    // Test-support: deliberately fails a real, currently-lockable external task for the
-                    // given topic on the given process instance, with retries=0 - this is a genuine
-                    // Camunda incident (job retries exhausted), not a simulated one, produced through the
-                    // same ExternalTaskService API a real worker uses, just reporting failure instead of
-                    // completing. Exists because this generated project has no /engine-rest of its own to
-                    // do this from outside the JVM.
+                    // Test-support: deliberately fails a real, currently-lockable external task for the given topic on the given process instance, with retries=0 - this is a genuine Camunda incident (job retries exhausted), not a simulated one, produced through the same ExternalTaskService API a real worker uses, just reporting failure instead of completing. Exists because this generated project has no /engine-rest of its own to do this from outside the JVM.
                     @PostMapping("/{processInstanceId}/external-task/{topic}/fail-permanently")
                     public ResponseEntity<Map<String, Object>> failExternalTaskPermanently(
                             @PathVariable String processInstanceId, @PathVariable String topic) {
-                        // ExternalTaskQueryTopicBuilder has no processInstanceId filter of its own (only
-                        // businessKey/processDefinitionId/Key) - resolving the instance's own business key
-                        // first and filtering on THAT is what actually scopes this to the right instance,
-                        // not just the right topic (which alone would still work for a single pair, but
-                        // not when more than one pair shares a topic name concurrently).
+                        // ExternalTaskQueryTopicBuilder has no processInstanceId filter of its own (only businessKey/processDefinitionId/Key) - resolving the instance's own business key first and filtering on THAT is what actually scopes this to the right instance, not just the right topic (which alone would still work for a single pair, but not when more than one pair shares a topic name concurrently).
                         ProcessInstance target = runtimeService.createProcessInstanceQuery()
                                 .processInstanceId(processInstanceId)
                                 .singleResult();
@@ -2095,11 +1737,7 @@ public class SpringBootProjectGenerator {
                         return ResponseEntity.ok(body);
                     }
 
-                    // Test-support: the real recovery path for the incident failExternalTaskPermanently
-                    // produces - restoring retries is what lets Camunda's own job executor pick the
-                    // external task back up and, since the generated worker's own logic never deliberately
-                    // fails, complete it normally on the next attempt. Genuine recovery through real
-                    // Camunda mechanics, not a test-only shortcut that pretends the task completed.
+                    // Test-support: the real recovery path for the incident failExternalTaskPermanently produces - restoring retries is what lets Camunda's own job executor pick the external task back up and, since the generated worker's own logic never deliberately fails, complete it normally on the next attempt. Genuine recovery through real Camunda mechanics, not a test-only shortcut that pretends the task completed.
                     @PostMapping("/external-task/{externalTaskId}/retry")
                     public ResponseEntity<Map<String, Object>> retryExternalTask(
                             @PathVariable String externalTaskId) {
@@ -2118,9 +1756,7 @@ public class SpringBootProjectGenerator {
     private void writeDelegateFile(Path packageDir, String className, String sourceCode, String beanName,
             String bpmnElementId) {
         Path target = packageDir.resolve(className + ".java");
-        // not the shared writeFile() helper below - a failure here is attributable to this one
-        // delegate specifically, which writeFile's own generic UncheckedIOException has no way
-        // to say (see DelegateWriteException's own comment)
+        // not the shared writeFile() helper below - a failure here is attributable to this one delegate specifically, which writeFile's own generic UncheckedIOException has no way to say (see DelegateWriteException's own comment)
         try {
             Files.createDirectories(target.getParent());
             Files.writeString(target, sourceCode, StandardCharsets.UTF_8);
@@ -2202,9 +1838,7 @@ public class SpringBootProjectGenerator {
                 import %s.bridge.NotificationBridge;
                 import %s.coordination.PairRegistry;
 
-                // Generated for process key "%s" - not hand-written, don't hand-edit; regenerate instead.
-                // One endpoint per externally-triggerable BPMN activity, generated from the model itself.
-                // Calls NotificationBridge.%s after completing each activity (see NotificationBridge).
+                // Generated for process key "%s" - not hand-written, don't hand-edit; regenerate instead. One endpoint per externally-triggerable BPMN activity, generated from the model itself. Calls NotificationBridge.%s after completing each activity (see NotificationBridge).
                 @RestController
                 @RequestMapping("%s")
                 public class %s {
@@ -2222,17 +1856,7 @@ public class SpringBootProjectGenerator {
                         this.pairRegistry = pairRegistry;
                 %s    }
 
-                    // businessKey is optional and generic - it is not a BPMN concept, it is how a caller
-                    // that is starting a Main+Twin PAIR can make that pairing explicit and queryable
-                    // (start Main, then start Twin with the same key). Omitting it preserves the exact
-                    // previous behavior (an unkeyed instance) for callers that only need one instance.
-                    //
-                    // "role" in the response comes from PairRegistry, derived purely from arrival order
-                    // under a shared business key - the first instance to register a key is "initiator",
-                    // the next is "responder". It is omitted when no business key is supplied. This is
-                    // pairing/observability metadata only, not the communication mechanism itself - see
-                    // PairRegistry and SignalBroadcaster for how initiator/responder roles turn each
-                    // shared signal into a real, targeted Main -> Twin -> Main handoff.
+                    // businessKey is optional and generic - it is not a BPMN concept, it is how a caller that is starting a Main+Twin PAIR can make that pairing explicit and queryable (start Main, then start Twin with the same key). Omitting it preserves the exact previous behavior (an unkeyed instance) for callers that only need one instance. "role" in the response comes from PairRegistry, derived purely from arrival order under a shared business key - the first instance to register a key is "initiator", the next is "responder". It is omitted when no business key is supplied. This is pairing/observability metadata only, not the communication mechanism itself - see PairRegistry and SignalBroadcaster for how initiator/responder roles turn each shared signal into a real, targeted Main -> Twin -> Main handoff.
                     @PostMapping("/start")
                     public ResponseEntity<Map<String, String>> start(
                             @RequestParam(required = false) String businessKey) {
@@ -2330,8 +1954,7 @@ public class SpringBootProjectGenerator {
 
                 // this controller is the worker, so the id only has to be stable and identifiable
                 private static final String WORKER_ID = "generated-process-controller";
-                // long enough to survive the two calls below, short enough that a crash between
-                // them frees the task again rather than stranding it
+                // long enough to survive the two calls below, short enough that a crash between them frees the task again rather than stranding it
                 private static final long LOCK_MILLIS = 10_000L;
 
                 private ResponseEntity<Map<String, List<String>>> completeExternalTask(String processInstanceId,

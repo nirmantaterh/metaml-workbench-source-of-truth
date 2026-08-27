@@ -22,33 +22,7 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
-// Generates the simple Spring beans expected by the fixed com.tp.TargetPlatform template.
-// The BPMN is normalised to reference each generated bean by the BPMN element id, so both
-// camunda:delegateExpression and camunda:class inputs work consistently in the target platform.
-//
-// Lockstep synchronization (added for delegate-expression BPMNs):
-// The older camundademo pipeline's BPMNs already have signal catch events between activities on
-// BOTH sides (proxy and twin), so SignalBroadcaster's REQUEST/RESPONSE protocol naturally pairs
-// them. Delegate-expression BPMNs have none: the proxy runs straight through all serviceTasks
-// with no wait state, and the twin's receiveTask+message pattern creates message subscriptions
-// that SignalBroadcaster (which queries eventType="signal") never sees. To close this gap this
-// generator now:
-//   1. Proxy BPMN: inserts a signal intermediateCatchEvent after each serviceTask (wait state)
-//   2. Twin BPMN: replaces each receiveTask with a signal intermediateCatchEvent using the SAME
-//      signal name, preserving the implicit parallel split to the _automate serviceTask
-// Both sides then wait on sync_<activityId> signals that SignalBroadcaster delivers via the
-// same proven bidirectional handoff: twin first (REQUEST), then proxy (RESPONSE) once twin has
-// advanced - identical to how the old signal-gated BPMNs work.
-//
-// Load-bearing assumption this relies on: SignalBroadcaster only ever concludes "twin has moved
-// past this signal" (and so only then delivers RESPONSE) from state it reads AFTER the twin's
-// signalEventReceived() call has returned - see that generated class's own responderHasAdvancedPast
-// comment. That is only a valid proof of completion because the twin's _automate delegate's
-// execute() runs synchronously, in the SAME Camunda command/transaction as the signal delivery
-// that triggers it: nothing about the flow becomes visible to a separate query until the whole
-// transaction, delegate included, commits. A twin automation delegate that hands work off to
-// another thread and returns early (instead of blocking until that work is done) would silently
-// break the invariant this generator exists to establish.
+// Generates the simple Spring beans expected by the fixed com.tp.TargetPlatform template. The BPMN is normalised to reference each generated bean by the BPMN element id, so both camunda:delegateExpression and camunda:class inputs work consistently in the target platform. Lockstep synchronization (added for delegate-expression BPMNs): The older camundademo pipeline's BPMNs already have signal catch events between activities on BOTH sides (proxy and twin), so SignalBroadcaster's REQUEST/RESPONSE protocol naturally pairs them. Delegate-expression BPMNs have none: the proxy runs straight through all serviceTasks with no wait state, and the twin's receiveTask+message pattern creates message subscriptions that SignalBroadcaster (which queries eventType="signal") never sees. To close this gap this generator now: 1. Proxy BPMN: inserts a signal intermediateCatchEvent after each serviceTask (wait state) 2. Twin BPMN: replaces each receiveTask with a signal intermediateCatchEvent using the SAME signal name, preserving the implicit parallel split to the _automate serviceTask Both sides then wait on sync_<activityId> signals that SignalBroadcaster delivers via the same proven bidirectional handoff: twin first (REQUEST), then proxy (RESPONSE) once twin has advanced - identical to how the old signal-gated BPMNs work. Load-bearing assumption this relies on: SignalBroadcaster only ever concludes "twin has moved past this signal" (and so only then delivers RESPONSE) from state it reads AFTER the twin's signalEventReceived() call has returned - see that generated class's own responderHasAdvancedPast comment. That is only a valid proof of completion because the twin's _automate delegate's execute() runs synchronously, in the SAME Camunda command/transaction as the signal delivery that triggers it: nothing about the flow becomes visible to a separate query until the whole transaction, delegate included, commits. A twin automation delegate that hands work off to another thread and returns early (instead of blocking until that work is done) would silently break the invariant this generator exists to establish.
 @Component
 public class TargetPlatformSourceGenerator {
     private static final String CAMUNDA_NS = "http://camunda.org/schema/1.0/bpmn";
@@ -83,19 +57,10 @@ public class TargetPlatformSourceGenerator {
                 if ((!activity && !event) || (expression.isBlank() && javaClass.isBlank())) continue;
                 String id = element.getAttribute("id");
                 if (id == null || id.isBlank()) throw new IllegalArgumentException("Delegated BPMN element has no id");
-                // The twin side always gets its own bean name, distinct from whatever id the proxy
-                // BPMN uses - an authored twin (see saveModelWithAuthoredTwin) is free to reuse the
-                // exact same activity/event id as its proxy (a hand-mirrored twin naturally would),
-                // and Spring's @Component("...") registers by that literal string regardless of the
-                // proxy/twin package split below, so two different classes claiming the same bean
-                // name make the generated app fail to start with ConflictingBeanDefinitionException.
-                // Same fix already applied to executionListener beans below; className is left
-                // unqualified since Java tolerates identical simple class names across packages -
-                // only the Spring bean name actually collides.
+                // The twin side always gets its own bean name, distinct from whatever id the proxy BPMN uses - an authored twin (see saveModelWithAuthoredTwin) is free to reuse the exact same activity/event id as its proxy (a hand-mirrored twin naturally would), and Spring's @Component("...") registers by that literal string regardless of the proxy/twin package split below, so two different classes claiming the same bean name make the generated app fail to start with ConflictingBeanDefinitionException. Same fix already applied to executionListener beans below; className is left unqualified since Java tolerates identical simple class names across packages - only the Spring bean name actually collides.
                 String beanName = twin ? camel(id) + "Twin" : camel(id);
                 String className = pascal(id);
-                // A fixed template needs a deterministic, component-scanned bean name. Normalising
-                // also makes a camunda:class task usable without requiring an arbitrary FQCN.
+                // A fixed template needs a deterministic, component-scanned bean name. Normalising also makes a camunda:class task usable without requiring an arbitrary FQCN.
                 element.removeAttributeNS(CAMUNDA_NS, "class");
                 element.setAttributeNS(CAMUNDA_NS, "camunda:delegateExpression", "${" + beanName + "}");
                 String side = twin ? "TWIN" : "PROXY";
@@ -112,9 +77,7 @@ public class TargetPlatformSourceGenerator {
             sources.addAll(scanExecutionListeners(document, twin));
             sources.addAll(scanTaskListeners(document, twin));
 
-            // Apply bidirectional lockstep synchronization: insert signal catch events so both
-            // proxy and twin wait at the same signals after each activity. SignalBroadcaster's
-            // existing REQUEST/RESPONSE protocol handles the rest (see its own comment).
+            // Apply bidirectional lockstep synchronization: insert signal catch events so both proxy and twin wait at the same signals after each activity. SignalBroadcaster's existing REQUEST/RESPONSE protocol handles the rest (see its own comment).
             Set<String> syncSignalNames = new LinkedHashSet<>();
             Set<String> syncActivityIds = new LinkedHashSet<>();
             if (!twin && !proxyServiceTaskIds.isEmpty()) {
@@ -139,11 +102,7 @@ public class TargetPlatformSourceGenerator {
         }
     }
 
-    // ── Lockstep synchronization: Proxy BPMN ───────────────────────────────────
-    // For each proxy serviceTask, inserts an intermediateCatchEvent with a signalEventDefinition
-    // directly after it. The signal name (sync_<activityId>) will match the same signal inserted
-    // into the twin BPMN, giving SignalBroadcaster's REQUEST/RESPONSE rendezvous two subscription
-    // points to pair - same architecture the older camundademo pipeline's BPMN signal gates use.
+    // ── Lockstep synchronization: Proxy BPMN ─────────────────────────────────── For each proxy serviceTask, inserts an intermediateCatchEvent with a signalEventDefinition directly after it. The signal name (sync_<activityId>) will match the same signal inserted into the twin BPMN, giving SignalBroadcaster's REQUEST/RESPONSE rendezvous two subscription points to pair - same architecture the older camundademo pipeline's BPMN signal gates use.
     private Set<String> insertProxySyncSignals(Document document, List<String> activityIds) {
         Set<String> signalNames = new LinkedHashSet<>();
         Element definitions = document.getDocumentElement();
@@ -171,8 +130,7 @@ public class TargetPlatformSourceGenerator {
             List<Element> outgoingFlows = findFlowsBySourceRef(document, bpmnNs, activityId);
             if (outgoingFlows.isEmpty()) continue;
 
-            // Create the intermediate catch event. BPMN 2.0 XSD element order:
-            // incoming/outgoing (from tFlowNode) BEFORE signalEventDefinition (from tCatchEvent).
+            // Create the intermediate catch event. BPMN 2.0 XSD element order: incoming/outgoing (from tFlowNode) BEFORE signalEventDefinition (from tCatchEvent).
             Element catchEvent = document.createElementNS(bpmnNs, qname(prefix, "intermediateCatchEvent"));
             catchEvent.setAttribute("id", catchEventId);
 
@@ -219,12 +177,7 @@ public class TargetPlatformSourceGenerator {
         return signalNames;
     }
 
-    // ── Lockstep synchronization: Twin BPMN ────────────────────────────────────
-    // Replaces the TwinModelGenerator's receiveTask elements (which create message subscriptions
-    // the existing SignalBroadcaster cannot poll) with signal intermediateCatchEvents using the
-    // same sync_<activityId> signal names the proxy side waits on. The implicit parallel split
-    // from the receiveTask's two outgoing flows is preserved: one branch fires the _automate
-    // delegate, the other advances to the next signal gate.
+    // ── Lockstep synchronization: Twin BPMN ──────────────────────────────────── Replaces the TwinModelGenerator's receiveTask elements (which create message subscriptions the existing SignalBroadcaster cannot poll) with signal intermediateCatchEvents using the same sync_<activityId> signal names the proxy side waits on. The implicit parallel split from the receiveTask's two outgoing flows is preserved: one branch fires the _automate delegate, the other advances to the next signal gate.
     private Set<String> replaceTwinReceiveTasksWithSignals(Document document, Set<String> activityIds) {
         Set<String> signalNames = new LinkedHashSet<>();
         Element definitions = document.getDocumentElement();
@@ -250,9 +203,7 @@ public class TargetPlatformSourceGenerator {
 
             signalNames.add(signalName);
 
-            // Create replacement intermediateCatchEvent keeping the same id so all
-            // existing sequence flow sourceRef/targetRef references stay valid.
-            // BPMN 2.0 XSD element order: incoming/outgoing BEFORE signalEventDefinition.
+            // Create replacement intermediateCatchEvent keeping the same id so all existing sequence flow sourceRef/targetRef references stay valid. BPMN 2.0 XSD element order: incoming/outgoing BEFORE signalEventDefinition.
             Element catchEvent = document.createElementNS(bpmnNs, qname(prefix, "intermediateCatchEvent"));
             catchEvent.setAttribute("id", activityId);
             if (receiveTask.hasAttribute("name")) {
@@ -311,9 +262,7 @@ public class TargetPlatformSourceGenerator {
 
     // ── DOM helpers ────────────────────────────────────────────────────────────
 
-    // Inserts a child element into definitions BEFORE the first BPMNDiagram element (or any DI
-    // namespace element). BPMN 2.0 XSD requires rootElements (signal, message, process, etc.)
-    // before BPMNDiagram elements. Falls back to appendChild if no diagram is found.
+    // Inserts a child element into definitions BEFORE the first BPMNDiagram element (or any DI namespace element). BPMN 2.0 XSD requires rootElements (signal, message, process, etc.) before BPMNDiagram elements. Falls back to appendChild if no diagram is found.
     private static void insertBeforeDiagram(Element definitions, Element child) {
         NodeList children = definitions.getChildNodes();
         for (int i = 0; i < children.getLength(); i++) {
@@ -330,15 +279,7 @@ public class TargetPlatformSourceGenerator {
         return prefix != null ? prefix + ":" + localName : localName;
     }
 
-    // Returns candidate unchanged if no element in this document already uses it as an "id",
-    // otherwise probes candidate_2, candidate_3, ... deterministically (never random - the same
-    // source BPMN must generate the same output every time) until a free one is found. Guards
-    // against two cases: an activity id that happens to end in something like "_evt" or "_flow"
-    // already, and re-running generation on a proxy/twin BPMN that has already been through this
-    // transformation once (its own previously-inserted sync_evt_*/Signal_sync_* ids are already
-    // sitting in the document). Local to whichever document is passed in - the proxy and twin
-    // catch-event/flow/signal-element ids are never referenced from the other side's BPMN, so
-    // resolving a clash here needs no coordination across the two generate() calls.
+    // Returns candidate unchanged if no element in this document already uses it as an "id", otherwise probes candidate_2, candidate_3, ... deterministically (never random - the same source BPMN must generate the same output every time) until a free one is found. Guards against two cases: an activity id that happens to end in something like "_evt" or "_flow" already, and re-running generation on a proxy/twin BPMN that has already been through this transformation once (its own previously-inserted sync_evt_*/Signal_sync_* ids are already sitting in the document). Local to whichever document is passed in - the proxy and twin catch-event/flow/signal-element ids are never referenced from the other side's BPMN, so resolving a clash here needs no coordination across the two generate() calls.
     private static String uniqueId(Document document, String candidate) {
         if (findElementById(document, candidate) == null) {
             return candidate;
@@ -351,13 +292,7 @@ public class TargetPlatformSourceGenerator {
         }
     }
 
-    // Unlike element ids (see uniqueId), the SIGNAL NAME itself is not free to rename on collision:
-    // SignalBroadcaster pairs proxy and twin purely by matching signal name, and the twin side is
-    // handed this exact name via Result.syncActivityIds() with no channel back to the proxy side to
-    // report "actually, use a different name instead". Silently substituting one here would need
-    // that channel to exist so both sides still agree - out of scope for this generator without
-    // widening Result beyond a plain activity-id set. Failing loudly and telling the caller how to
-    // fix their model (rename the clashing signal or activity) is the safe alternative to guessing.
+    // Unlike element ids (see uniqueId), the SIGNAL NAME itself is not free to rename on collision: SignalBroadcaster pairs proxy and twin purely by matching signal name, and the twin side is handed this exact name via Result.syncActivityIds() with no channel back to the proxy side to report "actually, use a different name instead". Silently substituting one here would need that channel to exist so both sides still agree - out of scope for this generator without widening Result beyond a plain activity-id set. Failing loudly and telling the caller how to fix their model (rename the clashing signal or activity) is the safe alternative to guessing.
     private static void ensureSignalNameAvailable(Document document, String bpmnNs, String signalName,
             String activityId) {
         NodeList signals = document.getElementsByTagNameNS(bpmnNs, "signal");
@@ -410,20 +345,7 @@ public class TargetPlatformSourceGenerator {
 
     // ── Existing helpers (unchanged) ───────────────────────────────────────────
 
-    // camunda:executionListener is not scanned by the activity/event loop above (it is a CHILD
-    // element under extensionElements, not an attribute directly on the task/event it applies to)
-    // but references a delegateExpression bean the same way - one that must exist in the generated
-    // project or the engine throws PropertyNotFoundException the moment the listener's own event
-    // (start/end/take) fires. RedCollar's real BPMNs lean on exactly this: every Manuf activity's
-    // "end" listener notifies the twin side (${manufTaskCompletionListener}), a bean that belongs
-    // to the OLDER camundademo-based Target Harness Platform, not this fixed template - without a
-    // stub here it deploys fine and then dies with an unrecoverable incident the first time any
-    // activity actually completes.
-    //
-    // Deduplicated by bean name (the same listener is typically wired onto MANY activities) rather
-    // than by BPMN element id the way activities/events are - a listener has no element of its own
-    // to derive an id from, and the whole point is one class per DISTINCT bean the BPMN names, not
-    // one per place it's referenced from.
+    // camunda:executionListener is not scanned by the activity/event loop above (it is a CHILD element under extensionElements, not an attribute directly on the task/event it applies to) but references a delegateExpression bean the same way - one that must exist in the generated project or the engine throws PropertyNotFoundException the moment the listener's own event (start/end/take) fires. RedCollar's real BPMNs lean on exactly this: every Manuf activity's "end" listener notifies the twin side (${manufTaskCompletionListener}), a bean that belongs to the OLDER camundademo-based Target Harness Platform, not this fixed template - without a stub here it deploys fine and then dies with an unrecoverable incident the first time any activity actually completes. Deduplicated by bean name (the same listener is typically wired onto MANY activities) rather than by BPMN element id the way activities/events are - a listener has no element of its own to derive an id from, and the whole point is one class per DISTINCT bean the BPMN names, not one per place it's referenced from.
     private List<GeneratedSource> scanExecutionListeners(Document document, boolean twin) {
         List<GeneratedSource> sources = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
@@ -432,12 +354,7 @@ public class TargetPlatformSourceGenerator {
             Element listener = (Element) listeners.item(i);
             String originalBeanName = stripExpression(listener.getAttribute("delegateExpression"));
             if (originalBeanName.isBlank()) continue;
-            // The twin side always gets its own bean name, distinct from whatever the proxy BPMN
-            // named it - proxy and twin can genuinely name the same original listener (a
-            // structural mirror of the proxy always does; see TargetPlatformTwinMirrorGenerator,
-            // and two independently authored BPMNs could too by coincidence), and Spring refuses
-            // to start with two different classes registered under one bean name. The BPMN itself
-            // gets rewritten to match, the same way activity/event delegateExpressions above do.
+            // The twin side always gets its own bean name, distinct from whatever the proxy BPMN named it - proxy and twin can genuinely name the same original listener (a structural mirror of the proxy always does; see TargetPlatformTwinMirrorGenerator, and two independently authored BPMNs could too by coincidence), and Spring refuses to start with two different classes registered under one bean name. The BPMN itself gets rewritten to match, the same way activity/event delegateExpressions above do.
             String beanName = twin ? originalBeanName + "Twin" : originalBeanName;
             listener.setAttribute("delegateExpression", "${" + beanName + "}");
             if (!seen.add(beanName)) continue;
@@ -450,29 +367,7 @@ public class TargetPlatformSourceGenerator {
         return sources;
     }
 
-    // camunda:taskListener lives inside a userTask's <extensionElements>, the same shape
-    // executionListener does, but it is a genuinely different Camunda API: it fires on the user
-    // task's own lifecycle events (create/assignment/complete/delete/timeout/update, read from
-    // DelegateTask.getEventName() at runtime) rather than on activity execution, and Camunda
-    // invokes it through org.camunda.bpm.engine.delegate.TaskListener.notify(DelegateTask), not
-    // ExecutionListener.notify(DelegateExecution) - the two are not interchangeable, so a
-    // TaskListener stub must implement the right interface or the engine throws a
-    // ClassCastException the first time the task's listener event actually fires.
-    //
-    // Mirrors scanExecutionListeners in every other respect: same twin bean-suffixing to avoid a
-    // Spring ConflictingBeanDefinitionException when proxy and twin name the same original bean
-    // (an authored or mirrored twin can both do this - see that method's own comment), same
-    // dedup-by-bean-name (one class per distinct bean, however many tasks/events reference it),
-    // same {proxy|twin}/listeners/ output location - a TaskListener and an ExecutionListener are
-    // both "a bean Camunda calls back into", just through different interfaces, so they share a
-    // home rather than inventing a parallel directory for what is architecturally the same idea.
-    //
-    // Only the delegateExpression form is generated. camunda:class would need FQCN-based
-    // generation (see DelegateClassGenerator.generateFromJavaClass for that different shape, which
-    // this fixed-package template cannot reuse directly since a camunda:class listener must land
-    // at the exact package the BPMN names), and a raw UEL "expression" attribute names something
-    // arbitrary this generator has no safe way to turn into a class. Both are left unrewritten
-    // rather than silently mis-generated.
+    // camunda:taskListener lives inside a userTask's <extensionElements>, the same shape executionListener does, but it is a genuinely different Camunda API: it fires on the user task's own lifecycle events (create/assignment/complete/delete/timeout/update, read from DelegateTask.getEventName() at runtime) rather than on activity execution, and Camunda invokes it through org.camunda.bpm.engine.delegate.TaskListener.notify(DelegateTask), not ExecutionListener.notify(DelegateExecution) - the two are not interchangeable, so a TaskListener stub must implement the right interface or the engine throws a ClassCastException the first time the task's listener event actually fires. Mirrors scanExecutionListeners in every other respect: same twin bean-suffixing to avoid a Spring ConflictingBeanDefinitionException when proxy and twin name the same original bean (an authored or mirrored twin can both do this - see that method's own comment), same dedup-by-bean-name (one class per distinct bean, however many tasks/events reference it), same {proxy|twin}/listeners/ output location - a TaskListener and an ExecutionListener are both "a bean Camunda calls back into", just through different interfaces, so they share a home rather than inventing a parallel directory for what is architecturally the same idea. Only the delegateExpression form is generated. camunda:class would need FQCN-based generation (see DelegateClassGenerator.generateFromJavaClass for that different shape, which this fixed-package template cannot reuse directly since a camunda:class listener must land at the exact package the BPMN names), and a raw UEL "expression" attribute names something arbitrary this generator has no safe way to turn into a class. Both are left unrewritten rather than silently mis-generated.
     private List<GeneratedSource> scanTaskListeners(Document document, boolean twin) {
         List<GeneratedSource> sources = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();

@@ -1,12 +1,6 @@
-/* Page-specific styling for the Evolve page's single contextual bar and its secondary sidebar.
-   Deliberately NOT added to BpmnEditor.css: that file is shared with the model editor, and every
-   rule here is about a layout only this page has. The shared structural classes this page still
-   uses (.bpmn-editor, .bpmn-main, .bpmn-canvas, .bpmn-sidebar, .bpmn-log-*, .bpmn-json) are left
-   exactly as they are. */
+// Page-specific styling for the Evolve page's single contextual bar and its secondary sidebar. Deliberately NOT added to BpmnEditor.css: that file is shared with the model editor, and every rule here is about a layout only this page has. The shared structural classes this page still uses (.bpmn-editor, .bpmn-main, .bpmn-canvas, .bpmn-sidebar, .bpmn-log-*, .bpmn-json) are left exactly as they are. */
 
-/* One control region, not three. Mirrors the model editor's own toolbar shape - a column of rows,
-   controls in a wrapping row, status on a quieter row underneath - so the two pages still read as
-   the same application. */
+// One control region, not three. Mirrors the model editor's own toolbar shape - a column of rows, controls in a wrapping row, status on a quieter row underneath - so the two pages still read as the same application. */
 .evolve-bar {
     display: flex;
     flex-direction: column;
@@ -23,15 +17,13 @@
     flex-wrap: wrap;
 }
 
-/* the status line is secondary to the controls above it: no background, no border, and it only
-   occupies space when there is actually something to say */
+// the status line is secondary to the controls above it: no background, no border, and it only occupies space when there is actually something to say */
 .evolve-bar-status {
     font-size: 0.82rem;
     line-height: 1.3;
 }
 
-/* pending/awaiting-approval. Deliberately the same amber WorkflowProgress.css uses for an
-   IN_PROGRESS stage, so "waiting on something" looks the same wherever it appears. */
+// pending/awaiting-approval. Deliberately the same amber WorkflowProgress.css uses for an IN_PROGRESS stage, so "waiting on something" looks the same wherever it appears. */
 .evolve-status-warn {
     color: #a06a00;
 }
@@ -77,8 +69,7 @@
     max-width: 130px;
 }
 
-/* reads as state, not as a control - the selected activity and the connected flag are things the
-   page is telling you, so they must not look clickable next to real buttons */
+// reads as state, not as a control - the selected activity and the connected flag are things the page is telling you, so they must not look clickable next to real buttons */
 .evolve-chip {
     display: inline-flex;
     align-items: center;
@@ -120,8 +111,7 @@
     flex: none;
 }
 
-/* same reasoning as BpmnEditor.css's own disabled rule: outline buttons at the default 0.65
-   opacity still read as clickable */
+// same reasoning as BpmnEditor.css's own disabled rule: outline buttons at the default 0.65 opacity still read as clickable */
 .evolve-bar .btn:disabled {
     opacity: 1;
     color: #9aa5ad;
@@ -130,16 +120,14 @@
     cursor: not-allowed;
 }
 
-/* the two secondary panels are toggles, so they need a pressed state that is obvious without
-   changing the button's size and reflowing the bar */
+// the two secondary panels are toggles, so they need a pressed state that is obvious without changing the button's size and reflowing the bar */
 .evolve-bar .evolve-panel-toggle.active {
     background: #e4ecef;
     border-color: #9fb8c1;
     color: #1f5f71;
 }
 
-/* Secondary column. Same width and border as the model editor's sidebar so the two pages line up,
-   but this one can be closed, and closing it gives the canvas the whole width. */
+// Secondary column. Same width and border as the model editor's sidebar so the two pages line up, but this one can be closed, and closing it gives the canvas the whole width. */
 .evolve-sidebar {
     display: flex;
     flex-direction: column;

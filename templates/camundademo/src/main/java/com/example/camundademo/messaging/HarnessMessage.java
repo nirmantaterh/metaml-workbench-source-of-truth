@@ -5,12 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/**
- * JSON message envelope shared across the Manufacturing, Twin, Gateway, and Machines flows.
- *
- * <p>Uses a POJO for predictable Jackson serialization. Timestamps are ISO-8601 strings
- * and no tenant field is included because generated platforms are single-project runtimes.
- */
+// JSON message envelope shared across the Manufacturing, Twin, Gateway, and Machines flows. <p>Uses a POJO for predictable Jackson serialization. Timestamps are ISO-8601 strings and no tenant field is included because generated platforms are single-project runtimes.
 public class HarnessMessage {
 
     public enum Type {

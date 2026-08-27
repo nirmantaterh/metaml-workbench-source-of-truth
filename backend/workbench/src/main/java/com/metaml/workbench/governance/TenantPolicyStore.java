@@ -19,12 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// Same atomic-write pattern as WorkbenchStateStore/WorkflowEventStore: tmp-file-then-move,
-// rewrite the whole file every time, never throw to the caller, an `enabled` flag for tests.
-// Kept as its own class/file for the same reason those two are separate from each other -
-// tenants/policies are a genuinely different shape (and a different Phase 0 concern) from
-// either process models or workflow events, and mixing them would make an unrelated change to
-// one accidentally risk corrupting the other.
+// Persists tenant policy data to JSON using atomic write-and-replace.
 @Component
 public class TenantPolicyStore {
 

@@ -7,11 +7,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 
-// Phase 2 (see the Phase 1 tenant/policy work and the Phase 0 architecture audit): the one
-// place that turns a persisted tenant policy into ALLOW/DENY/REQUIRE_APPROVAL for a single
-// request. It only decides - nothing here pauses, blocks, or executes anything. A later phase
-// wires a real call site (and eventually a Policy Simulator) to this same engine; there is
-// deliberately no second evaluator anywhere in the codebase.
+// Evaluates governance requests against platform and tenant policies.
 @Component
 public class PolicyDecisionEngine {
 
@@ -25,9 +21,7 @@ public class PolicyDecisionEngine {
         if (request.tenantId() == null || request.tenantId().isBlank()) {
             throw new IllegalArgumentException("tenantId is required to evaluate a request");
         }
-        // fail loud on an unknown tenant - that's a bad reference from the caller, not an
-        // "ungoverned action" (that only applies once the tenant is real and simply has no
-        // matching rule)
+        // Fail loud on unknown tenant.
         tenantPolicyService.getTenant(request.tenantId());
 
         Optional<RuleMatch> platformMatch = bestMatch(tenantPolicyService.listPlatformPolicies(), request);
@@ -36,9 +30,7 @@ public class PolicyDecisionEngine {
         Optional<RuleMatch> winner = pickWinner(platformMatch, tenantMatch);
 
         if (winner.isEmpty()) {
-            // nothing matched, platform or tenant - the action is simply ungoverned. Default
-            // is ALLOW: silence in the policy must never turn into a block on work nobody
-            // ever wrote a rule about.
+            // Ungoverned actions default to ALLOW.
             return new PolicyDecision(PolicyEffect.ALLOW, request.tenantId(), null, null, null, null,
                     "No matching rule (platform or tenant) - action is ungoverned, default ALLOW",
                     Instant.now());
@@ -49,8 +41,7 @@ public class PolicyDecisionEngine {
                 Instant.now());
     }
 
-    // platform policies are the ones with tenantId==null, so the exact same lookup serves both
-    // callers below - only the input list differs
+    // Finds best matching rule in a policy list.
     private Optional<RuleMatch> bestMatch(List<Policy> policies, GovernanceRequest request) {
         return policies.stream()
                 .sorted(Comparator.comparing(Policy::id)) // deterministic order, not map iteration order
@@ -64,9 +55,7 @@ public class PolicyDecisionEngine {
         if (active.isEmpty()) {
             return Optional.empty();
         }
-        // the first rule in the version's own list wins - that's the order rules were added
-        // in (addRule appends), so this is the version's own declared precedence, not an
-        // accident of some unrelated collection's iteration order
+        // Evaluates rules in order of declaration.
         for (PolicyRule rule : active.get().rules()) {
             if (matches(rule, request)) {
                 return Optional.of(new RuleMatch(policy, active.get(), rule));
@@ -75,8 +64,7 @@ public class PolicyDecisionEngine {
         return Optional.empty();
     }
 
-    // platform must never be quietly overridden by an equally-or-less restrictive tenant
-    // decision - a tied severity is deliberately resolved in the platform's favor
+    // Platform policy takes precedence on tied severity.
     private Optional<RuleMatch> pickWinner(Optional<RuleMatch> platform, Optional<RuleMatch> tenant) {
         if (platform.isEmpty()) {
             return tenant;
@@ -99,9 +87,7 @@ public class PolicyDecisionEngine {
 
     private boolean matches(PolicyRule rule, GovernanceRequest request) {
         Object actual = "action".equals(rule.field()) ? request.action() : request.attributes().get(rule.field());
-        // the field just isn't part of this request - a normal non-match, not an error. A
-        // real error is an operator or a stored rule value this engine can't interpret at
-        // all, handled below, and that must never be swallowed into a silent skip.
+        // Return false if attribute missing.
         if (actual == null) {
             return false;
         }
@@ -134,8 +120,7 @@ public class PolicyDecisionEngine {
         };
     }
 
-    // numeric equality if both sides parse as numbers, exact string equality otherwise - lets
-    // "action == DELETE_CUSTOMER" work without a separate string-only operator
+    // Compares numeric equality if both parse as numbers, string equality otherwise.
     private boolean valuesEqual(Object actual, String ruleValue) {
         Double actualNumber = asNumber(actual);
         Double ruleNumber = asNumber(ruleValue);

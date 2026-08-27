@@ -14,8 +14,6 @@ public class AgentAvailabilityResponse {
     private boolean available;
     private String agentName;
     private String reason;
-    // the agent's own verdict on the work it was asked to do, not a statement about the agent.
-    // Named entries rather than one flag, so a project bringing its own agents doesn't need a
-    // new field here for whatever its agents report.
+    // the agent's own verdict on the work it was asked to do, not a statement about the agent. Named entries rather than one flag, so a project bringing its own agents doesn't need a new field here for whatever its agents report.
     private Map<String, Object> outputs;
 }

@@ -35,12 +35,7 @@ const Header = () => {
                                 Delete
                             </NavDropdown.Item>
                         </NavDropdown>
-                        {/* Model / Generate / Launch is one pipeline (see WorkflowStage) but three
-                            separate pickers, not one editor with three buttons: Model always
-                            starts a blank editor (Save is the only thing it does); Generate and
-                            Launch each list every saved process across every project and act
-                            on whichever row you pick - see GenerateProjectListPage /
-                            LaunchProjectListPage. */}
+                        {// Model / Generate / Launch is one pipeline (see WorkflowStage) but three separate pickers, not one editor with three buttons: Model always starts a blank editor (Save is the only thing it does); Generate and Launch each list every saved process across every project and act on whichever row you pick - see GenerateProjectListPage / LaunchProjectListPage. */}
                         <NavDropdown title="Transmute" id="transmute-nav-dropdown">
                             <NavDropdown.Item as={Link} to={WorkbenchRoutes.CreateModel.path}>
                                 Model
@@ -52,9 +47,7 @@ const Header = () => {
                                 Launch
                             </NavDropdown.Item>
                         </NavDropdown>
-                        {/* Two different things share this menu: the twin workflow
-                            (Connect/Evolve/Bridge) and Evolve Workflow itself - connecting to a
-                            deployed generated application, not a twin */}
+                        {// Two different things share this menu: the twin workflow (Connect/Evolve/Bridge) and Evolve Workflow itself - connecting to a deployed generated application, not a twin */}
                         <NavDropdown title="Evolve" id="evolve-nav-dropdown">
                             <NavDropdown.Item as={Link} to={WorkbenchRoutes.EvolvePage.path}>
                                 Twin Workflow
@@ -63,8 +56,7 @@ const Header = () => {
                                 Deployed Applications
                             </NavDropdown.Item>
                         </NavDropdown>
-                        {/* Tenant policy lifecycle plus its approvals - unrelated to Evolve
-                            above, which is twin execution, not policy */}
+                        {// Tenant policy lifecycle plus its approvals - unrelated to Evolve above, which is twin execution, not policy */}
                         <NavDropdown title="Governance" id="governance-nav-dropdown">
                             <NavDropdown.Item as={Link} to={WorkbenchRoutes.GovernancePolicies.path}>
                                 Policies
