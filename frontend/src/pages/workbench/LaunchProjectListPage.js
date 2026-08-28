@@ -144,7 +144,7 @@ const LaunchProjectListPage = () => {
                                             </Button>
                                         </td>
                                     </tr>
-                                    {// Own row below the button - result, never sharing a line with the button that produced it. */}
+                                    {/* Own row below the button - result, never sharing a line with the button that produced it. */}
                                     {(rs.error || rs.launchedBaseUrl) && (
                                         <tr>
                                             <td colSpan={4} className="pt-0">

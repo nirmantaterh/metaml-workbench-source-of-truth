@@ -93,7 +93,7 @@ const GenerateProjectListPage = () => {
                                             </Button>
                                         </td>
                                     </tr>
-                                    {// Own row below the button, same reasoning as ModelPage's own status row - a per-process result never shares a line with the button that produced it. */}
+                                    {/* Own row below the button, same reasoning as ModelPage's own status row - a per-process result never shares a line with the button that produced it. */}
                                     {rs && (
                                         <tr>
                                             <td colSpan={4} className="pt-0">

@@ -311,7 +311,7 @@ const ModelPage = () => {
     return (
         <div className="bpmn-editor">
             <div className="bpmn-toolbar">
-                {// Own row, above the buttons - a status message never shares a line with the controls that produced it, so a long message never pushes a button off screen or the other way around. */}
+                {/* Own row, above the buttons - a status message never shares a line with the controls that produced it, so a long message never pushes a button off screen or the other way around. */}
                 {status && (
                     <div className="bpmn-toolbar-row bpmn-toolbar-message">
                         <span className={`bpmn-status ${statusClass}`}>{status.text}</span>
