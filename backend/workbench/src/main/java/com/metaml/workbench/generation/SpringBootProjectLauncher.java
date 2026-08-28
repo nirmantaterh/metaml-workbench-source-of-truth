@@ -201,6 +201,15 @@ public class SpringBootProjectLauncher {
 
     // Process.destroy() alone only signals the immediate process - on Windows that's cmd.exe, not the actual java process the wrapper script spawns underneath it, which would otherwise keep the port bound after stop() returns. Process.descendants() (JDK 9+) is the portable fix: walk the whole tree, not just the one handle we started.
     private static void destroyTree(Process process) {
+        boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        if (windows) {
+            try {
+                long pid = process.pid();
+                new ProcessBuilder("taskkill", "/F", "/T", "/PID", String.valueOf(pid)).start().waitFor();
+            } catch (Exception e) {
+                // Fall back to standard JDK process destruction below if taskkill fails
+            }
+        }
         process.descendants().forEach(ProcessHandle::destroy);
         process.destroy();
         try {

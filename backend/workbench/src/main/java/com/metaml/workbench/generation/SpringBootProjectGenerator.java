@@ -1393,7 +1393,7 @@ public class SpringBootProjectGenerator {
                         this.responseQueuePublisher = responseQueuePublisher;
                     }
 
-                    @Scheduled(fixedDelay = 1000)
+                    @Scheduled(fixedDelayString = "${metaml.broadcaster.fixed-delay:1000}")
                     public void broadcastSignals() {
                         for (String signalName : SIGNAL_NAMES) {
                             List<EventSubscription> waiting = runtimeService.createEventSubscriptionQuery()

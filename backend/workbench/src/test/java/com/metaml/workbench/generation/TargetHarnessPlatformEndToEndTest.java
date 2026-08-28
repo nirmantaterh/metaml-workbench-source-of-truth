@@ -87,6 +87,29 @@ class TargetHarnessPlatformEndToEndTest {
             Path properties = project.directory().resolve("src/main/resources/application.properties");
             Files.writeString(properties, Files.readString(properties)
                     .replace("metaml.messaging.enabled=false", "metaml.messaging.enabled=true"));
+            
+            // Delete static queues to ensure a clean test run
+            HttpClient adminClient = HttpClient.newHttpClient();
+            List<String> staticQueues = List.of(
+                    "twin.stage.updates",
+                    "twin.stage.responses.manuf",
+                    "gateway.qc.requests",
+                    "gateway.qc.responses.twin",
+                    "machines.requests",
+                    "machines.completions.manuf"
+            );
+            for (String queue : staticQueues) {
+                try {
+                    adminClient.send(
+                            HttpRequest.newBuilder(URI.create("http://localhost:15672/api/queues/%2f/" + queue))
+                                    .header("Authorization", "Basic " + java.util.Base64.getEncoder()
+                                            .encodeToString("guest:guest".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                                    .DELETE().build(),
+                            HttpResponse.BodyHandlers.ofString());
+                } catch (Exception e) {
+                    // Ignore failures during cleanup
+                }
+            }
         }
 
         // --- 2. generated application: it actually builds ---
@@ -166,6 +189,29 @@ class TargetHarnessPlatformEndToEndTest {
             }
         } finally {
             launcher.stop(project.projectId());
+            if (brokerAvailable) {
+                HttpClient adminClient = HttpClient.newHttpClient();
+                List<String> staticQueues = List.of(
+                        "twin.stage.updates",
+                        "twin.stage.responses.manuf",
+                        "gateway.qc.requests",
+                        "gateway.qc.responses.twin",
+                        "machines.requests",
+                        "machines.completions.manuf"
+                );
+                for (String queue : staticQueues) {
+                    try {
+                        adminClient.send(
+                                HttpRequest.newBuilder(URI.create("http://localhost:15672/api/queues/%2f/" + queue))
+                                        .header("Authorization", "Basic " + java.util.Base64.getEncoder()
+                                                .encodeToString("guest:guest".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                                        .DELETE().build(),
+                                HttpResponse.BodyHandlers.ofString());
+                    } catch (Exception e) {
+                        // Ignore
+                    }
+                }
+            }
         }
     }
 

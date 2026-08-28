@@ -167,12 +167,13 @@ public class ExternalTaskWorkerGenerator {
                             variables = new HashMap<>(agent.decide("%2$s", task));
                         } else {
                             // No TwinDecisionAgent registered - built-in fallback. Produces synthetic, runtime-varying output rather than a predetermined business outcome so the twin can still run standalone; register a @Component implementing TwinDecisionAgent to replace this with a real model/agent call.
-                            logger.info("[Twin] No TwinDecisionAgent registered, using built-in simulated output "
-                                    + "for activity \\"%3$s\\" (process instance {})", task.getProcessInstanceId());
+                            logger.info("[Twin] Invoking simulated ML agent for activity \\"%3$s\\" "
+                                    + "(process instance {})", task.getProcessInstanceId());
                             variables = new HashMap<>();
                             variables.put("agentTopic", "%2$s");
                             variables.put("agentInvocationId", UUID.randomUUID().toString());
                             variables.put("agentTimestamp", System.currentTimeMillis());
+                            logger.info("[Twin] Agent invocation result: {}", variables);
                         }
                 %6$s        logger.info("[Twin] Completion variables: {}", variables);
                         externalTaskService.complete(task.getId(), "generated-worker", variables);

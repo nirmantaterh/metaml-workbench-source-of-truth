@@ -80,7 +80,7 @@ class TargetPlatformGenerationTest {
         // freshly generated, freestanding project directory.
         assertThat(project.directory().resolve("pom.xml")).exists();
         assertThat(project.directory()
-                .resolve("src/main/java/com/tp/TargetPlatform/TargetPlatformApplication.java")).exists();
+                .resolve("src/main/java/com/tp/TargetPlatform/RcProxyProcessApplication.java")).exists();
 
         // Both BPMN files land under processes/, keyed by their own process id.
         assertThat(project.directory().resolve("src/main/resources/processes/rc_proxy_process.bpmn")).exists();

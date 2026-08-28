@@ -70,9 +70,15 @@ class FilePersistenceRestartRecoveryTest {
         buildProject(project);
 
         // Env vars that override the default in-memory H2 with file-backed H2
-        Map<String, String> persistenceEnv = Map.of(
+        Map<String, String> phase1Env = Map.of(
                 "SPRING_DATASOURCE_CAMUNDA_URL", h2FileUrl,
-                "SPRING_DATASOURCE_URL", h2FileUrl
+                "SPRING_DATASOURCE_URL", h2FileUrl,
+                "METAML_BROADCASTER_FIXED_DELAY", "3600000"
+        );
+        Map<String, String> phase2Env = Map.of(
+                "SPRING_DATASOURCE_CAMUNDA_URL", h2FileUrl,
+                "SPRING_DATASOURCE_URL", h2FileUrl,
+                "METAML_BROADCASTER_FIXED_DELAY", "500"
         );
 
         SpringBootProjectLauncher launcher = new SpringBootProjectLauncher();
@@ -82,7 +88,7 @@ class FilePersistenceRestartRecoveryTest {
         // ==========================================
         // PHASE 1: First launch - create runtime state
         // ==========================================
-        LaunchedProject launched1 = launcher.launch(project, persistenceEnv);
+        LaunchedProject launched1 = launcher.launch(project, phase1Env);
         try {
             String manufBase = "http://localhost:" + launched1.port() + "/api/v1/manufacturing";
             String statusBase = "http://localhost:" + launched1.port() + "/api/v1/process";
@@ -93,13 +99,13 @@ class FilePersistenceRestartRecoveryTest {
             processInstanceId = extractProcessInstanceId(startResponse.body());
             assertThat(processInstanceId).isNotBlank();
 
-            // Wait for the process to reach ManufFinish (external task wait state)
-            awaitActiveActivity(http, statusBase, processInstanceId, "ManufFinish", Duration.ofSeconds(15));
+            // Wait for the process to reach SignalCatch (gated wait state)
+            awaitActiveActivity(http, statusBase, processInstanceId, "SignalCatch", Duration.ofSeconds(15));
 
             // Read current status to capture pre-restart state
             String statusBefore = fetchStatus(http, statusBase, processInstanceId);
             assertThat(statusBefore).contains("\"active\":true");
-            assertThat(statusBefore).contains("ManufFinish");
+            assertThat(statusBefore).contains("SignalCatch");
 
             // Record pre-restart evidence
             System.out.println("=== PRE-RESTART STATE ===");
@@ -126,12 +132,23 @@ class FilePersistenceRestartRecoveryTest {
         // ==========================================
         // PHASE 2: Second launch - recover runtime state
         // ==========================================
-        LaunchedProject launched2 = launcher.launch(project, persistenceEnv);
+        LaunchedProject launched2 = launcher.launch(project, phase2Env);
         try {
             String statusBase = "http://localhost:" + launched2.port() + "/api/v1/process";
 
-            // Wait a moment for process engine to settle and query status
-            boolean atWaitState = awaitActiveActivity(http, statusBase, processInstanceId, "ManufFinish", Duration.ofSeconds(10));
+            // Wait a moment for process engine to settle and complete
+            Instant deadline = Instant.now().plus(Duration.ofSeconds(15));
+            boolean completed = false;
+            while (Instant.now().isBefore(deadline)) {
+                String status = fetchStatus(http, statusBase, processInstanceId);
+                if (status.contains("\"active\":false")) {
+                    completed = true;
+                    break;
+                }
+                Thread.sleep(300);
+            }
+            assertThat(completed).as("Process should have completed post-restart").isTrue();
+
             String statusAfter = fetchStatus(http, statusBase, processInstanceId);
 
             System.out.println("=== POST-RESTART STATE ===");

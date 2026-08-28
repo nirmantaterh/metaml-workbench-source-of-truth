@@ -120,7 +120,7 @@ class GenericPlatformMechanismsEndToEndTest {
 
         SpringBootProjectLauncher launcher = new SpringBootProjectLauncher();
         try {
-            LaunchedProject launched = launcher.launch(project);
+            LaunchedProject launched = launcher.launch(project, java.util.Map.of("METAML_BROADCASTER_FIXED_DELAY", "5000"));
             HttpClient http = HttpClient.newHttpClient();
             String manufBase = "http://localhost:" + launched.port() + "/api/v1/manufacturing";
             String statusBase = "http://localhost:" + launched.port() + "/api/v1/process";
@@ -174,7 +174,7 @@ class GenericPlatformMechanismsEndToEndTest {
 
         SpringBootProjectLauncher launcher = new SpringBootProjectLauncher();
         try {
-            LaunchedProject launched = launcher.launch(project);
+            LaunchedProject launched = launcher.launch(project, java.util.Map.of("METAML_BROADCASTER_FIXED_DELAY", "5000"));
             HttpClient http = HttpClient.newHttpClient();
             String manufBase = "http://localhost:" + launched.port() + "/api/v1/manufacturing";
             String twinBase = "http://localhost:" + launched.port() + "/api/v1/twin";
@@ -256,7 +256,7 @@ class GenericPlatformMechanismsEndToEndTest {
 
         SpringBootProjectLauncher launcher = new SpringBootProjectLauncher();
         try {
-            LaunchedProject launched = launcher.launch(project);
+            LaunchedProject launched = launcher.launch(project, java.util.Map.of("METAML_BROADCASTER_FIXED_DELAY", "5000"));
             HttpClient http = HttpClient.newHttpClient();
             String manufBase = "http://localhost:" + launched.port() + "/api/v1/manufacturing";
             String twinBase = "http://localhost:" + launched.port() + "/api/v1/twin";
@@ -330,7 +330,7 @@ class GenericPlatformMechanismsEndToEndTest {
 
         SpringBootProjectLauncher launcher = new SpringBootProjectLauncher();
         try {
-            LaunchedProject launched = launcher.launch(project);
+            LaunchedProject launched = launcher.launch(project, java.util.Map.of("METAML_BROADCASTER_FIXED_DELAY", "5000"));
             HttpClient http = HttpClient.newHttpClient();
             String manufBase = "http://localhost:" + launched.port() + "/api/v1/manufacturing";
             String twinBase = "http://localhost:" + launched.port() + "/api/v1/twin";
