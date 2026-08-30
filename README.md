@@ -164,6 +164,7 @@ backend/workbench/    all domain logic — service, codegen, generation, governa
 backend/nodemanager/  agent catalogue stub (:8083)
 backend/RedCollarTP/  the Target Platform template that generated projects are built from
 frontend/src/pages/workbench/    ModelPage, EvolvePage, DeployedAppsPage, Governance*
+generated-target-platforms/      completed, standalone generated Target Platform applications (redcollar-manufacturing, liveverify-wiretransfer)
 demo/                 fixtures + DEMO_PROTOCOL.md (regression script) + REDCOLLAR_ACCEPTANCE.md
 examples/             citibank-wire-transfer.bpmn, grad-admission-review.bpmn
 docs/architecture/    ARCHITECTURE.md, DIAGRAMS.md, EVOLUTION_TIMELINE.md, 15 ADRs

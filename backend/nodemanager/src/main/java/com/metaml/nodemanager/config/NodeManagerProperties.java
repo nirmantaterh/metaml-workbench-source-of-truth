@@ -3,7 +3,9 @@ package com.metaml.nodemanager.config;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 // The catalog used to be a Map.of() in the service, which meant every project attaching its own agent types needed this module recompiled and redeployed. Config instead, keyed by agent type.
