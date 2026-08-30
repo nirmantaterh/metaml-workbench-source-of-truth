@@ -1,0 +1,993 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:metaml="http://metaml.com/schema/bpmn/metaml" id="Definitions_CitiWire" targetNamespace="http://metaml.com/bpmn">
+
+
+    <bpmn:process id="Process_WireTransfer_twin" isExecutable="true" name="Citi Bank - Large Wire Transfer Review (twin)">
+
+
+        <bpmn:extensionElements>
+
+
+            <metaml:dataItems>
+
+
+                <metaml:dataItem name="transferAmount" type="number" value="250000"/>
+
+
+                <metaml:dataItem name="customerId" type="string" value="CUST-88213"/>
+
+
+                <metaml:dataItem name="destinationCountry" type="string" value="Cayman Islands"/>
+
+
+                <metaml:dataItem name="riskScore" type="number" value="0"/>
+
+
+            </metaml:dataItems>
+
+
+        </bpmn:extensionElements>
+
+
+        <bpmn:startEvent id="StartEvent_1" name="Wire Transfer Request Received">
+
+
+            <bpmn:outgoing>Flow_1</bpmn:outgoing>
+
+
+        </bpmn:startEvent>
+
+
+        <bpmn:userTask id="Task_KYC" name="Verify Customer Identity (KYC)">
+
+
+            <bpmn:documentation>Confirm the requesting customer's identity against on-file KYC records before any compliance checks run.</bpmn:documentation>
+
+
+            <bpmn:extensionElements>
+
+
+                <metaml:dataItems>
+
+
+                    <metaml:dataItem name="identityDocumentType" type="string" value="Passport"/>
+
+
+                    <metaml:dataItem name="identityVerified" type="boolean" value="true"/>
+
+
+                </metaml:dataItems>
+
+
+                <camunda:taskListener delegateExpression="${agentExecutionDelegateTwin}" event="complete"/>
+
+
+            </bpmn:extensionElements>
+
+
+            <bpmn:incoming>Flow_1</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_2</bpmn:outgoing>
+
+
+        </bpmn:userTask>
+
+
+        <bpmn:exclusiveGateway default="Flow_KYC_Continue" id="Gateway_KYC" name="Identity Verified?">
+
+
+            <bpmn:incoming>Flow_2</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_KYC_Reject</bpmn:outgoing>
+
+
+            <bpmn:outgoing>Flow_KYC_Continue</bpmn:outgoing>
+
+
+        </bpmn:exclusiveGateway>
+
+
+        <bpmn:endEvent id="EndEvent_RejectedIdentity" name="Rejected - Identity Verification Failed">
+
+
+            <bpmn:incoming>Flow_KYC_Reject</bpmn:incoming>
+
+
+        </bpmn:endEvent>
+
+
+        <bpmn:parallelGateway id="Gateway_ParallelSplit" name="Run Compliance Checks">
+
+
+            <bpmn:incoming>Flow_KYC_Continue</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_Split_AML</bpmn:outgoing>
+
+
+            <bpmn:outgoing>Flow_Split_OFAC</bpmn:outgoing>
+
+
+            <bpmn:outgoing>Flow_Split_Credit</bpmn:outgoing>
+
+
+        </bpmn:parallelGateway>
+
+
+        <bpmn:userTask id="Task_AML" name="Run AML Screening">
+
+
+            <bpmn:documentation>Screen the transfer against anti-money-laundering watchlists and transaction-pattern rules.</bpmn:documentation>
+
+
+            <bpmn:extensionElements>
+
+
+                <metaml:dataItems>
+
+
+                    <metaml:dataItem name="amlWatchlistHit" type="boolean" value="false"/>
+
+
+                    <metaml:dataItem name="amlScreeningProvider" type="string" value="Refinitiv World-Check"/>
+
+
+                </metaml:dataItems>
+
+
+                <camunda:taskListener delegateExpression="${agentExecutionDelegateTwin}" event="complete"/>
+
+
+            </bpmn:extensionElements>
+
+
+            <bpmn:incoming>Flow_Split_AML</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_AML_Join</bpmn:outgoing>
+
+
+        </bpmn:userTask>
+
+
+        <bpmn:userTask id="Task_OFAC" name="Check Sanctions List (OFAC)">
+
+
+            <bpmn:extensionElements>
+
+
+                <camunda:taskListener delegateExpression="${agentExecutionDelegateTwin}" event="complete"/>
+
+
+            </bpmn:extensionElements>
+
+
+            <bpmn:incoming>Flow_Split_OFAC</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_OFAC_Join</bpmn:outgoing>
+
+
+        </bpmn:userTask>
+
+
+        <bpmn:userTask id="Task_Credit" name="Assess Credit Risk">
+
+
+            <bpmn:extensionElements>
+
+
+                <!-- Gateway_ChecksPassed reads agentFlaggedRisk, not the prefixed
+             agentOutput_Task_Credit_riskFlagged the delegate writes for every output. riskFlagged
+             also has a hardcoded alias to that same name for historical reasons, so this
+             declaration changes nothing here; it's the mechanism the next model to want a short
+             name of its own uses, without needing its own special case in Java. -->
+
+
+                <metaml:agentOutputs>
+
+
+                    <metaml:agentOutput name="riskFlagged" variable="agentFlaggedRisk"/>
+
+
+                </metaml:agentOutputs>
+
+
+                <camunda:taskListener delegateExpression="${agentExecutionDelegateTwin}" event="complete"/>
+
+
+            </bpmn:extensionElements>
+
+
+            <bpmn:incoming>Flow_Split_Credit</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_Credit_Join</bpmn:outgoing>
+
+
+        </bpmn:userTask>
+
+
+        <bpmn:parallelGateway id="Gateway_ParallelJoin" name="Checks Complete">
+
+
+            <bpmn:incoming>Flow_AML_Join</bpmn:incoming>
+
+
+            <bpmn:incoming>Flow_OFAC_Join</bpmn:incoming>
+
+
+            <bpmn:incoming>Flow_Credit_Join</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_ToChecksGateway</bpmn:outgoing>
+
+
+        </bpmn:parallelGateway>
+
+
+        <bpmn:exclusiveGateway default="Flow_Checks_Pass" id="Gateway_ChecksPassed" name="All Checks Passed?">
+
+
+            <bpmn:incoming>Flow_ToChecksGateway</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_Checks_Fail</bpmn:outgoing>
+
+
+            <bpmn:outgoing>Flow_Checks_Pass</bpmn:outgoing>
+
+
+        </bpmn:exclusiveGateway>
+
+
+        <bpmn:userTask id="Task_Escalate" name="Escalate to Compliance Officer">
+
+
+            <bpmn:extensionElements>
+
+
+                <camunda:taskListener delegateExpression="${agentExecutionDelegateTwin}" event="complete"/>
+
+
+            </bpmn:extensionElements>
+
+
+            <bpmn:incoming>Flow_Checks_Fail</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_Escalate_ToDecision</bpmn:outgoing>
+
+
+        </bpmn:userTask>
+
+
+        <bpmn:exclusiveGateway default="Flow_Officer_Approve" id="Gateway_OfficerDecision" name="Officer Decision?">
+
+
+            <bpmn:incoming>Flow_Escalate_ToDecision</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_Officer_Reject</bpmn:outgoing>
+
+
+            <bpmn:outgoing>Flow_Officer_Approve</bpmn:outgoing>
+
+
+        </bpmn:exclusiveGateway>
+
+
+        <bpmn:endEvent id="EndEvent_RejectedCompliance" name="Rejected - Compliance Review">
+
+
+            <bpmn:incoming>Flow_Officer_Reject</bpmn:incoming>
+
+
+        </bpmn:endEvent>
+
+
+        <bpmn:userTask id="Task_Approve" name="Approve Transfer Amount">
+
+
+            <bpmn:documentation>A manager sign-off on the transfer amount once every compliance check has cleared, subject to the approval-timeout escalation below.</bpmn:documentation>
+
+
+            <bpmn:extensionElements>
+
+
+                <metaml:dataItems>
+
+
+                    <metaml:dataItem name="approverId" type="string" value="MGR-4021"/>
+
+
+                    <metaml:dataItem name="approvedAmount" type="number" value="250000"/>
+
+
+                </metaml:dataItems>
+
+
+                <camunda:taskListener delegateExpression="${agentExecutionDelegateTwin}" event="complete"/>
+
+
+            </bpmn:extensionElements>
+
+
+            <bpmn:incoming>Flow_Checks_Pass</bpmn:incoming>
+
+
+            <bpmn:incoming>Flow_Officer_Approve</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_Approve_ToExecute</bpmn:outgoing>
+
+
+        </bpmn:userTask>
+
+
+        <bpmn:boundaryEvent attachedToRef="Task_Approve" cancelActivity="true" id="BoundaryEvent_Timeout" name="Approval Timeout (8 hrs)">
+
+
+            <bpmn:outgoing>Flow_Timeout_ToEscalate</bpmn:outgoing>
+
+
+            <bpmn:timerEventDefinition id="TimerEventDefinition_1">
+
+
+                <bpmn:timeDuration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="bpmn:tFormalExpression">PT8H</bpmn:timeDuration>
+
+
+            </bpmn:timerEventDefinition>
+
+
+        </bpmn:boundaryEvent>
+
+
+        <bpmn:userTask id="Task_EscalateTimeout" name="Escalate to Senior Approver">
+
+
+            <bpmn:extensionElements>
+
+
+                <camunda:taskListener delegateExpression="${agentExecutionDelegateTwin}" event="complete"/>
+
+
+            </bpmn:extensionElements>
+
+
+            <bpmn:incoming>Flow_Timeout_ToEscalate</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_EscalateTimeout_ToEnd</bpmn:outgoing>
+
+
+        </bpmn:userTask>
+
+
+        <bpmn:endEvent id="EndEvent_EscalatedTimeout" name="Escalated - Awaiting Senior Approval">
+
+
+            <bpmn:incoming>Flow_EscalateTimeout_ToEnd</bpmn:incoming>
+
+
+        </bpmn:endEvent>
+
+
+        <bpmn:userTask id="Task_Execute" name="Execute Wire Transfer">
+
+
+            <bpmn:extensionElements>
+
+
+                <camunda:taskListener delegateExpression="${agentExecutionDelegateTwin}" event="complete"/>
+
+
+            </bpmn:extensionElements>
+
+
+            <bpmn:incoming>Flow_Approve_ToExecute</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_Execute_ToNotify</bpmn:outgoing>
+
+
+        </bpmn:userTask>
+
+
+        <bpmn:userTask id="Task_Notify" name="Notify Customer of Completion">
+
+
+            <bpmn:extensionElements>
+
+
+                <camunda:taskListener delegateExpression="${agentExecutionDelegateTwin}" event="complete"/>
+
+
+            </bpmn:extensionElements>
+
+
+            <bpmn:incoming>Flow_Execute_ToNotify</bpmn:incoming>
+
+
+            <bpmn:outgoing>Flow_Notify_ToEnd</bpmn:outgoing>
+
+
+        </bpmn:userTask>
+
+
+        <bpmn:endEvent id="EndEvent_Success" name="Transfer Completed Successfully">
+
+
+            <bpmn:incoming>Flow_Notify_ToEnd</bpmn:incoming>
+
+
+        </bpmn:endEvent>
+
+
+        <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Task_KYC"/>
+
+
+        <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_KYC" targetRef="Gateway_KYC"/>
+
+
+        <bpmn:sequenceFlow id="Flow_KYC_Reject" name="No" sourceRef="Gateway_KYC" targetRef="EndEvent_RejectedIdentity">
+
+
+            <bpmn:conditionExpression xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="bpmn:tFormalExpression">${false}</bpmn:conditionExpression>
+
+
+        </bpmn:sequenceFlow>
+
+
+        <bpmn:sequenceFlow id="Flow_KYC_Continue" name="Yes" sourceRef="Gateway_KYC" targetRef="Gateway_ParallelSplit"/>
+
+
+        <bpmn:sequenceFlow id="Flow_Split_AML" sourceRef="Gateway_ParallelSplit" targetRef="Task_AML"/>
+
+
+        <bpmn:sequenceFlow id="Flow_Split_OFAC" sourceRef="Gateway_ParallelSplit" targetRef="Task_OFAC"/>
+
+
+        <bpmn:sequenceFlow id="Flow_Split_Credit" sourceRef="Gateway_ParallelSplit" targetRef="Task_Credit"/>
+
+
+        <bpmn:sequenceFlow id="Flow_AML_Join" sourceRef="Task_AML" targetRef="Gateway_ParallelJoin"/>
+
+
+        <bpmn:sequenceFlow id="Flow_OFAC_Join" sourceRef="Task_OFAC" targetRef="Gateway_ParallelJoin"/>
+
+
+        <bpmn:sequenceFlow id="Flow_Credit_Join" sourceRef="Task_Credit" targetRef="Gateway_ParallelJoin"/>
+
+
+        <bpmn:sequenceFlow id="Flow_ToChecksGateway" sourceRef="Gateway_ParallelJoin" targetRef="Gateway_ChecksPassed"/>
+
+
+        <!-- execution.getVariable(...) rather than a bare ${agentFlaggedRisk == true}: on a run where
+         nobody evolved a risk-flagging agent the variable was never set at all, and JUEL throws
+         PropertyNotFoundException on an identifier no resolver knows about. Going through the
+         execution gives back null instead, which compares false and takes the default flow. -->
+
+
+        <bpmn:sequenceFlow id="Flow_Checks_Fail" name="No" sourceRef="Gateway_ChecksPassed" targetRef="Task_Escalate">
+
+
+            <bpmn:conditionExpression xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="bpmn:tFormalExpression">${execution.getVariable('agentFlaggedRisk') == true}</bpmn:conditionExpression>
+
+
+        </bpmn:sequenceFlow>
+
+
+        <bpmn:sequenceFlow id="Flow_Checks_Pass" name="Yes" sourceRef="Gateway_ChecksPassed" targetRef="Task_Approve"/>
+
+
+        <bpmn:sequenceFlow id="Flow_Escalate_ToDecision" sourceRef="Task_Escalate" targetRef="Gateway_OfficerDecision"/>
+
+
+        <bpmn:sequenceFlow id="Flow_Officer_Reject" name="Reject" sourceRef="Gateway_OfficerDecision" targetRef="EndEvent_RejectedCompliance">
+
+
+            <bpmn:conditionExpression xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="bpmn:tFormalExpression">${false}</bpmn:conditionExpression>
+
+
+        </bpmn:sequenceFlow>
+
+
+        <bpmn:sequenceFlow id="Flow_Officer_Approve" name="Approve" sourceRef="Gateway_OfficerDecision" targetRef="Task_Approve"/>
+
+
+        <bpmn:sequenceFlow id="Flow_Timeout_ToEscalate" sourceRef="BoundaryEvent_Timeout" targetRef="Task_EscalateTimeout"/>
+
+
+        <bpmn:sequenceFlow id="Flow_EscalateTimeout_ToEnd" sourceRef="Task_EscalateTimeout" targetRef="EndEvent_EscalatedTimeout"/>
+
+
+        <bpmn:sequenceFlow id="Flow_Approve_ToExecute" sourceRef="Task_Approve" targetRef="Task_Execute"/>
+
+
+        <bpmn:sequenceFlow id="Flow_Execute_ToNotify" sourceRef="Task_Execute" targetRef="Task_Notify"/>
+
+
+        <bpmn:sequenceFlow id="Flow_Notify_ToEnd" sourceRef="Task_Notify" targetRef="EndEvent_Success"/>
+
+
+    </bpmn:process>
+
+
+    <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+
+
+        <bpmndi:BPMNPlane bpmnElement="Process_WireTransfer" id="BPMNPlane_1">
+
+
+            <bpmndi:BPMNShape bpmnElement="StartEvent_1" id="StartEvent_1_di">
+
+
+                <dc:Bounds height="36" width="36" x="152" y="182"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Task_KYC" id="Task_KYC_di">
+
+
+                <dc:Bounds height="80" width="100" x="240" y="160"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Gateway_KYC" id="Gateway_KYC_di" isMarkerVisible="true">
+
+
+                <dc:Bounds height="50" width="50" x="390" y="175"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="EndEvent_RejectedIdentity" id="EndEvent_RejectedIdentity_di">
+
+
+                <dc:Bounds height="36" width="36" x="390" y="300"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Gateway_ParallelSplit" id="Gateway_ParallelSplit_di">
+
+
+                <dc:Bounds height="50" width="50" x="490" y="175"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Task_AML" id="Task_AML_di">
+
+
+                <dc:Bounds height="80" width="100" x="600" y="40"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Task_OFAC" id="Task_OFAC_di">
+
+
+                <dc:Bounds height="80" width="100" x="600" y="160"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Task_Credit" id="Task_Credit_di">
+
+
+                <dc:Bounds height="80" width="100" x="600" y="280"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Gateway_ParallelJoin" id="Gateway_ParallelJoin_di">
+
+
+                <dc:Bounds height="50" width="50" x="760" y="175"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Gateway_ChecksPassed" id="Gateway_ChecksPassed_di" isMarkerVisible="true">
+
+
+                <dc:Bounds height="50" width="50" x="860" y="175"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Task_Escalate" id="Task_Escalate_di">
+
+
+                <dc:Bounds height="80" width="100" x="830" y="460"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Gateway_OfficerDecision" id="Gateway_OfficerDecision_di" isMarkerVisible="true">
+
+
+                <dc:Bounds height="50" width="50" x="980" y="475"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="EndEvent_RejectedCompliance" id="EndEvent_RejectedCompliance_di">
+
+
+                <dc:Bounds height="36" width="36" x="980" y="600"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Task_Approve" id="Task_Approve_di">
+
+
+                <dc:Bounds height="80" width="100" x="970" y="160"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="BoundaryEvent_Timeout" id="BoundaryEvent_Timeout_di">
+
+
+                <dc:Bounds height="36" width="36" x="1002" y="222"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Task_EscalateTimeout" id="Task_EscalateTimeout_di">
+
+
+                <dc:Bounds height="80" width="100" x="970" y="320"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="EndEvent_EscalatedTimeout" id="EndEvent_EscalatedTimeout_di">
+
+
+                <dc:Bounds height="36" width="36" x="1130" y="342"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Task_Execute" id="Task_Execute_di">
+
+
+                <dc:Bounds height="80" width="100" x="1130" y="160"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="Task_Notify" id="Task_Notify_di">
+
+
+                <dc:Bounds height="80" width="100" x="1280" y="160"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNShape bpmnElement="EndEvent_Success" id="EndEvent_Success_di">
+
+
+                <dc:Bounds height="36" width="36" x="1430" y="182"/>
+
+
+            </bpmndi:BPMNShape>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_1" id="Flow_1_di">
+
+
+                <di:waypoint x="188" y="200"/>
+
+
+                <di:waypoint x="240" y="200"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_2" id="Flow_2_di">
+
+
+                <di:waypoint x="340" y="200"/>
+
+
+                <di:waypoint x="390" y="200"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_KYC_Reject" id="Flow_KYC_Reject_di">
+
+
+                <di:waypoint x="415" y="225"/>
+
+
+                <di:waypoint x="415" y="318"/>
+
+
+                <di:waypoint x="426" y="318"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_KYC_Continue" id="Flow_KYC_Continue_di">
+
+
+                <di:waypoint x="440" y="200"/>
+
+
+                <di:waypoint x="490" y="200"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Split_AML" id="Flow_Split_AML_di">
+
+
+                <di:waypoint x="515" y="175"/>
+
+
+                <di:waypoint x="515" y="80"/>
+
+
+                <di:waypoint x="600" y="80"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Split_OFAC" id="Flow_Split_OFAC_di">
+
+
+                <di:waypoint x="540" y="200"/>
+
+
+                <di:waypoint x="600" y="200"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Split_Credit" id="Flow_Split_Credit_di">
+
+
+                <di:waypoint x="515" y="225"/>
+
+
+                <di:waypoint x="515" y="320"/>
+
+
+                <di:waypoint x="600" y="320"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_AML_Join" id="Flow_AML_Join_di">
+
+
+                <di:waypoint x="700" y="80"/>
+
+
+                <di:waypoint x="785" y="80"/>
+
+
+                <di:waypoint x="785" y="175"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_OFAC_Join" id="Flow_OFAC_Join_di">
+
+
+                <di:waypoint x="700" y="200"/>
+
+
+                <di:waypoint x="760" y="200"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Credit_Join" id="Flow_Credit_Join_di">
+
+
+                <di:waypoint x="700" y="320"/>
+
+
+                <di:waypoint x="785" y="320"/>
+
+
+                <di:waypoint x="785" y="225"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_ToChecksGateway" id="Flow_ToChecksGateway_di">
+
+
+                <di:waypoint x="810" y="200"/>
+
+
+                <di:waypoint x="860" y="200"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Checks_Fail" id="Flow_Checks_Fail_di">
+
+
+                <di:waypoint x="885" y="225"/>
+
+
+                <di:waypoint x="885" y="500"/>
+
+
+                <di:waypoint x="930" y="500"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Checks_Pass" id="Flow_Checks_Pass_di">
+
+
+                <di:waypoint x="910" y="200"/>
+
+
+                <di:waypoint x="970" y="200"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Escalate_ToDecision" id="Flow_Escalate_ToDecision_di">
+
+
+                <di:waypoint x="930" y="500"/>
+
+
+                <di:waypoint x="980" y="500"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Officer_Reject" id="Flow_Officer_Reject_di">
+
+
+                <di:waypoint x="1005" y="525"/>
+
+
+                <di:waypoint x="1005" y="600"/>
+
+
+                <di:waypoint x="998" y="600"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Officer_Approve" id="Flow_Officer_Approve_di">
+
+
+                <di:waypoint x="1005" y="475"/>
+
+
+                <di:waypoint x="1100" y="475"/>
+
+
+                <di:waypoint x="1100" y="140"/>
+
+
+                <di:waypoint x="1020" y="140"/>
+
+
+                <di:waypoint x="1020" y="160"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Timeout_ToEscalate" id="Flow_Timeout_ToEscalate_di">
+
+
+                <di:waypoint x="1020" y="258"/>
+
+
+                <di:waypoint x="1020" y="320"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_EscalateTimeout_ToEnd" id="Flow_EscalateTimeout_ToEnd_di">
+
+
+                <di:waypoint x="1070" y="360"/>
+
+
+                <di:waypoint x="1130" y="360"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Approve_ToExecute" id="Flow_Approve_ToExecute_di">
+
+
+                <di:waypoint x="1070" y="200"/>
+
+
+                <di:waypoint x="1130" y="200"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Execute_ToNotify" id="Flow_Execute_ToNotify_di">
+
+
+                <di:waypoint x="1230" y="200"/>
+
+
+                <di:waypoint x="1280" y="200"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+            <bpmndi:BPMNEdge bpmnElement="Flow_Notify_ToEnd" id="Flow_Notify_ToEnd_di">
+
+
+                <di:waypoint x="1380" y="200"/>
+
+
+                <di:waypoint x="1430" y="200"/>
+
+
+            </bpmndi:BPMNEdge>
+
+
+        </bpmndi:BPMNPlane>
+
+
+    </bpmndi:BPMNDiagram>
+
+
+</bpmn:definitions>

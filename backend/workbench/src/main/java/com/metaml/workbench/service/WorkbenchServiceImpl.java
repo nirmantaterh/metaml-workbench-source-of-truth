@@ -906,6 +906,17 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     }
 
     @Override
+    public List<TwinProcess> listTwinProcesses(String modelId) {
+        if (modelId == null || modelId.isBlank()) {
+            throw new IllegalArgumentException("modelId must not be blank");
+        }
+        return twinProcesses.values().stream()
+                .filter(twin -> modelId.equals(twin.getModelId()))
+                .peek(twin -> twin.setStatus(computeStatus(twin)))
+                .toList();
+    }
+
+    @Override
     public TwinProcess findTwinProcess(String id) {
         return id == null ? null : twinProcesses.get(id);
     }
@@ -1724,4 +1735,8 @@ public class WorkbenchServiceImpl implements WorkbenchService {
         }
     }
 
+    @Override
+    public List<AgentAvailabilityResult> listAvailableAgents() {
+        return nodeManagerClient.listAgents();
+    }
 }

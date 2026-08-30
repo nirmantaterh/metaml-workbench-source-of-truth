@@ -199,15 +199,40 @@ class TwinExecutionWalkthroughTest {
         workbenchService.connectActivity(twin.getId(), KYC, KYC);
         assertThat(workbenchService.bridgeActivityEvent(twin.getId(), KYC).isApproved()).isTrue();
 
-        // the summary DefaultProjectAutomationService built, not a placeholder the delegate made up
+        // the summary DefaultProjectAutomationService built by dispatching to ValidatorExecutor
         assertThat(twinVariable(twin, "twinAutomation_" + KYC).toString())
-                .startsWith("default automation ran at ");
+                .contains("ValidatorExecutor executed for Task_KYC");
         // and the output it reported, under the naming convention the twin side already uses
-        assertThat(twinVariable(twin, "twinAutomationOutput_ranAt_" + KYC)).isNotNull();
+        assertThat(twinVariable(twin, "twinAutomationOutput_executor_" + KYC)).isEqualTo("ValidatorExecutor");
+        assertThat(twinVariable(twin, "twinAutomationOutput_validationPassed_" + KYC)).isEqualTo(true);
 
         // an activity the twin has not been moved through has neither
         assertThat(twinVariable(twin, "twinAutomation_" + AML)).isNull();
     }
+
+    @Test
+    void evolvedCreditRiskAssessorInvokesCreditRiskAssessorExecutorAndSetsOutputs() throws IOException {
+        ProcessModel model = workbenchService.saveProcessModel(null, "citi wire transfer credit risk execution",
+                citibankBpmn());
+        TwinProcess twin = workbenchService.launchProcess(model.getId());
+
+        workbenchService.connectActivity(twin.getId(), KYC, KYC);
+        AgentDecision evolved = workbenchService.evolveActivity(twin.getId(), KYC, "credit-risk-assessor");
+        assertThat(evolved.isApproved()).isTrue();
+        assertThat(evolved.getAgentName()).isEqualTo("credit-risk-assessor-agent-01");
+
+        TwinAdvance advance = workbenchService.advanceTwinActivity(twin.getId(), KYC);
+        assertThat(advance.isAdvanced()).isTrue();
+
+        assertThat(twinVariable(twin, "twinAutomation_" + KYC).toString())
+                .contains("CreditRiskAssessorExecutor executed for Task_KYC");
+        assertThat(twinVariable(twin, "twinAutomationOutput_executor_" + KYC)).isEqualTo("CreditRiskAssessorExecutor");
+        assertThat(twinVariable(twin, "twinAutomationOutput_riskFlagged_" + KYC)).isEqualTo(true);
+        assertThat(twinVariable(twin, "twinAutomationOutput_riskScore_" + KYC)).isEqualTo(85);
+        assertThat(twinVariable(twin, "agentFlaggedRisk")).isEqualTo(true);
+    }
+
+
 
     // Governance saying no is a stop, not a failure: the token stays where it is, the caller gets
     // a decision rather than an exception, and the original is untouched either way.

@@ -18,6 +18,7 @@ public class NodeManagerClient {
     private static final Logger logger = LoggerFactory.getLogger(NodeManagerClient.class);
 
     private static final String NODE_MANAGER_AGENT_URL = "http://localhost:8083/api/v1/node-manager/agents/{agentType}";
+    private static final String NODE_MANAGER_AGENTS_URL = "http://localhost:8083/api/v1/node-manager/agents";
 
     // agentType goes into the URL path; RestTemplate doesn't escape "/", so restrict the alphabet.
     private static final Pattern SAFE_AGENT_TYPE = Pattern.compile("^[a-z0-9-]+$");
@@ -36,6 +37,27 @@ public class NodeManagerClient {
         factory.setConnectTimeout(CONNECT_TIMEOUT);
         factory.setReadTimeout(READ_TIMEOUT);
         return factory;
+    }
+
+    public java.util.List<AgentAvailabilityResult> listAgents() {
+        AgentAvailabilityResult[] results;
+        try {
+            results = restTemplate.getForObject(NODE_MANAGER_AGENTS_URL, AgentAvailabilityResult[].class);
+        } catch (RestClientException e) {
+            throw new NodeManagerUnavailableException(
+                    "Could not reach node manager to list agents: " + e.getMessage());
+        }
+        if (results == null) {
+            return java.util.List.of();
+        }
+        java.util.List<AgentAvailabilityResult> list = new java.util.ArrayList<>();
+        for (AgentAvailabilityResult res : results) {
+            if (res != null) {
+                res.setOutputs(usableOutputs(res.getAgentType(), res.getOutputs()));
+                list.add(res);
+            }
+        }
+        return list;
     }
 
     public AgentAvailabilityResult checkAgentAvailability(String agentType) {
@@ -63,6 +85,7 @@ public class NodeManagerClient {
         result.setOutputs(usableOutputs(agentType, result.getOutputs()));
         return result;
     }
+
 
     // Node manager has no auth; drop bad entries rather than failing the whole evolution.
     private static Map<String, Object> usableOutputs(String agentType, Map<String, Object> outputs) {

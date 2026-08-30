@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    id="Definitions_AdditionalConstructs" targetNamespace="http://metaml.com/bpmn/acceptance">
+
+  <bpmn2:process id="AdditionalConstructsManuf" name="Additional Constructs Acceptance Process" isExecutable="true">
+
+    <bpmn2:startEvent id="start2" name="Start">
+      <bpmn2:outgoing>Flow_start_manual</bpmn2:outgoing>
+    </bpmn2:startEvent>
+
+    <bpmn2:manualTask id="ReviewManually" name="Review Manually (no delegate needed)">
+      <bpmn2:incoming>Flow_start_manual</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_manual_split</bpmn2:outgoing>
+    </bpmn2:manualTask>
+
+    <bpmn2:inclusiveGateway id="SplitInclusive" name="Inclusive Split">
+      <bpmn2:incoming>Flow_manual_split</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_split_e</bpmn2:outgoing>
+      <bpmn2:outgoing>Flow_split_f</bpmn2:outgoing>
+    </bpmn2:inclusiveGateway>
+
+    <bpmn2:serviceTask id="ServiceE" name="Service E (inclusive branch)" camunda:type="external" camunda:topic="ServiceE">
+      <bpmn2:incoming>Flow_split_e</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_e_join</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+
+    <bpmn2:serviceTask id="ServiceF" name="Service F (inclusive branch)" camunda:type="external" camunda:topic="ServiceF">
+      <bpmn2:incoming>Flow_split_f</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_f_join</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+
+    <bpmn2:inclusiveGateway id="JoinInclusive" name="Inclusive Join">
+      <bpmn2:incoming>Flow_e_join</bpmn2:incoming>
+      <bpmn2:incoming>Flow_f_join</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_join_end</bpmn2:outgoing>
+    </bpmn2:inclusiveGateway>
+
+    <bpmn2:endEvent id="end2" name="End">
+      <bpmn2:incoming>Flow_join_end</bpmn2:incoming>
+    </bpmn2:endEvent>
+
+    <bpmn2:sequenceFlow id="Flow_start_manual" sourceRef="start2" targetRef="ReviewManually" />
+    <bpmn2:sequenceFlow id="Flow_manual_split" sourceRef="ReviewManually" targetRef="SplitInclusive" />
+    <bpmn2:sequenceFlow id="Flow_split_e" sourceRef="SplitInclusive" targetRef="ServiceE">
+      <bpmn2:conditionExpression xsi:type="bpmn2:tFormalExpression">${execution.getProcessBusinessKey() != null}</bpmn2:conditionExpression>
+    </bpmn2:sequenceFlow>
+    <bpmn2:sequenceFlow id="Flow_split_f" sourceRef="SplitInclusive" targetRef="ServiceF">
+      <bpmn2:conditionExpression xsi:type="bpmn2:tFormalExpression">${execution.getProcessBusinessKey() != null}</bpmn2:conditionExpression>
+    </bpmn2:sequenceFlow>
+    <bpmn2:sequenceFlow id="Flow_e_join" sourceRef="ServiceE" targetRef="JoinInclusive" />
+    <bpmn2:sequenceFlow id="Flow_f_join" sourceRef="ServiceF" targetRef="JoinInclusive" />
+    <bpmn2:sequenceFlow id="Flow_join_end" sourceRef="JoinInclusive" targetRef="end2" />
+
+  </bpmn2:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_AdditionalConstructs">
+    <bpmndi:BPMNPlane id="BPMNPlane_AdditionalConstructs" bpmnElement="AdditionalConstructsManuf">
+      <bpmndi:BPMNShape id="start2_di" bpmnElement="start2">
+        <dc:Bounds x="80" y="200" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ReviewManually_di" bpmnElement="ReviewManually">
+        <dc:Bounds x="310" y="178" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SplitInclusive_di" bpmnElement="SplitInclusive">
+        <dc:Bounds x="460" y="193" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceE_di" bpmnElement="ServiceE">
+        <dc:Bounds x="560" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceF_di" bpmnElement="ServiceF">
+        <dc:Bounds x="560" y="280" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="JoinInclusive_di" bpmnElement="JoinInclusive">
+        <dc:Bounds x="710" y="193" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end2_di" bpmnElement="end2">
+        <dc:Bounds x="810" y="200" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_start_manual_di" bpmnElement="Flow_start_manual">
+        <di:waypoint x="116" y="218" />
+        <di:waypoint x="310" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_manual_split_di" bpmnElement="Flow_manual_split">
+        <di:waypoint x="410" y="218" />
+        <di:waypoint x="460" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_split_e_di" bpmnElement="Flow_split_e">
+        <di:waypoint x="485" y="193" />
+        <di:waypoint x="485" y="120" />
+        <di:waypoint x="560" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_split_f_di" bpmnElement="Flow_split_f">
+        <di:waypoint x="485" y="243" />
+        <di:waypoint x="485" y="320" />
+        <di:waypoint x="560" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_e_join_di" bpmnElement="Flow_e_join">
+        <di:waypoint x="660" y="120" />
+        <di:waypoint x="735" y="120" />
+        <di:waypoint x="735" y="193" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_f_join_di" bpmnElement="Flow_f_join">
+        <di:waypoint x="660" y="320" />
+        <di:waypoint x="735" y="320" />
+        <di:waypoint x="735" y="243" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_join_end_di" bpmnElement="Flow_join_end">
+        <di:waypoint x="760" y="218" />
+        <di:waypoint x="810" y="218" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</bpmn2:definitions>

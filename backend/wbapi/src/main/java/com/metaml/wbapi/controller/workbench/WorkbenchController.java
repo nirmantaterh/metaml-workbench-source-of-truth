@@ -263,6 +263,19 @@ public class WorkbenchController {
         }
     }
 
+    @GetMapping(WorkbenchUrlMapping.TRANSMUTE_TWINS)
+    public ResponseEntity<ApiResponse> listTwinProcesses(
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String modelId) {
+        try {
+            List<TwinProcess> twins = workbenchService.listTwinProcesses(modelId);
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, twins));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_CONNECT)
     public ResponseEntity<ApiResponse> connectActivity(@RequestBody ConnectActivityRequest request) {
         try {
@@ -295,6 +308,17 @@ public class WorkbenchController {
         }
     }
 
+    @GetMapping(WorkbenchUrlMapping.TRANSMUTE_AGENTS)
+    public ResponseEntity<ApiResponse> listAgents() {
+        try {
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, workbenchService.listAvailableAgents()));
+        } catch (NodeManagerUnavailableException e) {
+            return ResponseEntity.status(SERVICE_UNAVAILABLE).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
     // Lists pending evolution approvals for a tenant.
     @GetMapping(WorkbenchUrlMapping.TRANSMUTE_EVOLVE_APPROVALS)
     public ResponseEntity<ApiResponse> listApprovals(@org.springframework.web.bind.annotation.RequestParam String tenantId) {
@@ -304,6 +328,7 @@ public class WorkbenchController {
             return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
         }
     }
+
 
     @PostMapping(WorkbenchUrlMapping.TRANSMUTE_EVOLVE_APPROVALS + "/{approvalId}/approve")
     public ResponseEntity<ApiResponse> approveEvolution(@PathVariable String approvalId,

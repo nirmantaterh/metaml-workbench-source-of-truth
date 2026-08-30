@@ -64,5 +64,23 @@ class NodeManagerServiceImplTest {
         assertThat(credit.getAgentName()).isEqualTo("credit-risk-agent-01");
         assertThat(credit.getOutputs()).containsOnlyKeys("riskFlagged");
         assertThat(credit.getOutputs().get("riskFlagged")).isInstanceOf(Boolean.class).isEqualTo(true);
+        assertThat(credit.getDescription()).isNotBlank();
+        assertThat(credit.getCapabilities()).contains("risk assessment", "credit check");
+    }
+
+    @Test
+    void listAvailableAgentsReturnsAllConfiguredCatalogEntriesWithMetadata() {
+        java.util.List<AgentAvailabilityResponse> list = nodeManagerService.listAvailableAgents();
+
+        assertThat(list).hasSize(5);
+        assertThat(list).extracting(AgentAvailabilityResponse::getAgentType)
+                .containsExactlyInAnyOrder("validator", "credit-risk-assessor", "data-enricher", "recommender", "notifier");
+
+        AgentAvailabilityResponse credit = list.stream()
+                .filter(a -> "credit-risk-assessor".equals(a.getAgentType()))
+                .findFirst().orElseThrow();
+        assertThat(credit.getAgentName()).isEqualTo("credit-risk-agent-01");
+        assertThat(credit.getDescription()).contains("credit risk");
+        assertThat(credit.getCapabilities()).contains("fraud detection", "risk flagging");
     }
 }

@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+    id="Definitions_EnterpriseLoan" targetNamespace="http://metaml.com/bpmn/enterprise-loan">
+
+  <bpmn2:signal id="Signal_TreasuryDisbursementAuthorized" name="TreasuryDisbursementAuthorized" />
+
+  <bpmn2:process id="EnterpriseLoanOrigination" name="Enterprise Loan Origination &amp; Compliance Pipeline" isExecutable="true">
+
+    <bpmn2:startEvent id="Start_LoanApplication" name="Loan Application Received">
+      <bpmn2:outgoing>Flow_start_to_ingest</bpmn2:outgoing>
+    </bpmn2:startEvent>
+
+    <!-- Activity 1: User task with lifecycle listeners -->
+    <bpmn2:userTask id="Task_IngestApplication" name="Ingest Loan Application">
+      <bpmn2:extensionElements>
+        <camunda:taskListener event="create" delegateExpression="${loanApplicationCreateListener}" />
+        <camunda:taskListener event="complete" delegateExpression="${loanApplicationCompleteListener}" />
+      </bpmn2:extensionElements>
+      <bpmn2:incoming>Flow_start_to_ingest</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_ingest_to_credit</bpmn2:outgoing>
+    </bpmn2:userTask>
+
+    <!-- Activity 2: User Task dedicated for AI Component Integration (credit-risk-assessor) -->
+    <bpmn2:userTask id="Task_AssessCreditRisk" name="Assess Credit Risk &amp; Compliance">
+      <bpmn2:incoming>Flow_ingest_to_credit</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_credit_to_decision</bpmn2:outgoing>
+    </bpmn2:userTask>
+
+    <!-- Exclusive Gateway: Branching based on risk assessment -->
+    <bpmn2:exclusiveGateway id="Gateway_RiskDecision" name="Risk Assessment Decision Gateway" default="Flow_risk_standard">
+      <bpmn2:incoming>Flow_credit_to_decision</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_risk_standard</bpmn2:outgoing>
+      <bpmn2:outgoing>Flow_risk_escalated</bpmn2:outgoing>
+    </bpmn2:exclusiveGateway>
+
+    <!-- Branch A: Standard Underwriting Service Task -->
+    <bpmn2:serviceTask id="Task_StandardUnderwrite" name="Standard Automated Underwriting" camunda:type="external" camunda:topic="StandardUnderwrite">
+      <bpmn2:extensionElements>
+        <camunda:executionListener event="end" delegateExpression="${loanAuditExecutionListener}" />
+      </bpmn2:extensionElements>
+      <bpmn2:incoming>Flow_risk_standard</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_standard_to_riskjoin</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+
+    <!-- Branch B: Enhanced Due Diligence (Conditional) -->
+    <bpmn2:serviceTask id="Task_EnhancedDiligence" name="Enhanced Compliance Diligence" camunda:type="external" camunda:topic="EnhancedDiligence">
+      <bpmn2:incoming>Flow_risk_escalated</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_diligence_to_riskjoin</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+
+    <!-- Exclusive Join Gateway -->
+    <bpmn2:exclusiveGateway id="Gateway_RiskJoin" name="Risk Evaluation Convergence Gateway">
+      <bpmn2:incoming>Flow_standard_to_riskjoin</bpmn2:incoming>
+      <bpmn2:incoming>Flow_diligence_to_riskjoin</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_riskjoin_to_parallelsplit</bpmn2:outgoing>
+    </bpmn2:exclusiveGateway>
+
+    <!-- Parallel Gateway Split -->
+    <bpmn2:parallelGateway id="Gateway_ParallelSplit" name="Parallel Verification Split Gateway">
+      <bpmn2:incoming>Flow_riskjoin_to_parallelsplit</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_split_to_employment</bpmn2:outgoing>
+      <bpmn2:outgoing>Flow_split_to_collateral</bpmn2:outgoing>
+    </bpmn2:parallelGateway>
+
+    <!-- Parallel Branch 1: Employment & Income Verification -->
+    <bpmn2:serviceTask id="Task_VerifyEmployment" name="Verify Employment and Income Stream" camunda:type="external" camunda:topic="VerifyEmployment">
+      <bpmn2:incoming>Flow_split_to_employment</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_employment_to_paralleljoin</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+
+    <!-- Parallel Branch 2: Asset and Collateral Valuation -->
+    <bpmn2:serviceTask id="Task_VerifyCollateral" name="Appraise and Verify Asset Collateral" camunda:type="external" camunda:topic="VerifyCollateral">
+      <bpmn2:incoming>Flow_split_to_collateral</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_collateral_to_paralleljoin</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+
+    <!-- Parallel Gateway Join -->
+    <bpmn2:parallelGateway id="Gateway_ParallelJoin" name="Parallel Verification Join Gateway">
+      <bpmn2:incoming>Flow_employment_to_paralleljoin</bpmn2:incoming>
+      <bpmn2:incoming>Flow_collateral_to_paralleljoin</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_paralleljoin_to_signalwait</bpmn2:outgoing>
+    </bpmn2:parallelGateway>
+
+    <!-- Intermediate Catch Event: Cross-plane / RabbitMQ synchronized signal -->
+    <bpmn2:intermediateCatchEvent id="Event_DisbursementSignalWait" name="Wait For Treasury Release Signal">
+      <bpmn2:incoming>Flow_paralleljoin_to_signalwait</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_signalwait_to_disburse</bpmn2:outgoing>
+      <bpmn2:signalEventDefinition id="SignalEventDefinition_TreasuryRelease" signalRef="Signal_TreasuryDisbursementAuthorized" />
+    </bpmn2:intermediateCatchEvent>
+
+    <!-- Delegate-based Service Task for final payout execution -->
+    <bpmn2:serviceTask id="Task_DisburseFunds" name="Execute Treasury Disbursement" camunda:delegateExpression="${treasuryDisbursementDelegate}">
+      <bpmn2:incoming>Flow_signalwait_to_disburse</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_disburse_to_end</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+
+    <!-- End Event -->
+    <bpmn2:endEvent id="End_LoanFulfilled" name="Loan Origination and Disbursement Fulfilled">
+      <bpmn2:incoming>Flow_disburse_to_end</bpmn2:incoming>
+    </bpmn2:endEvent>
+
+    <!-- Sequence Flows -->
+    <bpmn2:sequenceFlow id="Flow_start_to_ingest" sourceRef="Start_LoanApplication" targetRef="Task_IngestApplication" />
+    <bpmn2:sequenceFlow id="Flow_ingest_to_credit" sourceRef="Task_IngestApplication" targetRef="Task_AssessCreditRisk" />
+    <bpmn2:sequenceFlow id="Flow_credit_to_decision" sourceRef="Task_AssessCreditRisk" targetRef="Gateway_RiskDecision" />
+
+    <bpmn2:sequenceFlow id="Flow_risk_standard" sourceRef="Gateway_RiskDecision" targetRef="Task_StandardUnderwrite" />
+    <bpmn2:sequenceFlow id="Flow_risk_escalated" name="Risk Flagged or High Volume" sourceRef="Gateway_RiskDecision" targetRef="Task_EnhancedDiligence">
+      <bpmn2:conditionExpression xsi:type="bpmn2:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${execution.getVariable('agentFlaggedRisk') == true}</bpmn2:conditionExpression>
+    </bpmn2:sequenceFlow>
+
+    <bpmn2:sequenceFlow id="Flow_standard_to_riskjoin" sourceRef="Task_StandardUnderwrite" targetRef="Gateway_RiskJoin" />
+    <bpmn2:sequenceFlow id="Flow_diligence_to_riskjoin" sourceRef="Task_EnhancedDiligence" targetRef="Gateway_RiskJoin" />
+    <bpmn2:sequenceFlow id="Flow_riskjoin_to_parallelsplit" sourceRef="Gateway_RiskJoin" targetRef="Gateway_ParallelSplit" />
+
+    <bpmn2:sequenceFlow id="Flow_split_to_employment" sourceRef="Gateway_ParallelSplit" targetRef="Task_VerifyEmployment" />
+    <bpmn2:sequenceFlow id="Flow_split_to_collateral" sourceRef="Gateway_ParallelSplit" targetRef="Task_VerifyCollateral" />
+
+    <bpmn2:sequenceFlow id="Flow_employment_to_paralleljoin" sourceRef="Task_VerifyEmployment" targetRef="Gateway_ParallelJoin" />
+    <bpmn2:sequenceFlow id="Flow_collateral_to_paralleljoin" sourceRef="Task_VerifyCollateral" targetRef="Gateway_ParallelJoin" />
+    <bpmn2:sequenceFlow id="Flow_paralleljoin_to_signalwait" sourceRef="Gateway_ParallelJoin" targetRef="Event_DisbursementSignalWait" />
+
+    <bpmn2:sequenceFlow id="Flow_signalwait_to_disburse" sourceRef="Event_DisbursementSignalWait" targetRef="Task_DisburseFunds" />
+    <bpmn2:sequenceFlow id="Flow_disburse_to_end" sourceRef="Task_DisburseFunds" targetRef="End_LoanFulfilled" />
+
+  </bpmn2:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_EnterpriseLoan">
+    <bpmndi:BPMNPlane id="BPMNPlane_EnterpriseLoan" bpmnElement="EnterpriseLoanOrigination">
+      <bpmndi:BPMNShape id="Shape_Start" bpmnElement="Start_LoanApplication">
+        <dc:Bounds x="160" y="240" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Ingest" bpmnElement="Task_IngestApplication">
+        <dc:Bounds x="250" y="218" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Credit" bpmnElement="Task_AssessCreditRisk">
+        <dc:Bounds x="420" y="218" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_RiskDecision" bpmnElement="Gateway_RiskDecision" isMarkerVisible="true">
+        <dc:Bounds x="600" y="233" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_StandardUnderwrite" bpmnElement="Task_StandardUnderwrite">
+        <dc:Bounds x="700" y="160" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_EnhancedDiligence" bpmnElement="Task_EnhancedDiligence">
+        <dc:Bounds x="700" y="300" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_RiskJoin" bpmnElement="Gateway_RiskJoin" isMarkerVisible="true">
+        <dc:Bounds x="880" y="233" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_ParallelSplit" bpmnElement="Gateway_ParallelSplit">
+        <dc:Bounds x="980" y="233" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_VerifyEmployment" bpmnElement="Task_VerifyEmployment">
+        <dc:Bounds x="1080" y="160" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_VerifyCollateral" bpmnElement="Task_VerifyCollateral">
+        <dc:Bounds x="1080" y="300" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_ParallelJoin" bpmnElement="Gateway_ParallelJoin">
+        <dc:Bounds x="1260" y="233" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_DisbursementSignalWait" bpmnElement="Event_DisbursementSignalWait">
+        <dc:Bounds x="1360" y="240" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_DisburseFunds" bpmnElement="Task_DisburseFunds">
+        <dc:Bounds x="1450" y="218" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_End" bpmnElement="End_LoanFulfilled">
+        <dc:Bounds x="1630" y="240" width="36" height="36" />
+      </bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</bpmn2:definitions>

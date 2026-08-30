@@ -15,17 +15,51 @@ server:
 # always be comparing against "true" and always be false.
 nodemanager:
   agents:
-    data-enricher:
-      agent-name: data-enricher-agent-01
-    notifier:
-      agent-name: notifier-agent-01
     validator:
       agent-name: validator-agent-01
-    recommender:
-      agent-name: recommender-agent-01
-    # the credit assessor is still the one entry in here that reports back on the work rather
-    # than just saying it exists. Everything else has nothing to report and says nothing.
+      description: Default schema, payload integrity, and consistency validator agent.
+      capabilities:
+        - validation
+        - verification
+        - schema checking
+        - integrity
+        - format compliance
     credit-risk-assessor:
       agent-name: credit-risk-agent-01
+      description: Financial credit risk, compliance flagging, and transactional risk assessment agent.
+      capabilities:
+        - risk assessment
+        - credit check
+        - compliance risk
+        - fraud detection
+        - scoring
+        - risk flagging
       outputs:
         riskFlagged: true
+    data-enricher:
+      agent-name: data-enricher-agent-01
+      description: Contextual data augmentation, profile enrichment, and metadata lookup agent.
+      capabilities:
+        - data enrichment
+        - context lookup
+        - profile augmentation
+        - attribute population
+        - enrichment
+    recommender:
+      agent-name: recommender-agent-01
+      description: Decision support, workflow recommendation, and next-best-action recommendation agent.
+      capabilities:
+        - recommendation
+        - decision support
+        - next-best-action
+        - optimization
+        - action suggestion
+    notifier:
+      agent-name: notifier-agent-01
+      description: External alert dispatch, stakeholder messaging, and event notification agent.
+      capabilities:
+        - notification
+        - alerting
+        - messaging
+        - email dispatch
+        - event broadcast

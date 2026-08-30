@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn2:definitions xmlns:bpmn2="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+    id="Definitions_KitchenSink" targetNamespace="http://metaml.com/bpmn/acceptance">
+
+  <bpmn2:process id="KitchenSinkManuf" name="Kitchen Sink Acceptance Process" isExecutable="true">
+
+    <bpmn2:startEvent id="start" name="Start">
+      <bpmn2:outgoing>Flow_start_task</bpmn2:outgoing>
+    </bpmn2:startEvent>
+
+    <bpmn2:userTask id="ApproveOrder" name="Approve Order">
+      <bpmn2:extensionElements>
+        <camunda:taskListener event="create" delegateExpression="${kitchenSinkTaskCreateListener}" />
+        <camunda:taskListener event="complete" delegateExpression="${kitchenSinkTaskCompleteListener}" />
+      </bpmn2:extensionElements>
+      <bpmn2:incoming>Flow_start_task</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_task_servicee</bpmn2:outgoing>
+    </bpmn2:userTask>
+
+    <bpmn2:serviceTask id="ServiceE" name="Service E (delegate-based)" camunda:delegateExpression="${kitchenSinkDelegate}">
+      <bpmn2:incoming>Flow_task_servicee</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_servicee_gateway</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+
+    <bpmn2:exclusiveGateway id="RouteGateway" name="Route Gateway" default="Flow_route_default">
+      <bpmn2:incoming>Flow_servicee_gateway</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_route_default</bpmn2:outgoing>
+      <bpmn2:outgoing>Flow_route_conditional</bpmn2:outgoing>
+    </bpmn2:exclusiveGateway>
+
+    <bpmn2:serviceTask id="ServiceA" name="Service A (default path, taken)" camunda:type="external" camunda:topic="ServiceA">
+      <bpmn2:extensionElements>
+        <camunda:executionListener event="end" delegateExpression="${kitchenSinkExecutionListener}" />
+      </bpmn2:extensionElements>
+      <bpmn2:incoming>Flow_route_default</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_a_join</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+
+    <bpmn2:serviceTask id="ServiceB" name="Service B (conditional path, not taken)" camunda:type="external" camunda:topic="ServiceB">
+      <bpmn2:incoming>Flow_route_conditional</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_b_join</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+
+    <bpmn2:exclusiveGateway id="JoinGateway" name="Join Gateway">
+      <bpmn2:incoming>Flow_a_join</bpmn2:incoming>
+      <bpmn2:incoming>Flow_b_join</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_join_split</bpmn2:outgoing>
+    </bpmn2:exclusiveGateway>
+
+    <bpmn2:parallelGateway id="SplitParallel" name="Parallel Split">
+      <bpmn2:incoming>Flow_join_split</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_split_c</bpmn2:outgoing>
+      <bpmn2:outgoing>Flow_split_d</bpmn2:outgoing>
+    </bpmn2:parallelGateway>
+
+    <bpmn2:serviceTask id="ServiceC" name="Service C (parallel branch)" camunda:type="external" camunda:topic="ServiceC">
+      <bpmn2:incoming>Flow_split_c</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_c_joinparallel</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+
+    <bpmn2:serviceTask id="ServiceD" name="Service D (parallel branch)" camunda:type="external" camunda:topic="ServiceD">
+      <bpmn2:incoming>Flow_split_d</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_d_joinparallel</bpmn2:outgoing>
+    </bpmn2:serviceTask>
+
+    <bpmn2:parallelGateway id="JoinParallel" name="Parallel Join">
+      <bpmn2:incoming>Flow_c_joinparallel</bpmn2:incoming>
+      <bpmn2:incoming>Flow_d_joinparallel</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_joinparallel_signal</bpmn2:outgoing>
+    </bpmn2:parallelGateway>
+
+    <bpmn2:intermediateCatchEvent id="SignalWait" name="Wait For Kitchen Sink Signal">
+      <bpmn2:incoming>Flow_joinparallel_signal</bpmn2:incoming>
+      <bpmn2:outgoing>Flow_signal_end</bpmn2:outgoing>
+      <bpmn2:signalEventDefinition id="SignalEventDefinition_KitchenSink" signalRef="Signal_KitchenSink" />
+    </bpmn2:intermediateCatchEvent>
+
+    <bpmn2:endEvent id="end" name="End">
+      <bpmn2:incoming>Flow_signal_end</bpmn2:incoming>
+    </bpmn2:endEvent>
+
+    <bpmn2:sequenceFlow id="Flow_start_task" sourceRef="start" targetRef="ApproveOrder" />
+    <bpmn2:sequenceFlow id="Flow_task_servicee" sourceRef="ApproveOrder" targetRef="ServiceE" />
+    <bpmn2:sequenceFlow id="Flow_servicee_gateway" sourceRef="ServiceE" targetRef="RouteGateway" />
+    <bpmn2:sequenceFlow id="Flow_route_default" sourceRef="RouteGateway" targetRef="ServiceA" />
+    <bpmn2:sequenceFlow id="Flow_route_conditional" sourceRef="RouteGateway" targetRef="ServiceB">
+      <bpmn2:conditionExpression xsi:type="bpmn2:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">${execution.getProcessBusinessKey() == null}</bpmn2:conditionExpression>
+    </bpmn2:sequenceFlow>
+    <bpmn2:sequenceFlow id="Flow_a_join" sourceRef="ServiceA" targetRef="JoinGateway" />
+    <bpmn2:sequenceFlow id="Flow_b_join" sourceRef="ServiceB" targetRef="JoinGateway" />
+    <bpmn2:sequenceFlow id="Flow_join_split" sourceRef="JoinGateway" targetRef="SplitParallel" />
+    <bpmn2:sequenceFlow id="Flow_split_c" sourceRef="SplitParallel" targetRef="ServiceC" />
+    <bpmn2:sequenceFlow id="Flow_split_d" sourceRef="SplitParallel" targetRef="ServiceD" />
+    <bpmn2:sequenceFlow id="Flow_c_joinparallel" sourceRef="ServiceC" targetRef="JoinParallel" />
+    <bpmn2:sequenceFlow id="Flow_d_joinparallel" sourceRef="ServiceD" targetRef="JoinParallel" />
+    <bpmn2:sequenceFlow id="Flow_joinparallel_signal" sourceRef="JoinParallel" targetRef="SignalWait" />
+    <bpmn2:sequenceFlow id="Flow_signal_end" sourceRef="SignalWait" targetRef="end" />
+
+  </bpmn2:process>
+
+  <bpmn2:signal id="Signal_KitchenSink" name="kitchenSinkSignal" />
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_KitchenSink">
+    <bpmndi:BPMNPlane id="BPMNPlane_KitchenSink" bpmnElement="KitchenSinkManuf">
+      <bpmndi:BPMNShape id="start_di" bpmnElement="start">
+        <dc:Bounds x="80" y="200" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ApproveOrder_di" bpmnElement="ApproveOrder">
+        <dc:Bounds x="160" y="178" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceE_di" bpmnElement="ServiceE">
+        <dc:Bounds x="300" y="178" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="RouteGateway_di" bpmnElement="RouteGateway" isMarkerVisible="true">
+        <dc:Bounds x="450" y="193" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceA_di" bpmnElement="ServiceA">
+        <dc:Bounds x="550" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceB_di" bpmnElement="ServiceB">
+        <dc:Bounds x="550" y="280" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="JoinGateway_di" bpmnElement="JoinGateway" isMarkerVisible="true">
+        <dc:Bounds x="700" y="193" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SplitParallel_di" bpmnElement="SplitParallel">
+        <dc:Bounds x="800" y="193" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceC_di" bpmnElement="ServiceC">
+        <dc:Bounds x="900" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ServiceD_di" bpmnElement="ServiceD">
+        <dc:Bounds x="900" y="280" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="JoinParallel_di" bpmnElement="JoinParallel">
+        <dc:Bounds x="1050" y="193" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SignalWait_di" bpmnElement="SignalWait">
+        <dc:Bounds x="1150" y="200" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_di" bpmnElement="end">
+        <dc:Bounds x="1240" y="200" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_start_task_di" bpmnElement="Flow_start_task">
+        <di:waypoint x="116" y="218" />
+        <di:waypoint x="160" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_task_servicee_di" bpmnElement="Flow_task_servicee">
+        <di:waypoint x="260" y="218" />
+        <di:waypoint x="300" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_servicee_gateway_di" bpmnElement="Flow_servicee_gateway">
+        <di:waypoint x="400" y="218" />
+        <di:waypoint x="450" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_route_default_di" bpmnElement="Flow_route_default">
+        <di:waypoint x="475" y="193" />
+        <di:waypoint x="475" y="120" />
+        <di:waypoint x="550" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_route_conditional_di" bpmnElement="Flow_route_conditional">
+        <di:waypoint x="475" y="243" />
+        <di:waypoint x="475" y="320" />
+        <di:waypoint x="550" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_a_join_di" bpmnElement="Flow_a_join">
+        <di:waypoint x="650" y="120" />
+        <di:waypoint x="725" y="120" />
+        <di:waypoint x="725" y="193" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_b_join_di" bpmnElement="Flow_b_join">
+        <di:waypoint x="650" y="320" />
+        <di:waypoint x="725" y="320" />
+        <di:waypoint x="725" y="243" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_join_split_di" bpmnElement="Flow_join_split">
+        <di:waypoint x="750" y="218" />
+        <di:waypoint x="800" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_split_c_di" bpmnElement="Flow_split_c">
+        <di:waypoint x="825" y="193" />
+        <di:waypoint x="825" y="120" />
+        <di:waypoint x="900" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_split_d_di" bpmnElement="Flow_split_d">
+        <di:waypoint x="825" y="243" />
+        <di:waypoint x="825" y="320" />
+        <di:waypoint x="900" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_c_joinparallel_di" bpmnElement="Flow_c_joinparallel">
+        <di:waypoint x="1000" y="120" />
+        <di:waypoint x="1075" y="120" />
+        <di:waypoint x="1075" y="193" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_d_joinparallel_di" bpmnElement="Flow_d_joinparallel">
+        <di:waypoint x="1000" y="320" />
+        <di:waypoint x="1075" y="320" />
+        <di:waypoint x="1075" y="243" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_joinparallel_signal_di" bpmnElement="Flow_joinparallel_signal">
+        <di:waypoint x="1100" y="218" />
+        <di:waypoint x="1150" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_signal_end_di" bpmnElement="Flow_signal_end">
+        <di:waypoint x="1186" y="218" />
+        <di:waypoint x="1240" y="218" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+
+</bpmn2:definitions>

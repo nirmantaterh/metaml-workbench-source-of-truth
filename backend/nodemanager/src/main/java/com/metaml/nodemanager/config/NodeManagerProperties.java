@@ -16,6 +16,8 @@ public class NodeManagerProperties {
     @Data
     public static class AgentConfig {
         private String agentName;
+        private String description;
+        private List<String> capabilities = new ArrayList<>();
         // what this agent reports back about the work, not about itself. Values stay whatever type the yaml says they are: a gateway comparing against true has no time for the string "true".
         private Map<String, Object> outputs = new LinkedHashMap<>();
     }

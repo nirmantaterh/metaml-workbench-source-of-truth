@@ -76,6 +76,9 @@ public interface WorkbenchService {
 
     TwinProcess getTwinProcess(String id);
 
+    // Lists all twin processes belonging to the specified model identifier.
+    List<TwinProcess> listTwinProcesses(String modelId);
+
     // Resolves TwinProcess by ID without re-executing status queries.
     TwinProcess findTwinProcess(String id);
 
@@ -108,4 +111,7 @@ public interface WorkbenchService {
 
     // Records agent execution event on twin process log.
     void recordAgentExecution(String twinProcessId, String variableName, Object agentName);
+
+    // Lists available candidate agents from the authoritative Node Manager catalog.
+    List<com.metaml.workbench.client.AgentAvailabilityResult> listAvailableAgents();
 }

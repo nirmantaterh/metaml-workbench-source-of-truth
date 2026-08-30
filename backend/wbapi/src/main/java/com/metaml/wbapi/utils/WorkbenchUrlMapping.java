@@ -28,8 +28,11 @@ public class WorkbenchUrlMapping {
     // Approval workflow - nested under evolve for paused evolutions
     public static final String TRANSMUTE_EVOLVE_APPROVALS = TRANSMUTE_EVOLVE + "/approvals";
     public static final String TRANSMUTE_TWIN = WB_TRANSMUTE + "/twin";
+    public static final String TRANSMUTE_TWINS = WB_TRANSMUTE + "/twins";
     public static final String TRANSMUTE_BRIDGE = WB_TRANSMUTE + "/bridge";
     public static final String TRANSMUTE_COMPLETE_TASK = WB_TRANSMUTE + "/complete-task";
+    public static final String TRANSMUTE_AGENTS = WB_TRANSMUTE + "/agents";
+
 
     public static final String TRANSMUTE_SAMPLE_ONLY = WB_TRANSMUTE + "/sample";
     /* ======== End Transmute API ======== */

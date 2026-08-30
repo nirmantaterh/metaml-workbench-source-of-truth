@@ -21,4 +21,9 @@ public class NodeManagerController {
     public ResponseEntity<AgentAvailabilityResponse> getAgentAvailability(@PathVariable String agentType) {
         return ResponseEntity.ok(nodeManagerService.checkAvailability(agentType));
     }
+
+    @GetMapping("/agents")
+    public ResponseEntity<List<AgentAvailabilityResponse>> listAgents() {
+        return ResponseEntity.ok(nodeManagerService.listAvailableAgents());
+    }
 }

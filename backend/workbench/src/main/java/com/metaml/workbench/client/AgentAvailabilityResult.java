@@ -6,6 +6,7 @@ import lombok.NoArgsConstructor;
 
 import com.metaml.workbench.model.AgentVariables;
 
+import java.util.List;
 import java.util.Map;
 
 @Data
@@ -17,6 +18,13 @@ public class AgentAvailabilityResult {
     private String agentName;
     private String reason;
     private Map<String, Object> outputs;
+    private String description;
+    private List<String> capabilities;
+
+    public AgentAvailabilityResult(String agentType, boolean available, String agentName,
+            String reason, Map<String, Object> outputs) {
+        this(agentType, available, agentName, reason, outputs, null, List.of());
+    }
 
     // the shape this had back when a raised risk flag was the only thing an agent could say. Plenty of callers still only care about that one, and the stubbed catalogs in the tests are written against it.
     public AgentAvailabilityResult(String agentType, boolean available, String agentName,
