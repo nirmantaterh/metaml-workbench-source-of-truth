@@ -20,6 +20,7 @@ import com.metaml.workbench.codegen.GeneratedDelegate;
 import com.metaml.workbench.generation.GeneratedProject;
 import com.metaml.workbench.generation.LaunchedProject;
 import com.metaml.workbench.model.AgentDecision;
+import com.metaml.workbench.model.TwinActivityExecutionState;
 import com.metaml.workbench.workflow.WorkflowState;
 import com.metaml.workbench.dto.ProcessModelSummaryDto;
 import com.metaml.workbench.model.ProcessModel;
@@ -254,6 +255,23 @@ public class WorkbenchController {
         try {
             TwinProcess twin = workbenchService.getTwinProcess(id);
             return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, twin));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(NOT_FOUND).body(new ApiResponse(e.getMessage(), null));
+        } catch (Exception e) {
+            return ResponseEntity.status(INTERNAL_SERVER_ERROR).body(new ApiResponse(e.getMessage(), null));
+        }
+    }
+
+    // Read-only: bound agent, whether automation has actually run for this activity, and its real
+    // output (if any) - never mutates the twin. See WorkbenchService#getActivityExecutionState.
+    @GetMapping(WorkbenchUrlMapping.TRANSMUTE_TWIN + "/{id}/activity/{activityId}/execution")
+    public ResponseEntity<ApiResponse> getActivityExecutionState(@PathVariable String id,
+            @PathVariable String activityId) {
+        try {
+            TwinActivityExecutionState state = workbenchService.getActivityExecutionState(id, activityId);
+            return ResponseEntity.ok(new ApiResponse(FeedbackMessage.SUCCESS, state));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(BAD_REQUEST).body(new ApiResponse(e.getMessage(), null));
         } catch (NoSuchElementException e) {

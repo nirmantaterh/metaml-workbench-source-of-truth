@@ -6,6 +6,7 @@ import org.camunda.bpm.engine.RepositoryService;
 import org.camunda.bpm.engine.RuntimeService;
 import org.camunda.bpm.engine.TaskService;
 import org.camunda.bpm.engine.history.HistoricActivityInstance;
+import org.camunda.bpm.engine.history.HistoricVariableInstance;
 import org.camunda.bpm.engine.history.HistoricVariableUpdate;
 import org.camunda.bpm.engine.repository.Deployment;
 import org.camunda.bpm.engine.repository.ProcessDefinition;
@@ -48,6 +49,7 @@ import com.metaml.workbench.model.BusinessKeys;
 import com.metaml.workbench.model.GovernanceDecision;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinAdvance;
+import com.metaml.workbench.model.TwinActivityExecutionState;
 import com.metaml.workbench.model.TwinProcess;
 import com.metaml.workbench.store.ProcessModelArchiveStore;
 import com.metaml.workbench.store.ProcessModelFileStore;
@@ -69,6 +71,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.stream.Stream;
 import java.util.Map;
@@ -1096,6 +1099,96 @@ public class WorkbenchServiceImpl implements WorkbenchService {
     public AgentDecision bridgeActivityEvent(String twinProcessId, String activityId, String activityInstanceId) {
         TwinProcess twin = getTwinProcess(twinProcessId);
         return bridgeAndAdvance(twin, twinProcessId, activityId, activityInstanceId);
+    }
+
+    // Read-only: reconstructs what a bound ComponentExecutor has actually done for this activity,
+    // straight from the same MetaML-owned process variables TwinAutomationDelegate itself wrote
+    // (see AgentVariables) - never anything computed beyond that, never a mutation.
+    @Override
+    public TwinActivityExecutionState getActivityExecutionState(String twinProcessId, String activityId) {
+        TwinProcess twin = getTwinProcess(twinProcessId);
+        if (activityId == null || activityId.isBlank()) {
+            throw new IllegalArgumentException("activityId must not be blank");
+        }
+
+        String twinActivityId = twin.findTwinActivityId(activityId).orElse(null);
+        if (twinActivityId == null) {
+            return new TwinActivityExecutionState(activityId, null, null, "NOT_STARTED", null, Map.of());
+        }
+
+        // Single fetch of every MetaML-owned variable currently on the twin instance (or, once it
+        // has ended, its history) - agentName/summary/output below all read from this one map
+        // rather than three separate engine round-trips.
+        Map<String, Object> variables = readTwinVariables(twin);
+
+        Object agentNameValue = variables.get(AgentVariables.evolvedAgent(twinActivityId, null));
+        String agentName = agentNameValue == null ? null : agentNameValue.toString();
+
+        Object summaryValue = variables.get(AgentVariables.twinAutomation(twinActivityId, null));
+        String summary = summaryValue == null ? null : summaryValue.toString();
+
+        Map<String, Object> output = summary == null ? Map.of() : activityOutputsFrom(variables, twinActivityId);
+
+        String status;
+        if (summary != null) {
+            status = "EXECUTED";
+        } else if (activityFailedToExecute(twin, twinActivityId)) {
+            status = "FAILED";
+        } else if (agentName != null) {
+            status = "BOUND";
+        } else {
+            status = "NOT_STARTED";
+        }
+
+        return new TwinActivityExecutionState(activityId, twinActivityId, agentName, status, summary, output);
+    }
+
+    // Same runtime-then-history fallback idiom as evolvedAgentVariableIsSet above, but returning
+    // every variable rather than testing one - an ended twin instance has nothing left in
+    // runtimeService, only in history.
+    private Map<String, Object> readTwinVariables(TwinProcess twin) {
+        Map<String, Object> runtime = null;
+        try {
+            runtime = runtimeService.getVariables(twin.getTwinProcessId());
+        } catch (ProcessEngineException e) {
+            // twin instance already ended - fall through to history below
+        }
+        if (runtime != null && !runtime.isEmpty()) {
+            return runtime;
+        }
+        Map<String, Object> historic = new LinkedHashMap<>();
+        for (HistoricVariableInstance instance : historyService.createHistoricVariableInstanceQuery()
+                .processInstanceId(twin.getTwinProcessId())
+                .list()) {
+            historic.put(instance.getName(), instance.getValue());
+        }
+        return historic;
+    }
+
+    // Picks out exactly the twinAutomationOutput_<name>_<twinActivityId> variables for this one
+    // activity and strips the AgentVariables encoding back down to the bare output name a
+    // ComponentExecutor actually wrote (see AgentVariables#twinAutomationOutput) - deliberately
+    // NOT a raw variable dump: every other variable on the twin instance is ignored.
+    private Map<String, Object> activityOutputsFrom(Map<String, Object> variables, String twinActivityId) {
+        String prefix = "twinAutomationOutput_";
+        String suffix = "_" + twinActivityId;
+        Map<String, Object> output = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : variables.entrySet()) {
+            String name = entry.getKey();
+            if (name.startsWith(prefix) && name.endsWith(suffix) && name.length() > prefix.length() + suffix.length()) {
+                String outputName = name.substring(prefix.length(), name.length() - suffix.length());
+                output.put(outputName, entry.getValue());
+            }
+        }
+        return output;
+    }
+
+    // Best-effort FAILED signal reusing the twin's own event log rather than adding new tracking -
+    // the exact prefix advanceTwinActivity's catch block below writes when correlate()/
+    // messageEventReceived() throws for this activity.
+    private boolean activityFailedToExecute(TwinProcess twin, String twinActivityId) {
+        String marker = "Twin activity " + twinActivityId + " failed to execute:";
+        return twin.getEventLog().stream().anyMatch(line -> line.startsWith(marker));
     }
 
     // Bridges and advances twin activity under concurrency control.

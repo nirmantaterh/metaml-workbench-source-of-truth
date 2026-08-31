@@ -9,6 +9,7 @@ import com.metaml.workbench.model.AgentDecision;
 import com.metaml.workbench.workflow.WorkflowState;
 import com.metaml.workbench.model.ProcessModel;
 import com.metaml.workbench.model.TwinAdvance;
+import com.metaml.workbench.model.TwinActivityExecutionState;
 import com.metaml.workbench.model.TwinProcess;
 
 import java.util.List;
@@ -99,6 +100,12 @@ public interface WorkbenchService {
 
     // Bridges an activity event for a specific visit instance.
     AgentDecision bridgeActivityEvent(String twinProcessId, String activityId, String activityInstanceId);
+
+    // Read-only: what the bound ComponentExecutor has actually done for this activity so far, if
+    // anything - bound agent, whether automation ran, and its real output. Never mutates twin or
+    // process state. Takes the ORIGINAL activity id, exactly like evolveActivity/
+    // bridgeActivityEvent above, and resolves the twin-side activity id internally.
+    TwinActivityExecutionState getActivityExecutionState(String twinProcessId, String activityId);
 
     // Advances a twin activity by correlating its receive message.
     TwinAdvance advanceTwinActivity(String twinProcessId, String activityId);

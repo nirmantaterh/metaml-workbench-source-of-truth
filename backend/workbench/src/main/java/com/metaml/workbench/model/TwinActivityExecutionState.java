@@ -1,0 +1,35 @@
+package com.metaml.workbench.model;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.Map;
+
+// Read-only projection of what a single Twin activity's automation has actually done, built
+// entirely from variables ComponentExecutor implementations already write via
+// TwinAutomationDelegate/AgentVariables (evolvedAgent_*, twinAutomation_*, twinAutomationOutput_*)
+// - nothing here is computed or inferred beyond that. Deliberately narrow: this is not a general
+// process-variable dump, only the handful of MetaML-owned variables that answer "what component
+// ran on this activity, and what did it produce".
+//
+// status is derived, not stored:
+//   NOT_STARTED - activity not connected to a twin activity, or no agent has been bound yet
+//   BOUND       - an agent is bound (evolvedAgent_*) but automation has not run yet
+//   EXECUTED    - automation ran (twinAutomation_* is set); output reflects what it produced
+//   FAILED      - automation was attempted and the twin's own event log recorded a failure for
+//                 this exact activity (see WorkbenchServiceImpl#advanceTwinActivity's catch path)
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class TwinActivityExecutionState {
+    private String activityId;
+    private String twinActivityId;
+    private String agentName;
+    private String status;
+    private String summary;
+    // Whatever the resolved ComponentExecutor actually put in its AutomationResult#outputs() for
+    // this activity - keys and types are entirely component-specific (e.g. credit-risk-assessor's
+    // riskScore/riskFlagged vs validator's validationPassed/validationStatus). Never a fixed schema.
+    private Map<String, Object> output;
+}
