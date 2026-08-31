@@ -1,4 +1,0 @@
-rootProject.name = 'MetaML_WB'
-
-include 'workbench'
-include 'wbapi'

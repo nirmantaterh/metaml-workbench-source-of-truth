@@ -251,3 +251,6 @@ plugin does not itself create twins.
 - [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) and the
   [ADRs](docs/architecture/adr/) — why the twin, the synchronization, and the governance budgets
   work the way they do
+- [FINAL_META_ML_FORENSIC_AUDIT.md](FINAL_META_ML_FORENSIC_AUDIT.md) — **historical**, an earlier
+  full-system audit snapshot; its own test counts predate this README's (Tests section above is
+  current)

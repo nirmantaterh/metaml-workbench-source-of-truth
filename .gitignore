@@ -8,6 +8,10 @@ backend/**/build/
 backend/**/target/
 .mvn/wrapper/maven-wrapper.jar
 
+# Maven build output from a launched/rebuilt generated Target Platform (the source under
+# generated-target-platforms/ is committed; its build output is not)
+generated-target-platforms/**/target/
+
 # local h2 file for the camunda engine, whichever directory the app got launched from
 backend/data/
 backend/**/data/
@@ -25,6 +29,13 @@ backend/**/data/
 *.iml
 .DS_Store
 Thumbs.db
+
+# AI coding-assistant session transcripts - local working history, not project documentation
+.claude-code-history/
+.codex-history/
+
+# ad-hoc verification/exploration scripts, not part of the shipped product
+scratch/
 
 # Old nested repos, kept as backup only
 backend/.git.bak/
