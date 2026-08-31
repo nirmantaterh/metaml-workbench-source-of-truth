@@ -227,6 +227,22 @@ These are deliberate or accepted, and documented rather than hidden:
 
 ---
 
+## VS Code plugin (Task 6)
+
+A separate repository, `metaml-vscode-plugin` (sibling of this one, not a subdirectory), adds a VS
+Code extension on top of the REST API above: Target Platform discovery/lifecycle, Twin/Twin-activity
+discovery, and AI-driven Twin evolution — natural-language intent → local Ollama recommendation →
+this Workbench's own authoritative Node Manager catalog → human confirmation → governance → binding
+→ plugin-triggered bridge → real `ComponentExecutor` execution → real output, readable back through
+the plugin. It introduces no new runtime; the only additions on this side are two REST endpoints on
+`wbapi`: `POST /api/v1/wb/transmute/bridge/{twinId}/{activityId}` and
+`GET /api/v1/wb/transmute/twin/{id}/activity/{activityId}/execution`. See that repository's own
+README.md for setup and the exact plugin-side workflow. A twin must currently be launched from
+**this** Workbench's frontend (Evolve → Twin Workflow) before the plugin can discover it — the
+plugin does not itself create twins.
+
+---
+
 ## Further reading
 
 - [PROJECT_STATUS.md](PROJECT_STATUS.md) — current state, session-to-session handoff

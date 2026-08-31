@@ -54,7 +54,8 @@ Concretely, what we built — the **MetaML Workbench** — is a React BPMN model
 - Governance quota persistence across app restarts (currently in-memory only — a documented, accepted limitation)
 - Production-grade authentication, TLS, and per-task authorization (currently loopback-only, `permitAll`, CSRF disabled — a deliberate demo-scope decision, not an oversight)
 - Structured, non-visual (text- or API-driven) process capture, as an alternative to the visual `bpmn-js` editor path
-- Tasks 4 (dashboard consolidation), 5 (KMP → A2A/ACP/ANP protocol compatibility), and 6 (VS Code plugin) — none started by any team member this semester
+- Tasks 4 (dashboard consolidation) and 5 (KMP → A2A/ACP/ANP protocol compatibility) — not started by any team member this semester
+- **Task 6 (VS Code plugin) — started after this line was originally written.** A separate repository, `metaml-vscode-plugin`, implements it: Target Platform discovery/lifecycle, Twin/Twin-activity discovery, and AI-driven Twin evolution (natural-language intent → local Ollama recommendation → authoritative Node Manager catalog validation → human confirmation → this Workbench's governance → binding → plugin-triggered bridge → real `ComponentExecutor` execution → real output, readable back through the plugin). See that repository's own README.md for what it does and how it connects here; it is not part of this repository and introduces no new Workbench endpoint beyond `POST /transmute/bridge/{twinId}/{activityId}` and `GET /transmute/twin/{id}/activity/{activityId}/execution`, both additive and documented in this repo's `backend/wbapi` controller.
 
 ---
 
